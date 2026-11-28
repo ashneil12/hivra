@@ -945,7 +945,7 @@ export async function launchHivraAgentForUser(
   const requestStartedAt = performance.now();
   try {
     if (!supabaseAdmin) return apiError("Database not configured", 500);
-    const qaHolderDeadline = options?.canaryQaHolder ? canaryQaHolderDeadline(userId) : null;
+    const qaHolderDeadline = options?.canaryQaHolder ? await canaryQaHolderDeadline(userId) : null;
     if (options?.canaryQaHolder && !qaHolderDeadline) {
       return apiError("Canary holder QA launch is not available.", 403);
     }

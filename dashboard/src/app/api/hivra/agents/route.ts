@@ -51,7 +51,7 @@ async function launchAgent(request: NextRequest) {
     const limited = enforceAuthenticatedRouteRateLimit(request, { routeKey: "hivra_agent_launch", userId, limit: 10, windowMs: 5 * 60_000 });
     if (limited) return limited;
     const qaHeader = request.headers.get(CANARY_QA_HOLDER_HEADER);
-    if (qaHeader !== null && (qaHeader !== "1" || !canaryQaHolderDeadline(userId))) {
+    if (qaHeader !== null && (qaHeader !== "1" || !await canaryQaHolderDeadline(userId))) {
       return apiError("Canary holder QA launch is not available.", 403);
     }
     const parsedBody = await readBoundedJson(request, 32 * 1024, 5000);

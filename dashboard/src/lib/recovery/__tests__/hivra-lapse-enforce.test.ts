@@ -12,12 +12,16 @@ import { log } from "@/lib/logger";
 type Row = Record<string, unknown>;
 let table: Row[] = [];
 let writes = 0;
+const mockHolderQaSettings = jest.fn();
 
 // A tiny in-memory hivra_agents that honours the filters the sweep sends, so
 // the selection rules are tested, not assumed.
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
     from: (name: string) => {
+      if (name === "hivra_canary_qa_holder_settings") {
+        return { select: () => ({ eq: () => ({ maybeSingle: () => mockHolderQaSettings() }) }) };
+      }
       if (name !== "hivra_agents") throw new Error(`unexpected table ${name}`);
       const filters: Array<(row: Row) => boolean> = [];
       let max = Infinity;
@@ -65,6 +69,7 @@ const setLive = (on: boolean) => { if (on) process.env.HIVRA_LAPSE_ENFORCE_LIVE 
 beforeEach(() => {
   jest.clearAllMocks();
   table = []; writes = 0;
+  mockHolderQaSettings.mockReset().mockResolvedValue({ data: null, error: null });
   setLive(true);
   stop.mockResolvedValue(undefined);
   email.mockResolvedValue({ sent: true });
@@ -105,12 +110,14 @@ describe("while the switch is on", () => {
         computer("canary-seat", "user_fixture1", { canary_qa_holder_expires_at: expires }),
         computer("ordinary-seat", "user_fixture1"),
       ];
+      mockHolderQaSettings.mockResolvedValue({ data: null, error: { code: "42501" } });
       expect(await runHivraLapseSweep()).toMatchObject({ lapsed: 1, stopped: 1 });
       expect(stop).toHaveBeenCalledWith("user_fixture1", "ordinary-seat");
       expect(stop).not.toHaveBeenCalledWith("user_fixture1", "canary-seat");
       stop.mockClear();
       email.mockClear();
       resolve.mockClear();
+      mockHolderQaSettings.mockResolvedValue({ data: null, error: null });
       table = [computer("canary-seat", "user_fixture1", { canary_qa_holder_expires_at: expired })];
       env.replaceValue({ ...process.env, VERCEL_PROJECT_PRODUCTION_URL: "hivra.cloud" });
       expect(await runHivraLapseSweep()).toMatchObject({ lapsed: 0, stopped: 0 });
