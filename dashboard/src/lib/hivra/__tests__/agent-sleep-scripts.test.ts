@@ -30,17 +30,15 @@ function explain<T>(run: { stdout: string; stderr?: string }, parsed: T | null):
 }
 
 describe("script construction", () => {
-  // With every switch off, the scripts sent to a host are exactly the ones sent
-  // before the fast-wake and Telegram-wake work. These digests were taken from
-  // that earlier code. A change here changes every sleep and wake on every host,
-  // so update them only on purpose.
+  // Pin the scripts sent with every switch off. The wake golden includes the
+  // Hibernate timing breakdown; the sleep goldens are unchanged.
   //
   // The sleep scripts carry the idle probe program, which changed on purpose
   // (unflagged) when it learned Hermes's gateway_state.json and more channels:
   // that change can only keep more agents awake. So the sleep digests are taken
   // with the probe program cut out; they are the same values the earlier code
   // gives with its probe cut out. The probe has its own tests.
-  it("sends exactly the earlier scripts with every switch off", () => {
+  it("pins the default scripts, including the wake timing boundaries", () => {
     const digest = (text: string) => createHash("sha256").update(text).digest("hex");
     const withoutProbe = (text: string) => {
       expect(text).toContain(shellQuote(IDLE_PROBE_PROGRAM));
@@ -53,7 +51,7 @@ describe("script construction", () => {
     expect(digest(withoutProbe(buildSleepHostScript({ ...target, tier: "hibernate", manual: false }))))
       .toBe("6afca6eae86892fd2115fe862baa9f475e1dc777f6cc2d699bc5aa4b3b87314e");
     expect(digest(buildWakeHostScript({ ...target, admission })))
-      .toBe("8ad925ebfdf85c7142ec9936216d1855b53a7e3fd1fff1cadade0835235abd01");
+      .toBe("92e1752d8ec949c9f36f161452f994471c3f90d117f5d8ce16564f8eb484742b");
   });
 
   it("trims memory only when asked, and only for a computer that is running", () => {
@@ -492,8 +490,9 @@ host("wake script against a stub host", () => {
   it("restores a hibernated computer under admission, holding the lock until it runs", () => {
     mkdirSync(path.dirname(onbootMark(h)), { recursive: true });
     writeFileSync(onbootMark(h), "");
-    const run = h.run(wake(), HIBERNATED);
-    expect(receipt(run)).toMatchObject({ ok: true, from: "hibernated", to: "awake", reason: "restored", via: "socket" });
+    const run = h.run(wake(), { ...HIBERNATED, qmpStatusDelay: 0.15 });
+    const r = receipt(run)!;
+    expect(r).toMatchObject({ ok: true, from: "hibernated", to: "awake", reason: "restored", via: "socket" });
     expect(run.state).toMatchObject({ status: "running", qmp: "running", lock: "", onboot: 1 });
     const at = (prefix: string) => run.calls.findIndex((c) => c.startsWith(prefix));
     expect(run.calls[at("admission")]).toBe("admission 1234 4096 4096 2 2048 1 1500 1200 0");
@@ -504,7 +503,20 @@ host("wake script against a stub host", () => {
     expect(at("flock -u 8")).toBeLessThan(at(`qm set ${VMID} --onboot 1`));
     expect(at(`qm set ${VMID} --onboot 1`)).toBeLessThan(at("qga exec"));
     expect(run.calls.some((c) => c === "qmp cont")).toBe(false);
-    expect(Object.keys(receipt(run)?.steps ?? {})).toEqual(expect.arrayContaining(["admission", "start", "fixup"]));
+    const phases = ["binding", "read_state", "allocation_lock", "locked_recheck", "hard_admission", "start_running", "guest_fixup"];
+    const wireSteps = run.stdout.match(/"steps":\{([^}]+)\}/)![1];
+    const keys = Array.from(wireSteps.matchAll(/"([a-z_]+)":/g), (match) => match[1]);
+    expect(keys.sort()).toEqual([...phases, "admission", "start", "resume", "fixup", "lock", "agent", "exec"].sort());
+    expect(phases.reduce((sum, key) => sum + r.steps[key], 0)).toBeLessThanOrEqual(r.ms);
+    expect(r.steps.start_running).toBeGreaterThanOrEqual(r.steps.start + 140);
+    expect(r.steps.resume).toBeGreaterThanOrEqual(r.steps.start_running + r.steps.allocation_lock + r.steps.locked_recheck + r.steps.hard_admission);
+    expect(r.steps.fixup).toBeGreaterThanOrEqual(r.steps.guest_fixup);
+    expect(run.calls.filter((call) => /^(qm |flock )/.test(call))).toEqual([
+      "flock -x -w 15 9", `qm config ${VMID}`, `qm status ${VMID} --verbose`,
+      "flock -w 60 8", `qm config ${VMID}`, `qm status ${VMID} --verbose`,
+      `qm start ${VMID}`, "flock -u 8", `qm set ${VMID} --onboot 1`,
+    ]);
+    expect(fixups(run.calls)).toHaveLength(1);
     expect(existsSync(onbootMark(h))).toBe(false);
     // With no mark the hibernate never turned autostart off, so the wake leaves it as it is.
     const unmarked = h.run(wake(), HIBERNATED);
@@ -649,16 +661,32 @@ host("wake script against a stub host", () => {
   it("does not start a hibernated computer the host has no room for", () => {
     const run = h.run(wake(), HIBERNATED, { STUB_ADMISSION_REFUSES: "1" });
     expect(receipt(run)).toMatchObject({ ok: false, reason: "capacity", from: "hibernated", to: "hibernated" });
+    expect(Object.keys(receipt(run)!.steps)).toEqual(["binding", "read_state", "allocation_lock", "locked_recheck", "hard_admission"]);
     none(run.calls);
+    expect(fixups(run.calls)).toEqual([]);
     expect(run.state.lock).toBe("suspended");
     const locked = h.run(wake(), HIBERNATED, { STUB_FLOCK_TIMEOUT: "1" });
     expect(receipt(locked)).toMatchObject({ ok: false, reason: "lock_timeout", to: "hibernated" });
+    expect(Object.keys(receipt(locked)!.steps)).toEqual(["binding", "read_state", "allocation_lock"]);
     none(locked.calls);
+  });
+
+  it("measures the locked recheck and refuses a changed state before admission", () => {
+    const run = h.run(wake(), HIBERNATED, { STUB_FLOCK_STATE: JSON.stringify(NAPPING) });
+    const r = receipt(run)!;
+    expect(r).toMatchObject({ ok: false, reason: "state_changed", from: "hibernated", to: "napping" });
+    expect(Object.keys(r.steps)).toEqual(["binding", "read_state", "allocation_lock", "locked_recheck"]);
+    expect(run.calls.some((call) => call.startsWith("admission "))).toBe(false);
+    none(run.calls);
+    expect(fixups(run.calls)).toEqual([]);
   });
 
   it("keeps the lock and reports it when the start does not show running", () => {
     const run = h.run(quick(wake()), { ...HIBERNATED, startNoop: true });
-    expect(receipt(run)).toMatchObject({ ok: false, reason: "start_unconfirmed", to: "hibernated" });
+    expect(receipt(run)).toMatchObject({ ok: false, reason: "start_unconfirmed", to: "hibernated", steps: { start_running: expect.any(Number) } });
+    expect(receipt(run)?.steps).toHaveProperty("start");
+    expect(receipt(run)?.steps).not.toHaveProperty("resume");
+    expect(receipt(run)?.steps).not.toHaveProperty("guest_fixup");
     expect(run.calls.some((c) => c.startsWith("flock -u 8"))).toBe(false);
     expect(fixups(run.calls)).toEqual([]);
     const failed = h.run(wake(), { ...HIBERNATED, startFail: true });
