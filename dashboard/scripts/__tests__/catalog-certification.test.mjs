@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -466,6 +466,26 @@ test("the operator's teardown hold persists across invocations and releases the 
       assert.equal(existsSync(path.join(state, "certification-lock.d")), false);
       assert.equal(existsSync(marker), true);
     }
+  } finally {
+    rmSync(state, { force: true, recursive: true });
+  }
+});
+
+test("the shell's disposition command reads a clean or unsafe receipt without appending again", () => {
+  const state = mkdtempSync(path.join(tmpdir(), "catalog-disposition-"));
+  try {
+    const file = path.join(state, "ledger-row.json");
+    const helper = new URL("../catalog-certification/append-certification-result.mjs", import.meta.url);
+    const row = {
+      schema: CERTIFICATION_LEDGER_SCHEMA, evidenceFile: "abcd1234-example.json",
+      passed: true, teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: false },
+    };
+    const disposition = () => execFileSync(process.execPath, [helper.pathname, "--disposition", file], { encoding: "utf8" }).trim();
+    writeFileSync(file, JSON.stringify(row));
+    assert.equal(disposition(), "pass");
+    writeFileSync(file, JSON.stringify({ ...row, passed: false, teardown: { ...row.teardown, error: "unverified" } }));
+    assert.equal(disposition(), "hold");
+    assert.deepEqual(readdirSync(state), ["ledger-row.json"]);
   } finally {
     rmSync(state, { force: true, recursive: true });
   }

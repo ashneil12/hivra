@@ -166,6 +166,12 @@ export function appendCertificationResult({ ledgerFile, row }) {
 }
 
 function cli(argv = process.argv.slice(2)) {
+  if (argv[0] === "--disposition") {
+    if (argv.length !== 2) throw appendError("--disposition requires one ledger row file");
+    const row = JSON.parse(readFileSync(argv[1], "utf8"));
+    if (row?.schema !== CERTIFICATION_LEDGER_SCHEMA) throw appendError("row has the wrong schema");
+    return certificationRunDisposition(row);
+  }
   const options = parseArgs(argv);
   const ledgerFile = required(options, "--ledger");
   const outDir = required(options, "--out-dir");
@@ -192,7 +198,8 @@ function cli(argv = process.argv.slice(2)) {
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
 if (invokedPath === import.meta.url) {
   try {
-    process.stdout.write(`${JSON.stringify(cli(), null, 2)}\n`);
+    const result = cli();
+    process.stdout.write(`${typeof result === "string" ? result : JSON.stringify(result, null, 2)}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

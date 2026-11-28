@@ -150,12 +150,7 @@ set -e
 
 disposition=hold
 if [ "$append_status" -eq 0 ]; then
-  disposition="$(node --input-type=module -e '
-    import { readFileSync } from "node:fs";
-    import { pathToFileURL } from "node:url";
-    const { certificationRunDisposition } = await import(pathToFileURL(process.argv[1]));
-    console.log(certificationRunDisposition(JSON.parse(readFileSync(process.argv[2], "utf8"))));
-  ' "$SCRIPT_DIR/append-certification-result.mjs" "$out_dir/ledger-row.json")" || disposition=hold
+  disposition="$(node "$SCRIPT_DIR/append-certification-result.mjs" --disposition "$out_dir/ledger-row.json")" || disposition=hold
 else
   echo "[certify] failed to append certification evidence; inspect the run directory" >&2
 fi
