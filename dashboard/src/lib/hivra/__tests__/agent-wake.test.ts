@@ -377,7 +377,7 @@ describe("ensureHivraAgentAwake", () => {
     // Seen on Canary: twelve wakes at once, the server dropped one login, and that wake failed in under a second.
     mockReadRow.mockResolvedValue({ data: row(), error: null });
     mockRunScript
-      .mockResolvedValueOnce({ ok: false, stdout: "", stderr: "", error: "SSH connection failed: Connection lost before handshake" })
+      .mockResolvedValueOnce({ ok: false, stdout: "", stderr: "", stage: "connect", error: "SSH connection failed: Connection lost before handshake" })
       .mockResolvedValue({ ok: true, stdout: wakeReceipt(), stderr: "" });
     const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20_000, ...fast });
     expect(result.state).toBe("awake");
@@ -387,6 +387,14 @@ describe("ensureHivraAgentAwake", () => {
   it("does not repeat a host call that ran and failed", async () => {
     mockReadRow.mockResolvedValue({ data: row(), error: null });
     mockRunScript.mockResolvedValue({ ok: false, stdout: "partial output", stderr: "", error: "SSH connection failed: read ECONNRESET" });
+    const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20_000, ...fast });
+    expect(result.state).toBe("failed");
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["ready", "command", undefined])("does not replay a wake with no output when SSH failed at stage %s", async (stage) => {
+    mockReadRow.mockResolvedValue({ data: row(), error: null });
+    mockRunScript.mockResolvedValue({ ok: false, stdout: "", stderr: "", stage, error: "SSH connection failed: read ECONNRESET" });
     const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 20_000, ...fast });
     expect(result.state).toBe("failed");
     expect(mockRunScript).toHaveBeenCalledTimes(1);
