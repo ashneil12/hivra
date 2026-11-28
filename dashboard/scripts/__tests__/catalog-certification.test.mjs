@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
 import { buildTestEnvExports, selectProductionEnvValue, shellQuote } from "../catalog-certification/canary-test-env.mjs";
-import { certificationRowFromSweep } from "../catalog-certification/append-certification-result.mjs";
+import { certificationRowFromSweep, certificationRunDisposition } from "../catalog-certification/append-certification-result.mjs";
 import { buildCertificationAllowlist } from "../catalog-certification/export-allowlist.mjs";
 import { chooseRemediation, remediationFingerprint, remediationRow, REMEDIATION_LEDGER_SCHEMA } from "../catalog-certification/catalog-remediation.mjs";
 import {
@@ -215,6 +217,35 @@ test("planner does not recertify a fresh pass for unchanged inputs", () => {
   assert.equal(chosen, null);
 });
 
+test("a shared standing-account failure does not replace the last usable target result", () => {
+  const entry = catalogEntries()[1];
+  const chosen = chooseCertificationTarget({
+    catalog: [entry],
+    ledgerRows: [
+      ledgerRow({ ledgerLine: 1 }),
+      ledgerRow({ ledgerLine: 2, passed: false, canarySha: OTHER_SHA, failure: { stage: "account" } }),
+    ],
+    currentCanarySha: SHA,
+    currentProvisionerVersion: PROVISIONER,
+    now: NOW,
+  });
+  assert.equal(chosen, null);
+});
+
+test("planner prefers a due agent retry over a due generic app retry in the same group", () => {
+  const [app, , agent] = catalogEntries();
+  const ledgerRows = [app, agent].map((entry, index) => ledgerRow({
+    profileId: entry.id,
+    manifestSha256: entry.manifestSha256,
+    canarySha: OTHER_SHA,
+    passed: false,
+    finishedAt: new Date(NOW.getTime() - (2 - index) * 60_000).toISOString(),
+  }));
+  assert.equal(chooseCertificationTarget({
+    catalog: [app, agent], ledgerRows, currentCanarySha: SHA, currentProvisionerVersion: PROVISIONER, now: NOW,
+  }).id, agent.id);
+});
+
 test("planner recertifies when the manifest or provisioner changes", () => {
   const catalog = [catalogEntries()[1]];
   const changed = chooseCertificationTarget({
@@ -332,7 +363,7 @@ function sweepResult(overrides = {}) {
     expectedCanarySha: SHA,
     expectedProvisionerVersion: PROVISIONER,
     catalog: { manifestSha256: "manifestsha", runtimeKind: "docker-web", runtimeRefs: ["corentinth/it-tools:latest"] },
-    teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: true },
+    teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: false },
     screenshots: ["pass.png"],
     ...overrides,
   };
@@ -389,13 +420,45 @@ test("a passing app requires a successful sweep and verified teardown without de
   const result = sweepResult({ teardown });
   assert.equal(certificationRowFromSweep({ ...args, result }).passed, true);
   assert.equal(certificationRowFromSweep({ ...args, result, sweepExitCode: 1 }).passed, false);
-  for (const unverified of [undefined, {}, { ...teardown, error: "unverified" }]) {
+  for (const unverified of [undefined, {}, { ...teardown, error: "unverified" }, { ...teardown, accountDeleted: true }]) {
     const row = certificationRowFromSweep({ ...args, result: sweepResult({ teardown: unverified }) });
     assert.equal(row.passed, false);
     assert.equal(row.failure.stage, "teardown");
   }
 });
 
+test("an uncertain launch cleanup stops the entire runner, even if the product already failed", () => {
+  const evidenceFile = "abcd1234-trilium.json";
+  const failure = { stage: "ready", category: "product" };
+  const clean = { agentsLeft: 0, instancesLeft: 0, accountDeleted: false };
+  assert.equal(certificationRunDisposition({ evidenceFile, failure, teardown: { ...clean, error: "unverified" } }), "hold");
+  assert.equal(certificationRunDisposition({ evidenceFile, failure, teardown: { ...clean, agentsLeft: 1 } }), "hold");
+  assert.equal(certificationRunDisposition({ evidenceFile, failure, teardown: { ...clean, accountDeleted: true } }), "hold");
+  assert.equal(certificationRunDisposition({ evidenceFile, sweepPassed: true, teardown: null }), "hold");
+  assert.equal(certificationRunDisposition({ failure }), "hold");
+  assert.equal(certificationRunDisposition({ evidenceFile, failure, teardown: clean }), "fail");
+  assert.equal(certificationRunDisposition({ evidenceFile, failure: { stage: "account" } }), "account");
+  assert.equal(certificationRunDisposition({ evidenceFile, passed: true, teardown: clean }), "pass");
+});
+
+test("the operator's teardown hold persists across invocations and releases the serial lock", () => {
+  const state = mkdtempSync(path.join(tmpdir(), "catalog-teardown-hold-"));
+  try {
+    const marker = path.join(state, "TEARDOWN_REVIEW_REQUIRED");
+    writeFileSync(marker, "run=abcd1234\n");
+    const runner = new URL("../catalog-certification/run-once.sh", import.meta.url);
+    for (let index = 0; index < 2; index++) {
+      assert.throws(() => execFileSync("bash", [runner.pathname], {
+        env: { ...process.env, CERT_STATE: state },
+        stdio: "pipe",
+      }), (error) => error.status === 77 && error.stderr.toString().includes("verify the previous run"));
+      assert.equal(existsSync(path.join(state, "certification-lock.d")), false);
+      assert.equal(existsSync(marker), true);
+    }
+  } finally {
+    rmSync(state, { force: true, recursive: true });
+  }
+});
 
 function certificationFailure(overrides = {}) {
   return {

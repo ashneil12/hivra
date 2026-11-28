@@ -179,9 +179,15 @@ HIVRA_CANARY_VERCEL_PROJECT_ID=<id> HIVRA_VERCEL_SCOPE=<scope> \
   dashboard/scripts/catalog-certification/run-once.sh
 ```
 
-Exit `75` means no entry is currently due. Exit `1` means the target failed or
-cleanup failed; inspect the run directory. Exit `2` means runner infrastructure
-or revision evidence failed before a fair test.
+Exit `75` means no entry is currently due. Exit `1` means the target failed;
+inspect the run directory. Exit `2` means runner infrastructure or revision
+evidence failed before a fair test. Exit `76` means the standing tenant did not
+pass preflight; the continuous runner backs off for an hour by default instead
+of rotating rapidly through the catalog. Exit `77` means the runner cannot
+verify teardown. The local `TEARDOWN_REVIEW_REQUIRED` marker blocks future
+runs, including after restart. Inspect the recorded run, verify that its
+resources are gone and the standing tenant is intact and empty, then remove
+the marker. Never bypass the account-empty check.
 
 Run one remediation attempt manually:
 

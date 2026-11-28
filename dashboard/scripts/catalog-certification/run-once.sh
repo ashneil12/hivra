@@ -16,18 +16,24 @@ PROJECT_ID="${HIVRA_CANARY_VERCEL_PROJECT_ID:-}"
 IDLE_MINUTES="${CERT_IDLE_MINUTES:-0}"
 
 mkdir -p "$STATE/results"
-account_file="$STATE/certification-account-email"
-if [ ! -f "$account_file" ] || [ -L "$account_file" ] || [ ! -O "$account_file" ] || [ "$(stat -f %Lp "$account_file")" != 600 ]; then
-  echo "[certify] provision the dedicated standing account and put its address in the runner's owner-only account file" >&2
-  exit 2
-fi
-export CERTIFICATION_ACCOUNT_EMAIL="$(cat "$account_file")"
 LOCK="$STATE/certification-lock.d"
 if ! mkdir "$LOCK" 2>/dev/null; then
   echo "[certify] certification lock exists; verify the previous run and its cleanup before removing a stale lock" >&2
   exit 2
 fi
 trap 'rmdir "$LOCK"' EXIT
+hold_file="$STATE/TEARDOWN_REVIEW_REQUIRED"
+if [ -e "$hold_file" ]; then
+  echo "[certify] blocked: verify the previous run's cleanup before clearing TEARDOWN_REVIEW_REQUIRED" >&2
+  exit 77
+fi
+
+account_file="$STATE/certification-account-email"
+if [ ! -f "$account_file" ] || [ -L "$account_file" ] || [ ! -O "$account_file" ] || [ "$(stat -f %Lp "$account_file")" != 600 ]; then
+  echo "[certify] configure the existing dedicated standing account in the runner's owner-only account file" >&2
+  exit 76
+fi
+export CERTIFICATION_ACCOUNT_EMAIL="$(cat "$account_file")"
 
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -146,19 +152,27 @@ node "$HELPER_DIR/append-certification-result.mjs" \
 append_status=$?
 set -e
 
-row_passed=false
+disposition=hold
 if [ "$append_status" -eq 0 ]; then
-  row_passed="$(node -e 'const fs=require("fs");const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(j.passed?"true":"false")' "$out_dir/ledger-row.json")"
+  disposition="$(node --input-type=module -e '
+    import { readFileSync } from "node:fs";
+    import { pathToFileURL } from "node:url";
+    const { certificationRunDisposition } = await import(pathToFileURL(process.argv[1]));
+    console.log(certificationRunDisposition(JSON.parse(readFileSync(process.argv[2], "utf8"))));
+  ' "$SCRIPT_DIR/append-certification-result.mjs" "$out_dir/ledger-row.json")" || disposition=hold
+else
+  echo "[certify] failed to append certification evidence; inspect the run directory" >&2
 fi
 
-echo "[certify] target=$target sweep_exit=$sweep_status certified=$row_passed"
+echo "[certify] target=$target sweep_exit=$sweep_status disposition=$disposition"
 
-if [ "$append_status" -ne 0 ]; then
-  echo "[certify] failed to append certification evidence" >&2
-  cat "$out_dir/ledger-row-error.log" >&2 || true
-  exit 2
-fi
-if [ "$sweep_status" -ne 0 ] || [ "$row_passed" != "true" ]; then
-  exit 1
-fi
-exit 0
+case "$disposition" in
+  pass) exit 0 ;;
+  fail) exit 1 ;;
+  account) exit 76 ;;
+  *)
+    printf 'run=%s\ntarget=%s\ncanary_sha=%s\n' "$run_id" "$target" "$sha" > "$hold_file"
+    echo "[certify] blocked: cleanup is unverified; review the run before resuming" >&2
+    exit 77
+    ;;
+esac
