@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createHash, createHmac } from "node:crypto";
+import { createHmac } from "node:crypto";
 import { z } from "zod";
 import { buildColdStorageInstallScriptOrExit } from "@/lib/cold-storage-ssh";
 import { runProxmoxHostScript, runProxmoxHostScriptWithStdin } from "@/lib/services/proxmox-instance-service";
@@ -8,7 +8,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolveHivraLifecycleTarget, type HivraLifecycleAgentRow } from "../agent-lifecycle-host";
 import { buildBackupPollScript, buildBackupStartScript, parseBackupPoll, parseBackupStartReceipt } from "../computer-backups/scripts";
 import { computerBackupPassword } from "../computer-backups/sweep";
-import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence, type PortableKvmSourceFence } from "./source-fence";
+import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence, portableKvmCheckpointDigest } from "./source-fence";
 import type { PortableKvmDestinationPrepareInput } from "./destination-prepare";
 import { portableKvmPlacement, resolvePortableKvmPilotPlacement, type PortableKvmPilot } from "./pilot";
 
@@ -22,17 +22,6 @@ const leaseSchema = z.object({
 export function portableKvmCheckpointPassword(agentId: string, operationId: string) {
   const backupKey = computerBackupPassword(agentId);
   return backupKey ? createHmac("sha256", backupKey).update(`hivra-kvm-portable-v1:${operationId}`).digest("hex") : null;
-}
-
-export function portableKvmCheckpointDigest(
-  fence: PortableKvmSourceFence,
-  { sha256, snapshotId }: { sha256: string; snapshotId: string },
-  disk: { key: string; sha256: string; snapshotId: string; bytes: number },
-) {
-  return createHash("sha256").update(JSON.stringify({
-    fence, configuration: { sha256, snapshotId },
-    disk: { key: disk.key, sha256: disk.sha256, snapshotId: disk.snapshotId, bytes: disk.bytes },
-  })).digest("hex");
 }
 
 export async function advancePortableKvmSourceCheckpoint(

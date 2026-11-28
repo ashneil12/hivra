@@ -547,4 +547,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261127235300", name: "kvm_portable_maintenance_pilot" },
   { version: "20261128005100", name: "provider_release_admission_2026_11_28_1" },
   { version: "20261128015300", name: "kvm_portable_runtime_selector" },
+  { version: "20261128081500", name: "kvm_portable_cleanup_hold" },
 ];

@@ -203,7 +203,7 @@ tap = "tap" + vmid + "i0"
 firewall_port = "fwpr" + vmid + "p0"
 release_marker = registry / (vmid + ".released")
 attempt_marker = registry / (vmid + ".boot-attempt")
-post_commit = mode in {"enable", "release"}
+post_commit = mode in {"enable", "release", "retirement-witness"}
 attempt_wire = (profile_hash + "\n").encode("ascii")
 
 def require(ok, reason):
@@ -326,7 +326,7 @@ def check_config():
     require_resource_configuration(fields, raw, r.get("resources"))
     lock_state = fields.get("lock")
     release = json.loads(private_bytes(release_marker)) if os.path.lexists(release_marker) else None
-    require(release is None or (mode == "release" and release["bootId"] == expected_boot
+    require(release is None or (mode in {"release", "retirement-witness"} and release["bootId"] == expected_boot
             and release["profileSha256"] == profile_hash), "invalid_release_marker")
     require((lock_state == "backup" or (lock_state is None and release is not None))
             and fields.get("onboot", "0") == "0"
@@ -545,6 +545,7 @@ def run():
             observed_boot, connector = probe(mac, 1, 30)
         else:
             require(not fenced and not bridge_fence(), "destination_network_still_fenced")
+            require(mode != "retirement-witness" or not locked, "destination_not_released")
             pid = running_pid()
             bridge_connected()
             observed_boot, connector = probe(mac, 1, 8)
@@ -568,7 +569,8 @@ def run():
         check_disk()
         require(bridge_fence() == (not post_commit), "bridge_fence_changed")
         check_expiry()
-        state = {"enable": "destination_network_enabled", "release": "destination_lock_released"}.get(
+        state = {"enable": "destination_network_enabled", "release": "destination_lock_released",
+                 "retirement-witness": "destination_lock_released"}.get(
             mode, "destination_quarantined")
         proof = {"state": state, "profileSha256": profile_hash, "bootId": observed_boot}
         if connector:
@@ -582,6 +584,28 @@ except RuntimeError as error:
 except (AttributeError, KeyError, OSError, TypeError, UnicodeError, ValueError, subprocess.SubprocessError):
     sys.exit("portable KVM boot: host or I/O check failed")
 `;
+
+export function buildPortableKvmDestinationRetirementWitness(
+  profile: PortableKvmDestinationBootProfile, expectedBoot: string, expectedConnector: string, deadline: number,
+) {
+  const command = [destinationHost, serializePortableKvmDestinationBootProfile(profile),
+    serializePortableKvmDestinationReservation(profile.reservation), "retirement-witness", bootId.parse(expectedBoot),
+    z.string().uuid().parse(expectedConnector), String(Math.floor(deadline / 1000)), guestProbe].map(shellQuote).join(" ");
+  return `exec timeout -k 3 65 python3 -I -c ${command}\n`;
+}
+
+export function parsePortableKvmDestinationRetirementWitness(
+  stdout: string, profile: PortableKvmDestinationBootProfile, expectedBoot: string, expectedConnector: string,
+) {
+  const lines = stdout.split("\n").filter(line => line.startsWith(prefix));
+  if (lines.length !== 1) return false;
+  try {
+    const parsed = receiptSchema.safeParse(JSON.parse(lines[0].slice(prefix.length)));
+    return parsed.success && parsed.data.state === "destination_lock_released"
+      && parsed.data.profileSha256 === createHash("sha256").update(serializePortableKvmDestinationBootProfile(profile)).digest("hex")
+      && parsed.data.bootId === expectedBoot && parsed.data.connectorId === expectedConnector;
+  } catch { return false; }
+}
 
 async function runDestinationStep(
   ownerId: string,

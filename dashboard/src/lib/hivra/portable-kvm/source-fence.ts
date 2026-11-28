@@ -21,6 +21,17 @@ const fenceSchema = scopeSchema.extend({
 export type PortableKvmSourceScope = z.infer<typeof scopeSchema>;
 export type PortableKvmSourceFence = z.infer<typeof fenceSchema>;
 
+export function portableKvmCheckpointDigest(
+  fence: PortableKvmSourceFence,
+  { sha256, snapshotId }: { sha256: string; snapshotId: string },
+  disk: { key: string; sha256: string; snapshotId: string; bytes: number },
+) {
+  return createHash("sha256").update(JSON.stringify({
+    fence: fenceSchema.parse(fence), configuration: { sha256, snapshotId },
+    disk: { key: disk.key, sha256: disk.sha256, snapshotId: disk.snapshotId, bytes: disk.bytes },
+  })).digest("hex");
+}
+
 const checkConfig = String.raw`
 import hashlib
 import json
@@ -60,6 +71,8 @@ MARK="$DIR/$VMID"
 RECEIPT=${shellQuote(JSON.stringify(scope))}
 exec 9>"/run/lock/hivra-vm-$VMID.lock"
 flock -x -w 20 9
+${mode === "acquire" ? `CLEANUP="$ROOT/portable-kvm-cleanup/${scope.operationId}.source"
+[ ! -e "$CLEANUP" ] && [ ! -L "$CLEANUP" ]` : ":"}
 check_stopped() {
   CONFIG="$(timeout 12 qm config "$VMID" --current 1 </dev/null)"
   [ "$(timeout 12 qm status "$VMID" </dev/null)" = 'status: stopped' ]
@@ -107,3 +120,4 @@ export function parsePortableKvmSourceFence(stdout: string, input: PortableKvmSo
     return result.data;
   } catch { return null; }
 }
+import { createHash } from "node:crypto";

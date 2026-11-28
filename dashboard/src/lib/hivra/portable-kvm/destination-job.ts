@@ -59,6 +59,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 root = Path("/var/lib/hivra-sleep")
@@ -117,7 +118,17 @@ def verify_scope():
     require(host.returncode == 0 and host.stdout.strip() == reservation["hostId"].encode("ascii"))
     private_dir(root)
     private_dir(registry)
+    require(not os.path.lexists(registry / (".abort-journal-" + operation)))
     require(private_read(registry / str(reservation["vmid"]), len(expected)) == expected)
+
+@contextmanager
+def admission():
+    path = Path("/run/lock") / ("hivra-portable-kvm-job-" + operation + ".lock")
+    with os.fdopen(os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600), "rb") as file:
+        info = os.fstat(file.fileno())
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == 0 and info.st_nlink == 1 and not info.st_mode & 0o022)
+        fcntl.flock(file, fcntl.LOCK_EX)
+        yield
 
 def read_receipt():
     try:
@@ -204,10 +215,8 @@ def launch(password):
             finally:
                 fifo.unlink(missing_ok=True)
 
-try:
-    os.umask(0o077)
+def run(dispatch):
     verify_scope()
-    dispatch = sys.argv[1] == "dispatch"
     if dispatch:
         jobs.mkdir(exist_ok=True)
         sync_dir(root)
@@ -223,6 +232,14 @@ try:
             launch(password)
         else:
             poll()
+
+try:
+    os.umask(0o077)
+    if sys.argv[1] == "dispatch":
+        with admission():
+            run(True)
+    else:
+        run(False)
 except (OSError, ValueError, subprocess.SubprocessError):
     result("unavailable")
 `;

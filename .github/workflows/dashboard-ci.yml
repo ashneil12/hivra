@@ -135,6 +135,7 @@ jobs:
         run: |
           node scripts/test-managed-kvm-portable-handoff.cjs
           node scripts/test-kvm-portable-runtime-selector.cjs
+          node scripts/test-kvm-portable-cleanup-hold.cjs
 
       - name: Verify Canary Hermes standby admission and shared transaction locks
         run: |

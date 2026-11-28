@@ -620,6 +620,38 @@ it("refuses remaining sections and arbitrary config even on the generated-seed p
   expect(unexpected.events()).toBe("create\n");
 });
 
+it("records durable owner-scoped abort lineage only after each native step confirms it", () => {
+  const abortPlan = { ...managedPlan, abortScope: { ownerId: "user_OfflineFixture" } };
+  const failedConversion = fixture(abortPlan);
+  const slot = readFileSync(join(failedConversion.root, "qemu/9344.conf"));
+  expect(failedConversion.run({ CREATE_ERROR: "yes" }).status).toBe(1);
+  const dir = "state/portable-kvm-destinations";
+  const digest = (data: string | Buffer) => createHash("sha256").update(data).digest("hex");
+  const prepareSha256 = digest(serializePortableKvmDestinationPreparePermit(abortPlan));
+  expect(JSON.parse(readFileSync(join(failedConversion.root, dir, ".abort-slot-9344"), "utf8"))).toEqual({
+    prepareSha256, rawSha256: digest(slot),
+  });
+  expect(existsSync(join(failedConversion.root, dir, ".abort-native-9344"))).toBe(false);
+
+  const failedSeedReadback = fixture(abortPlan);
+  expect(failedSeedReadback.run({ BAD_SEED: "meta-data" }).stderr).toContain("generated_cloudinit_seed_mismatch");
+  const native = JSON.parse(readFileSync(join(failedSeedReadback.root, dir, ".abort-native-9344"), "utf8"));
+  const seeded = JSON.parse(readFileSync(join(failedSeedReadback.root, dir, ".abort-seed-9344"), "utf8"));
+  expect(native).toMatchObject({ prepareSha256, volumes: {
+    "vm-9344-disk-0": { vgUuid: Array(8).fill("VVVV").join("-"), lvUuid: Array(8).fill("LLLL").join("-") },
+    "vm-9344-cloudinit": { vgUuid: Array(8).fill("VVVV").join("-"), lvUuid: Array(8).fill("SSSS").join("-") },
+  } });
+  expect(seeded).toMatchObject({ prepareSha256, currentSha256: native.currentSha256, volumes: native.volumes });
+  expect(native.rawSha256).not.toBe(seeded.rawSha256);
+  expect(existsSync(failedSeedReadback.marker)).toBe(false);
+
+  const journalClaimed = fixture(abortPlan);
+  mkdirSync(join(journalClaimed.root, dir), { recursive: true, mode: 0o700 });
+  journalClaimed.put(dir + "/.abort-journal-" + abortPlan.operationId, "{}");
+  expect(journalClaimed.run().stderr).toContain("destination_abort_already_claimed");
+  expect(journalClaimed.events()).toBe("");
+});
+
 it("checks measured source CPU features on every target processor before creating a host-CPU VM", () => {
   const host = fixture(managedPlan);
   const flags = "aes avx2 cx16 popcnt pni sse4_1 sse4_2 ssse3";

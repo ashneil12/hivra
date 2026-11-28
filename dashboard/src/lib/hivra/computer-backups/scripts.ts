@@ -602,7 +602,11 @@ umask 077
 finish() { printf '%s{"ok":%s,"reason":"%s","job":"%s"}\\n' ${shellQuote(BACKUP_START_PREFIX)} "$1" "$2" ${shellQuote(jobId)}; exit 0; }
 IFS= read -r RESTIC_PW || true
 [ "\${#RESTIC_PW}" -ge 32 ] || finish false no_password
-${portable ? '[[ "$RESTIC_PW" =~ ^[A-Za-z0-9_-]{32,128}$ ]] || finish false invalid_portable_password' : ""}
+${portable ? `[[ "$RESTIC_PW" =~ ^[A-Za-z0-9_-]{32,128}$ ]] || finish false invalid_portable_password
+exec 8>/run/lock/hivra-portable-${portable.operationId}.dispatch.lock
+flock -n 8 || finish false portable_dispatch_busy
+CLEANUP=/var/lib/hivra-sleep/portable-kvm-cleanup/${portable.operationId}.source
+[ ! -e "$CLEANUP" ] && [ ! -L "$CLEANUP" ] || finish false portable_cleanup_started` : ""}
 install -d -m 0700 /etc/hivra/keys
 ${input.coldStorageInstall}
 if ! command -v restic >/dev/null 2>&1; then
