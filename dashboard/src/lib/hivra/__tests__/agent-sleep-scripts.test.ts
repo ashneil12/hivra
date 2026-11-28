@@ -1,7 +1,8 @@
 /** @jest-environment node */
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { hostname } from "node:os";
 import path from "node:path";
 import {
   buildIdleProbeHostScript, buildMemoryDropHostScript, buildSleepHostScript, buildWakeHostScript, idleVerdict, parseIdleProbeOutput,
@@ -709,6 +710,31 @@ host("wake script against a stub host", () => {
     expect(receipt(run)).toMatchObject({ ok: false, reason: "capacity", from: "hibernated", to: "hibernated" });
     expect(run.calls.filter((call) => call.startsWith("admission "))).toEqual(["admission 1234 4096 4096 2 2048 1 1500 1200 0"]);
     none(run.calls);
+  });
+
+  it("uses native LXC inventory when host metadata is occupied or incomplete", () => {
+    const node = hostname().split(".")[0];
+    const pve = path.join(h.dir, "pve");
+    const local = path.join(pve, "nodes", node, "lxc");
+    const index = path.join(pve, ".vmlist");
+    const pct = path.join(h.dir, "bin", "pct");
+    mkdirSync(local, { recursive: true });
+    symlinkSync(local, path.join(pve, "lxc"), "dir");
+    writeFileSync(pct, "#!/bin/sh\nprintf 'native-pct\\n'\n", { mode: 0o755 });
+    const helper = buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION(h.provisionerDir), batchQemuAdmission: true });
+    const probe = () => h.run(helper, HIBERNATED, { STUB_ADMISSION_PCT: "1", STUB_ADMISSION_REFUSES: "1" }).calls;
+    const target = { [VMID]: { type: "qemu", node } };
+    writeFileSync(index, JSON.stringify({ version: 10, ids: { ...target, 901: { type: "lxc", node: "other" } } }));
+    expect(probe()).toContain("admission-pct VMID");
+    writeFileSync(path.join(local, "901.conf"), "memory: 512");
+    expect(probe()).toContain("admission-pct native-pct");
+    rmSync(path.join(local, "901.conf"));
+    writeFileSync(index, JSON.stringify({ version: 11, ids: { ...target, 901: { type: "lxc", node } } }));
+    expect(probe()).toContain("admission-pct native-pct");
+    writeFileSync(index, JSON.stringify({ version: 12, ids: {} }));
+    expect(probe()).toContain("admission-pct native-pct");
+    writeFileSync(index, "invalid");
+    expect(probe()).toContain("admission-pct native-pct");
   });
 
   it("measures the locked recheck and refuses a changed state before admission", () => {
