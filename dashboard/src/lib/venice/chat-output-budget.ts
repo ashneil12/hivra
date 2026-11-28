@@ -229,9 +229,10 @@ export interface ManagedVeniceChatBudgetedReservation {
 /** The balance of the wallet a request pays from, read fresh. */
 async function readWalletBalance(
   userId: string,
-  walletType: ManagedVeniceWalletType
+  walletType: ManagedVeniceWalletType,
+  existingWalletAccountId?: string,
 ): Promise<ManagedVeniceWalletBalance> {
-  const summary = await getManagedVeniceWalletSummary(userId);
+  const summary = await getManagedVeniceWalletSummary(userId, undefined, existingWalletAccountId);
   const wallet = walletType === "card" ? summary.card : summary.hermesos;
   return {
     totalValueMicroUsd: wallet.totalValueMicroUsd,
@@ -275,6 +276,7 @@ export function managedVeniceBalanceHeldMessage(error: ManagedVeniceBalanceHeldE
 export async function reserveManagedVeniceChatWithinBalance(params: {
   userId: string;
   proxyKeyId: string;
+  existingWalletAccountId?: string;
   walletType: ManagedVeniceWalletType;
   referenceId: string;
   protocol: ManagedVeniceChatProtocol;
@@ -300,6 +302,7 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   ) =>
     reserveManagedVeniceChatRequest({
       userId: params.userId,
+      ...(params.existingWalletAccountId ? { existingWalletAccountId: params.existingWalletAccountId } : {}),
       proxyKeyId: params.proxyKeyId,
       walletType: params.walletType,
       referenceId: params.referenceId,
@@ -314,7 +317,7 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   // The balance a refusal was judged against; the database guard reports
   // none (a concurrent hold won the race), so it is read fresh then.
   const balanceOf = async (error: ManagedVeniceInsufficientBalanceError) =>
-    error.balance ?? (await readWalletBalance(params.userId, params.walletType));
+    error.balance ?? (await readWalletBalance(params.userId, params.walletType, params.existingWalletAccountId));
 
   if (!params.allowBodyRewrite) {
     // Forwarded exactly as sent: hold its worst case (the larger cap field,
@@ -379,7 +382,7 @@ export async function reserveManagedVeniceChatWithinBalance(params: {
   // Lower the cap to what half the available balance (and half of what is
   // left of the agent's daily limit) covers, never below the floor while the
   // whole of both covers the floor.
-  const balance = refused ? await balanceOf(refused) : await readWalletBalance(params.userId, params.walletType);
+  const balance = refused ? await balanceOf(refused) : await readWalletBalance(params.userId, params.walletType, params.existingWalletAccountId);
   const freshAllowance = allowance
     ? await readAgentDailyAllowance({ userId: params.userId, proxyKeyId: params.proxyKeyId })
     : null;

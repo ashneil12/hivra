@@ -129,6 +129,7 @@ function readUsageTokens(usage: unknown) {
 export async function reserveManagedVeniceChatRequest(
   params: {
     userId: string;
+    existingWalletAccountId?: string;
     proxyKeyId: string;
     walletType: ManagedVeniceWalletType;
     referenceId: string;
@@ -204,6 +205,7 @@ export async function reserveManagedVeniceChatRequest(
   const reservation = await createManagedVeniceReservation(
     {
       userId: params.userId,
+      ...(params.existingWalletAccountId ? { existingWalletAccountId: params.existingWalletAccountId } : {}),
       walletType: params.walletType,
       amountMicroUsd: estimate.reservedCostMicroUsd,
       referenceId: params.referenceId,
@@ -263,7 +265,7 @@ export async function reserveManagedVeniceChatRequest(
  * wallet cannot cover it; any other failure throws.
  */
 async function debitManagedVeniceOverage(
-  params: { userId: string; walletType: ManagedVeniceWalletType; referenceId: string; overageMicroUsd: number },
+  params: { userId: string; walletType: ManagedVeniceWalletType; referenceId: string; overageMicroUsd: number; existingWalletAccountId?: string },
   client: SupabaseLike
 ): Promise<"none" | "captured" | "reconciliation_required"> {
   if (params.overageMicroUsd <= 0) return "none";
@@ -271,6 +273,7 @@ async function debitManagedVeniceOverage(
     await debitManagedVeniceWallet(
       {
         userId: params.userId,
+        ...(params.existingWalletAccountId ? { existingWalletAccountId: params.existingWalletAccountId } : {}),
         walletType: params.walletType,
         amountMicroUsd: params.overageMicroUsd,
         referenceId: `${params.referenceId}:overage`,
@@ -292,6 +295,7 @@ async function debitManagedVeniceOverage(
 async function fileManagedVeniceUncoveredOverage(
   params: {
     userId: string;
+    existingWalletAccountId?: string;
     proxyKeyId: string | null;
     referenceId: string;
     model: string | null;
@@ -307,6 +311,7 @@ async function fileManagedVeniceUncoveredOverage(
   await markManagedVeniceReconciliationRequired(
     {
       userId: params.userId,
+      existingWalletAccountId: params.existingWalletAccountId,
       proxyKeyId: params.proxyKeyId,
       referenceId: params.referenceId,
       reason: "managed_venice_overage_uncovered",
@@ -366,6 +371,7 @@ export async function captureManagedVeniceHoldCost(
       model?: string | null;
     };
     proxyKeyId: string | null;
+    existingWalletAccountId?: string;
     costMicroUsd: number;
     cause: string;
     source: string;
@@ -392,7 +398,7 @@ export async function captureManagedVeniceHoldCost(
   let overageStatus: "none" | "captured" | "reconciliation_required" | "debit_failed";
   try {
     overageStatus = await debitManagedVeniceOverage(
-      { userId: hold.user_id, walletType, referenceId: hold.reference_id, overageMicroUsd },
+      { userId: hold.user_id, walletType, referenceId: hold.reference_id, overageMicroUsd, existingWalletAccountId: params.existingWalletAccountId },
       client
     );
   } catch (error) {
@@ -410,6 +416,7 @@ export async function captureManagedVeniceHoldCost(
       await fileManagedVeniceUncoveredOverage(
         {
           userId: hold.user_id,
+          existingWalletAccountId: params.existingWalletAccountId,
           proxyKeyId: params.proxyKeyId,
           referenceId: hold.reference_id,
           model: hold.model ?? null,
@@ -445,6 +452,7 @@ export async function captureManagedVeniceHoldCost(
 export async function captureManagedVeniceChatUsage(
   params: {
     userId: string;
+    existingWalletAccountId?: string;
     proxyKeyId: string;
     walletType: ManagedVeniceWalletType;
     referenceId: string;
@@ -552,6 +560,7 @@ export async function captureManagedVeniceChatUsage(
       walletType: params.walletType,
       referenceId: params.referenceId,
       overageMicroUsd,
+      existingWalletAccountId: params.existingWalletAccountId,
     },
     client
   );
@@ -561,7 +570,7 @@ export async function captureManagedVeniceChatUsage(
       ? cappedCaptureMicroUsd
       : cappedCaptureMicroUsd + overageMicroUsd;
 
-  const account = await ensureManagedVeniceWalletAccount(params.userId, client);
+  const account = params.existingWalletAccountId ? { id: params.existingWalletAccountId } : await ensureManagedVeniceWalletAccount(params.userId, client);
   const { error: usageError } = await table(client, "managed_venice_usage_events").insert({
     account_id: account.id,
     user_id: params.userId,
@@ -632,6 +641,7 @@ export async function captureManagedVeniceChatUsage(
     await markManagedVeniceReconciliationRequired(
       {
         userId: params.userId,
+        existingWalletAccountId: params.existingWalletAccountId,
         proxyKeyId: params.proxyKeyId,
         referenceId: params.referenceId,
         reason: surcharge.reconciliationReason,
@@ -663,6 +673,7 @@ export async function captureManagedVeniceChatUsage(
     await fileManagedVeniceUncoveredOverage(
       {
         userId: params.userId,
+        existingWalletAccountId: params.existingWalletAccountId,
         proxyKeyId: params.proxyKeyId,
         referenceId: params.referenceId,
         model: params.model,
@@ -830,6 +841,7 @@ export type ManagedVeniceObservedOutputOutcome =
 export async function captureManagedVeniceObservedOutput(
   params: {
     userId: string;
+    existingWalletAccountId?: string;
     proxyKeyId: string;
     referenceId: string;
     model: string;
@@ -874,7 +886,7 @@ export async function captureManagedVeniceObservedOutput(
     const basis = observedCost === null ? "pre_request_estimate" : "observed_output";
     // Past the hold, the rest is debited as an overage (#167 second review).
     const charge = await captureManagedVeniceHoldCost(
-      { hold: holdRow, proxyKeyId: params.proxyKeyId, costMicroUsd, cause: params.cause, source: params.source },
+      { hold: holdRow, proxyKeyId: params.proxyKeyId, costMicroUsd, cause: params.cause, source: params.source, existingWalletAccountId: params.existingWalletAccountId },
       client
     );
     if (!charge.captured) return { outcome: "already_settled", chargedMicroUsd: 0 };
@@ -922,6 +934,7 @@ export async function captureManagedVeniceObservedOutput(
       await markManagedVeniceReconciliationRequired(
         {
           userId: params.userId,
+          existingWalletAccountId: params.existingWalletAccountId,
           proxyKeyId: params.proxyKeyId,
           referenceId: params.referenceId,
           reason: params.reconciliationReason,
@@ -961,6 +974,7 @@ export async function captureManagedVeniceObservedOutput(
 export async function releaseManagedVeniceChatReservationOrFile(
   params: {
     userId: string;
+    existingWalletAccountId?: string;
     proxyKeyId: string | null;
     referenceId: string;
     cause: string;
@@ -993,6 +1007,7 @@ export async function releaseManagedVeniceChatReservationOrFile(
       await markManagedVeniceReconciliationRequired(
         {
           userId: params.userId,
+          existingWalletAccountId: params.existingWalletAccountId,
           proxyKeyId: params.proxyKeyId,
           referenceId: params.referenceId,
           reason: CHAT_RELEASE_FAILED_RECONCILIATION_REASON,
@@ -1051,6 +1066,7 @@ export async function releaseManagedVeniceChatReservation(
 export async function markManagedVeniceReconciliationRequired(
   params: {
     userId: string;
+    existingWalletAccountId?: string;
     // Null only when the key is unknown (a release the Worker sends by
     // reference alone); such an item never pauses a key.
     proxyKeyId: string | null;
@@ -1071,7 +1087,7 @@ export async function markManagedVeniceReconciliationRequired(
   db: SupabaseLike | null | undefined = supabaseAdmin
 ) {
   const client = requireDb(db);
-  const account = await ensureManagedVeniceWalletAccount(params.userId, client);
+  const account = params.existingWalletAccountId ? { id: params.existingWalletAccountId } : await ensureManagedVeniceWalletAccount(params.userId, client);
   const { error: reconciliationError } = await table(
     client,
     "managed_venice_reconciliation_items"

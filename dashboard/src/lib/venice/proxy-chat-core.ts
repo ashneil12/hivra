@@ -41,7 +41,7 @@ import {
 import { tryGrantLaunchCredit } from "@/lib/venice/promo/service";
 import { getVenicePricingMap } from "@/lib/venice/live-pricing";
 import { getDashboardOrigin } from "@/lib/venice/managed-endpoints";
-import { verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
+import { type VerifiedManagedVeniceProxyKey, verifyManagedVeniceProxyKey } from "@/lib/venice/proxy-keys";
 import { resolveManagedVeniceUpstreamKey } from "@/lib/venice/upstream-keys";
 import {
   captureManagedVeniceChatUsage,
@@ -158,7 +158,7 @@ export async function authorizeManagedVeniceChat(params: {
    * response never reaches it. Omitted, a reference is generated here.
    */
   referenceId?: string;
-  liteCanaryQa?: { ownerId: string; proxyKeyId: string };
+  liteCanaryQa?: { ownerId: string; proxyKeyId: string; permitKey?: VerifiedManagedVeniceProxyKey };
   /** The caller the inference Worker saw, for the key-to-computer binding. Omitted for direct requests. */
   caller?: import("./key-binding").KeyBindingCaller;
 }): Promise<AuthorizeManagedVeniceChatResult> {
@@ -173,11 +173,12 @@ export async function authorizeManagedVeniceChat(params: {
   const { plaintextKey, body } = params;
   const protocol = params.protocol === "responses" ? "responses" : "chat";
 
-  if (!plaintextKey) {
+  const permitKey = params.liteCanaryQa?.permitKey;
+  if (!plaintextKey && !permitKey) {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
 
-  const verifiedKey = await verifyManagedVeniceProxyKey({ plaintextKey, ...(params.caller ? { caller: params.caller } : {}) });
+  const verifiedKey = permitKey ?? (plaintextKey ? await verifyManagedVeniceProxyKey({ plaintextKey, ...(params.caller ? { caller: params.caller } : {}) }) : null);
   if (!verifiedKey) {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
@@ -255,7 +256,7 @@ export async function authorizeManagedVeniceChat(params: {
     };
   }
 
-  if (params.liteCanaryQa && (await getManagedVeniceWalletSummary(verifiedKey.userId)).card.availableMicroUsd <= 0) {
+  if (params.liteCanaryQa && !permitKey && (await getManagedVeniceWalletSummary(verifiedKey.userId)).card.availableMicroUsd <= 0) {
     return { ok: false, response: openAiCompatibleError({
       status: 402, code: "managed_venice_insufficient_balance", type: "billing_error",
       message: "Top up LLM credits before sending a managed reply.",
@@ -374,6 +375,7 @@ export async function authorizeManagedVeniceChat(params: {
   try {
     budgeted = await reserveManagedVeniceChatWithinBalance({
       userId: verifiedKey.userId,
+      ...(permitKey ? { existingWalletAccountId: permitKey.accountId } : {}),
       proxyKeyId: verifiedKey.id,
       walletType,
       referenceId,

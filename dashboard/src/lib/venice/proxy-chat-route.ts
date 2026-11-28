@@ -231,6 +231,8 @@ export async function handleManagedVeniceChat(
   options: Parameters<typeof authorizeManagedVeniceChat>[0],
 ) {
   const { body } = options;
+  const existingWalletAccountId = options.liteCanaryQa?.permitKey?.accountId;
+  const existingWallet = existingWalletAccountId ? { existingWalletAccountId } : {};
   const auth = await authorizeManagedVeniceChat(options);
   if (!auth.ok) return auth.response;
 
@@ -272,6 +274,7 @@ export async function handleManagedVeniceChat(
   // the hold is never left to expire and be charged (security review 2026-09).
   const release = (cause: string, upstreamStatus: number | null = null) =>
     releaseManagedVeniceChatReservationOrFile({
+      ...existingWallet,
       userId,
       proxyKeyId,
       referenceId,
@@ -297,6 +300,7 @@ export async function handleManagedVeniceChat(
   } catch (error) {
     if (options.liteCanaryQa) {
       await markManagedVeniceReconciliationRequired({
+        ...existingWallet,
         userId, proxyKeyId, referenceId,
         reason: "managed_venice_stream_settlement_failed", pauseKey: false,
         metadata: { model, cause: "transport_outcome_unknown", stream: false },
@@ -372,6 +376,7 @@ export async function handleManagedVeniceChat(
     // only part observed; a refusal is released.
     if (upstreamResponse.ok) {
       await captureManagedVeniceObservedOutput({
+        ...existingWallet,
         userId,
         proxyKeyId,
         referenceId,
@@ -403,6 +408,7 @@ export async function handleManagedVeniceChat(
 
   try {
     await captureManagedVeniceChatUsage({
+      ...existingWallet,
       userId,
       proxyKeyId,
       walletType,
@@ -423,6 +429,7 @@ export async function handleManagedVeniceChat(
       // second review: this used to 500 with no item and an estimate a day
       // later).
       await markManagedVeniceReconciliationRequired({
+        ...existingWallet,
         userId,
         proxyKeyId,
         referenceId,
@@ -446,6 +453,7 @@ export async function handleManagedVeniceChat(
     if (upstreamJson) meter.observeChatChunk(upstreamJson);
     else meter.observeUnparsedText(upstreamText);
     await captureManagedVeniceObservedOutput({
+      ...existingWallet,
       userId,
       proxyKeyId,
       referenceId,

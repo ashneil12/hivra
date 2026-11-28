@@ -1,5 +1,7 @@
-import { createHash, randomBytes as nodeRandomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes as nodeRandomBytes } from "node:crypto";
 
+import { getSecretPrimaryKey } from "@/lib/crypto";
+import type { LiteCanaryManagedPermit } from "@/lib/lite-agents/canary-qa";
 import { tryGrantLaunchCredit, type PromoDb } from "@/lib/venice/promo/service";
 import { tryGrantStarterCredit, type StarterCreditDb } from "@/lib/billing/starter-credit";
 import { supabaseAdmin } from "@/lib/supabase";
@@ -311,6 +313,52 @@ export async function listManagedVeniceProxyKeys(
   return Array.isArray(data) ? (data as ProxyKeyRow[]).map(asPublicKey) : [];
 }
 
+const LITE_CANARY_QA_KEY_PURPOSE = "lite-canary-managed-qa";
+
+export type VerifiedManagedVeniceProxyKey = ReturnType<typeof asVerifiedKey>;
+
+export async function materializeLiteCanaryManagedQaKey(
+  permit: LiteCanaryManagedPermit,
+  walletAccountId: string,
+  db: SupabaseLike | null | undefined = supabaseAdmin,
+): Promise<VerifiedManagedVeniceProxyKey | null> {
+  if (permit.expiresAt <= Date.now()) return null;
+  const client = requireDb(db);
+  const keys = table(client, "managed_venice_proxy_keys");
+  const secret = createHmac("sha256", getSecretPrimaryKey().key).update(JSON.stringify([
+    LITE_CANARY_QA_KEY_PURPOSE, 1, permit.ownerId, permit.proxyKeyId, permit.gitSha,
+    permit.expiresAt, permit.model, permit.workerOrigin, permit.signerSha256,
+  ])).digest("base64url");
+  const keyHash = hashManagedVeniceProxyKey(`hven_lite_qa_${secret}`);
+  const load = async () => {
+    const { data, error } = await keys.select(SELECT_COLUMNS).eq("id", permit.proxyKeyId).maybeSingle();
+    if (error) throw new Error("Lite QA key lookup failed");
+    return data as ProxyKeyRow | null;
+  };
+  let row = await load();
+  if (!row) {
+    if (permit.expiresAt <= Date.now()) return null;
+    const { data, error } = await keys.insert({
+      id: permit.proxyKeyId,
+      account_id: walletAccountId,
+      user_id: permit.ownerId,
+      name: "Lite Canary QA",
+      key_hash: keyHash,
+      key_prefix: "hven_lite_qa_",
+      status: "active",
+      metadata: { purpose: LITE_CANARY_QA_KEY_PURPOSE, defaultWalletType: "card" },
+    }).select(SELECT_COLUMNS).single();
+    if (error?.code === "23505") row = await load();
+    else if (error) throw new Error("Lite QA key insert failed");
+    else row = data as ProxyKeyRow | null;
+  }
+  if (permit.expiresAt <= Date.now() || !row || row.id !== permit.proxyKeyId || row.user_id !== permit.ownerId || row.account_id !== walletAccountId
+    || row.key_hash !== keyHash || row.status !== "active" || row.revoked_at != null
+    || row.key_prefix !== "hven_lite_qa_" || row.metadata?.purpose !== LITE_CANARY_QA_KEY_PURPOSE
+    || row.metadata.defaultWalletType !== "card") return null;
+  return asVerifiedKey(row);
+}
+
 export async function verifyManagedVeniceProxyKey(
   params: {
     plaintextKey: string;
@@ -340,7 +388,7 @@ export async function verifyManagedVeniceProxyKey(
   }
   if (!data) return null;
   const row = data as ProxyKeyRow;
-  if (row.status !== "active") return null;
+  if (row.status !== "active" || row.metadata?.purpose === LITE_CANARY_QA_KEY_PURPOSE) return null;
 
   // Off by default; loaded only when the switch is set.
   const bindingMode = (params.env ?? process.env).HIVRA_MANAGED_KEY_BINDING?.trim().toLowerCase();

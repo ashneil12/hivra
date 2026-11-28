@@ -559,4 +559,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261128181200", name: "canary_lite_qa_settings" },
   { version: "20261128183300", name: "hivra_holder_sleep_defaults" },
   { version: "20261128184500", name: "canary_lite_managed_qa" },
+  { version: "20261128192600", name: "canary_lite_trusted_permit" },
 ];
