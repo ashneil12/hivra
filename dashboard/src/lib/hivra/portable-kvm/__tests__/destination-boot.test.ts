@@ -45,11 +45,8 @@ const saved = process.env;
 const roots = new Set<string>();
 
 beforeEach(() => {
-  const pair = [source, destination].map(({ hostId, vmid, ip }) => ({ hostId, vmid, ip }));
   process.env = { ...saved, VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
     VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
-    HIVRA_KVM_PORTABLE_QA_ENABLED: "true", HIVRA_KVM_PORTABLE_QA_OWNER_ID: ownerId, HIVRA_KVM_PORTABLE_QA_AGENT_ID: agentId,
-    HIVRA_KVM_PORTABLE_QA_PLACEMENTS: JSON.stringify(pair),
   };
 });
 afterEach(() => {
@@ -260,7 +257,9 @@ function host(current = config, managed = false) {
     });
     return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr };
   });
-  const adapter = { runHostScript, readAuthority: jest.fn(async () => ({ lease, agent })) };
+  const pilot = { ownerId, agentId, placements: [source, destination] as [typeof source, typeof destination],
+    profile: {}, expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
+  const adapter = { runHostScript, readAuthority: jest.fn(async (): Promise<{ lease: typeof lease; agent: typeof agent; pilot: typeof pilot } | null> => ({ lease, agent, pilot })) };
   const commit = () => {
     lease.phase = "placement_committed";
     Object.assign(agent, { proxmox_host: destination.hostId, vmid: destination.vmid, ip: destination.ip });
@@ -396,12 +395,14 @@ it.each(["new boot", "missing bridge fence", "host config drift"])(
   },
 );
 
-it("does not dispatch with the flag off, an expiring lease or a mismatched live placement", async () => {
+it("does not dispatch without a current runtime pilot, on non-Canary, with an expiring lease or at a mismatched live placement", async () => {
   const h = host();
-  process.env.HIVRA_KVM_PORTABLE_QA_ENABLED = "false";
+  process.env.VERCEL_GIT_COMMIT_REF = "main";
   await expect(h.boot()).rejects.toThrow("outside the enabled pilot");
   expect(h.adapter.readAuthority).not.toHaveBeenCalled();
-  process.env.HIVRA_KVM_PORTABLE_QA_ENABLED = "true";
+  process.env.VERCEL_GIT_COMMIT_REF = "canary";
+  h.adapter.readAuthority.mockResolvedValueOnce(null);
+  await expect(h.boot()).rejects.toThrow("No authoritative portable KVM lease");
   const { expires_at } = h.lease;
   h.lease.expires_at = new Date(Date.now() + 30_000).toISOString();
   await expect(h.boot()).rejects.toThrow("active pilot lease");

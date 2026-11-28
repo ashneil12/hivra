@@ -26,15 +26,13 @@ const configurationSha256 = "b".repeat(64);
 const fence = { agentId, operationId, generation: 2, hostId: source.hostId, vmid: source.vmid,
   bindingTag: source.bindingTag, configurationSha256, state: "fenced" };
 const saved = process.env;
+const pilot = () => ({ ownerId: owner, agentId, placements: [source, destination] as [typeof source, typeof destination],
+  profile: {}, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
 
 beforeEach(() => {
   jest.resetAllMocks();
   process.env = { ...saved, VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
     VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
-    HIVRA_KVM_PORTABLE_QA_ENABLED: "true", HIVRA_KVM_PORTABLE_QA_OWNER_ID: owner, HIVRA_KVM_PORTABLE_QA_AGENT_ID: agentId,
-    HIVRA_KVM_PORTABLE_QA_PLACEMENTS: JSON.stringify([source, destination].map(target => ({
-      hostId: target.hostId, vmid: target.vmid, ip: target.ip,
-    }))),
   };
   rpc.mockResolvedValue({ data: { agent_id: agentId, owner_id: owner, operation_id: operationId, generation: 2,
     phase: "checkpointing", expires_at: new Date(Date.now() + 60_000).toISOString(), source, destination }, error: null });
@@ -45,15 +43,15 @@ beforeEach(() => {
 afterEach(() => { process.env = saved; });
 
 it("does not look up or mutate a checkpoint for a different owner or deployment", async () => {
-  await expect(advancePortableKvmSourceCheckpoint("user_other", agent)).resolves.toBeNull();
+  await expect(advancePortableKvmSourceCheckpoint("user_other", agent, pilot())).resolves.toBeNull();
   process.env.VERCEL_GIT_COMMIT_REF = "main";
-  await expect(advancePortableKvmSourceCheckpoint(owner, agent)).resolves.toBeNull();
+  await expect(advancePortableKvmSourceCheckpoint(owner, agent, pilot())).resolves.toBeNull();
   expect(rpc).not.toHaveBeenCalled();
   expect(run).not.toHaveBeenCalled();
 });
 
 it("fails closed before SSH when the leased physical placement differs", async () => {
-  await expect(advancePortableKvmSourceCheckpoint(owner, { ...agent, ip: "192.0.2.9" }))
+  await expect(advancePortableKvmSourceCheckpoint(owner, { ...agent, ip: "192.0.2.9" }, pilot()))
     .rejects.toThrow("not on an exact configured placement");
   expect(run).not.toHaveBeenCalled();
 });
@@ -65,7 +63,7 @@ it("accepts only the config and disk readback under the existing exact source fe
       configuration: { sha256: configurationSha256, snapshotId: "c".repeat(64) },
       disks: [{ key: "scsi0", sha256: "d".repeat(64), bytes: 4096, snapshotId: "e".repeat(64) }],
     })}\n` });
-  await expect(advancePortableKvmSourceCheckpoint(owner, agent)).resolves.toMatchObject({
+  await expect(advancePortableKvmSourceCheckpoint(owner, agent, pilot())).resolves.toMatchObject({
     state: "checkpoint_verified", checkpointSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
     configuration: { sha256: configurationSha256 }, disk: { key: "scsi0" },
   });
