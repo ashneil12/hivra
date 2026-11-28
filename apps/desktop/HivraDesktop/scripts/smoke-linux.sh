@@ -4,14 +4,14 @@
 # a substitute for interactive desktop acceptance.
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 /path/to/hivra-desktop /path/to/output-dir" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "usage: $0 /path/to/hivra-desktop /path/to/output-dir [runtime-handler]" >&2
   exit 2
 fi
 
 exe=$(readlink -f "$1")
 outdir=$(mkdir -p "$2" && cd "$2" && pwd)
-export HIVRA_SMOKE_EXE="$exe" HIVRA_SMOKE_OUT="$outdir"
+export HIVRA_SMOKE_EXE="$exe" HIVRA_SMOKE_OUT="$outdir" HIVRA_SMOKE_RUNTIME_HANDLER="${3:-}"
 
 dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -c '
   # Xvfb has no GPU compositor; these are smoke-test environment workarounds,
@@ -46,10 +46,21 @@ dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -
     exit 1
   fi
   handler=$(xdg-mime query default x-scheme-handler/hivra 2>/dev/null || true)
-  if [ "$handler" != "hivra-desktop-handler.desktop" ]; then
-    echo "Hivra did not register as the hivra:// handler (got \"$handler\")" >&2
+  case "$handler" in
+    Hivra.desktop|hivra-desktop-handler.desktop) ;;
+    *)
+      echo "Hivra did not register as the hivra:// handler (got \"$handler\")" >&2
+      exit 1
+      ;;
+  esac
+  if [ "$HIVRA_SMOKE_RUNTIME_HANDLER" = "runtime-handler" ] && [ "$handler" != "hivra-desktop-handler.desktop" ]; then
+    echo "The portable shell did not become the hivra:// handler (got \"$handler\")" >&2
+    echo "user desktop entries:" >&2
+    ls -la "$HOME/.local/share/applications" >&2 || true
+    echo "user MIME defaults:" >&2
+    cat "$HOME/.config/mimeapps.list" >&2 2>/dev/null || true
     exit 1
   fi
-  echo "Hivra registered as the hivra:// handler"
+  echo "Hivra is the hivra:// handler through $handler"
   kill "$app_pid" 2>/dev/null || true
 '

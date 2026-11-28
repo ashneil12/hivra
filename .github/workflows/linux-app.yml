@@ -77,10 +77,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get install -y ./target/release/bundle/deb/Hivra_*_amd64.deb
           chmod +x target/release/bundle/appimage/Hivra_*_amd64.AppImage
+          ../scripts/smoke-linux.sh target/release/bundle/appimage/Hivra_*_amd64.AppImage target/release/smoke/appimage runtime-handler
+          sudo apt-get install -y ./target/release/bundle/deb/Hivra_*_amd64.deb
           ../scripts/smoke-linux.sh /usr/bin/hivra-desktop target/release/smoke/deb
-          ../scripts/smoke-linux.sh target/release/bundle/appimage/Hivra_*_amd64.AppImage target/release/smoke/appimage
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
