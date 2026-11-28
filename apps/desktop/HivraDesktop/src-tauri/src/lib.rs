@@ -296,7 +296,7 @@ pub fn run() {
                 // Installed builds register hivra:// at install; this covers
                 // development and portable runs. A registration failure must not
                 // take the app down, but it also must not be invisible.
-                if let Err(error) = handle.deep_link().register_all() {
+                if let Err(error) = handle.deep_link().register("hivra") {
                     eprintln!("hivra: couldn't register the hivra:// browser handoff: {error}");
                 }
             }
