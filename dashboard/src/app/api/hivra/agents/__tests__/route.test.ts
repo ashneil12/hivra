@@ -1447,6 +1447,28 @@ describe("POST /api/hivra/agents", () => {
     }));
   });
 
+  it("rejects a model ID that the official Hermes installer cannot apply", async () => {
+    process.env.VERCEL_TARGET_ENV = "canary";
+    process.env.HERMES_DEPLOY_CHANNEL = "canary";
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 3,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+
+    const response = await POST(makeRequest({
+      type: "hermes",
+      name: "Hermes model validation",
+      cpu: 2,
+      ram: 4,
+      llm: { provider: "venice", mode: "managed", walletType: "card", model: "custom[variant]" },
+    }) as never);
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual(expect.objectContaining({ error: expect.stringMatching(/Hermes model ID/) }));
+    expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
   it("launches the official Hermes Agent as a Hivra computer kind, on the default model", async () => {
     process.env.VERCEL_TARGET_ENV = "canary";
     process.env.HERMES_DEPLOY_CHANNEL = "canary";
@@ -1546,7 +1568,7 @@ describe("POST /api/hivra/agents", () => {
     }
   });
 
-  it("reads saved and removed Hermes pilot settings on fresh requests in the same deployment", async () => {
+  it.each(["2026.11.27.7", "2026.11.28.1"])("reads and removes Hermes pilot settings on sealed host %s in the same deployment", async (provisionerVersion) => {
     enableManagedGvisorQaFixture({ VERCEL_TARGET_ENV: "canary" });
     mockAuth.mockResolvedValue({ userId: "user_fixture1" });
     mockSubscriptionRow = {
@@ -1554,7 +1576,7 @@ describe("POST /api/hivra/agents", () => {
       total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
     };
     mockSelectAvailableProxmoxProvisionTarget.mockResolvedValue({
-      ok: true, targetId: "fixturenode7", provisionerVersion: "2026.11.27.7",
+      ok: true, targetId: "fixturenode7", provisionerVersion,
       env: {
         PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
         PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",

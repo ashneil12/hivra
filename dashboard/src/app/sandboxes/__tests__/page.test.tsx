@@ -3,6 +3,9 @@
 import { render, screen, within } from "@testing-library/react";
 import "@testing-library/jest-dom";
 import SandboxesPage from "../page";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
+
+jest.mock("@/lib/hivra/paid-kvm-sleep-availability", () => ({ paidKvmSleepAvailable: jest.fn(async () => false) }));
 
 jest.mock("@/components/public-site/PublicSite", () => ({
   __esModule: true,
@@ -25,25 +28,26 @@ it.each([
   { ...managedSettings, HIVRA_MANAGED_GVISOR_CONNECTION_ID: "" },
   { ...managedSettings, HIVRA_MANAGED_GVISOR_DISK_ADMISSION_ENABLED: "false" },
   { ...managedSettings, HIVRA_MANAGED_GVISOR_QA_ENROLLMENT_ENABLED: "true" },
-])("keeps the connected sandbox and hides managed copy when public admission is incomplete (%j)", (env) => {
+])("keeps the connected sandbox and hides managed copy when public admission is incomplete (%j)", async (env) => {
   jest.replaceProperty(process, "env", { NODE_ENV: "test", ...env });
-  render(<SandboxesPage />);
+  render(await SandboxesPage());
   expect(screen.getByRole("region", { name: "Run a sandbox on your server" })).toHaveTextContent("Connect a compatible Linux server and choose Linux Sandbox in Launch.");
   expect(screen.getByRole("main")).not.toHaveTextContent(/Light computer|storage limit|nap and then hibernate/i);
 });
 
-it("advertises managed Light only with configured public launch and storage admission", () => {
+it("advertises managed Light only with configured public launch and storage admission", async () => {
   jest.replaceProperty(process, "env", { NODE_ENV: "test", ...managedSettings });
-  render(<SandboxesPage />);
+  render(await SandboxesPage());
   const access = screen.getByRole("region", { name: "Two ways to run a sandbox" });
   expect(access).toHaveTextContent("Connect a compatible Linux server and choose Linux Sandbox in Launch.");
   expect(access).toHaveTextContent("On a paid plan, pick Linux Sandbox in Launch for a Light computer that Hivra manages for you.");
   expect(screen.getByRole("link", { name: "Open Launch" })).toHaveAttribute("href", "/dashboard/launch?kind=computer");
 });
 
-it("explains both sleep models without offering a sandbox price or promising resumed processes", () => {
+it("explains both sleep models without offering a sandbox price or promising resumed processes", async () => {
   jest.replaceProperty(process, "env", { NODE_ENV: "test", ...managedSettings, HIVRA_SLEEP_MODE: "on", NEXT_PUBLIC_HIVRA_AGENT_SLEEP: "1" });
-  render(<SandboxesPage />);
+  jest.mocked(paidKvmSleepAvailable).mockResolvedValueOnce(true);
+  render(await SandboxesPage());
   const comparison = screen.getByRole("region", { name: "Choose the computer your work needs." });
   expect(comparison).toHaveTextContent(/a sandbox has no graphical desktop\./i);
   expect(comparison).toHaveTextContent("running processes and unsaved work don’t resume");

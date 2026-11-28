@@ -11,24 +11,25 @@ final class HivraProfileStore: ObservableObject {
     private let profilesKey = "hivra.mac.connection-profiles.v1"
     private let selectionKey = "hivra.mac.selected-profile.v1"
 
-    /// Local and Canary connections, and adding others, are for Hivra's own
-    /// team: on in internal builds (Info.plist `HivraDeveloperConnections`) or
-    /// from App settings. A public build shows Hivra only.
     static let developerConnectionsKey = "hivra.mac.developer-connections.v1"
-
-    static func developerConnectionsEnabled(defaults: UserDefaults = .standard, bundle: Bundle = .main) -> Bool {
-        if defaults.object(forKey: developerConnectionsKey) != nil {
-            return defaults.bool(forKey: developerConnectionsKey)
-        }
-        return bundle.object(forInfoDictionaryKey: "HivraDeveloperConnections") as? Bool ?? true
-    }
-
+    let allowsDeveloperConnections: Bool
     @Published private(set) var developerConnections: Bool
 
-    init(defaults: UserDefaults = .standard) {
+    init(
+        defaults: UserDefaults = .standard,
+        allowsDeveloperConnections: Bool = Bundle.main.object(forInfoDictionaryKey: "HivraDeveloperConnections") as? Bool == true
+    ) {
         self.defaults = defaults
-        let developer = Self.developerConnectionsEnabled(defaults: defaults)
+        self.allowsDeveloperConnections = allowsDeveloperConnections
+        let developer = allowsDeveloperConnections &&
+            (defaults.object(forKey: Self.developerConnectionsKey) == nil || defaults.bool(forKey: Self.developerConnectionsKey))
         developerConnections = developer
+
+        guard allowsDeveloperConnections else {
+            profiles = [.hivra]
+            selectedProfileID = HivraConnectionProfile.builtInHivraID
+            return
+        }
 
         if developer,
            let data = defaults.data(forKey: profilesKey),
@@ -79,6 +80,7 @@ final class HivraProfileStore: ObservableObject {
     }
 
     func setDeveloperConnections(_ enabled: Bool) {
+        guard allowsDeveloperConnections else { return }
         defaults.set(enabled, forKey: Self.developerConnectionsKey)
         developerConnections = enabled
         if enabled {
@@ -99,8 +101,9 @@ final class HivraProfileStore: ObservableObject {
     }
 
     func select(_ profile: HivraConnectionProfile) {
+        guard profiles.contains(profile) else { return }
         selectedProfileID = profile.id
-        persistSelection()
+        if allowsDeveloperConnections { persistSelection() }
     }
 
     private func persist() {

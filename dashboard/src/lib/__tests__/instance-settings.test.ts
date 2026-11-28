@@ -10,6 +10,11 @@ import {
 } from "@/lib/instance-settings";
 
 describe("instance settings", () => {
+  it("stores the exact model resolved by the provider-aware settings route", () => {
+    const model = "claude-sonnet-4-20250514";
+    expect(buildAdvancedInstanceConfigPayload({}, { model }).model).toBe(model);
+  });
+
   it("rejects a hostile custom LLM base URL at the buildStoredInstanceConfig chokepoint (instance creation path)", () => {
     // Instance creation does not go through buildAdvancedInstanceConfigPayload —
     // it passes the zod-parsed agentSettings straight into

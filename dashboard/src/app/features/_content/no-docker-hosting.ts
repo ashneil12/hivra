@@ -113,7 +113,7 @@ export const NO_DOCKER_HOSTING: FeaturePageContent = {
       blocks: [
         {
           kind: "p",
-          text: `**Hermes** runs on Hivra Cloud only. Claude Code, Codex, OpenClaw, Agent Zero and Aeon can also run on a server you connect yourself, such as a Hetzner Cloud project or a Linux server that Hivra can reach over SSH. ${HOSTED_COMPUTE_NEEDS_PLAN} Hivra checks what each server can run, and features can differ from a Hivra Cloud computer.`,
+          text: `**Hermes** runs on Hivra Cloud only. Claude Code, Codex, OpenClaw, Agent Zero and Aeon can also run on a server you connect yourself, using a Proxmox VE server connected with SSH details. ${HOSTED_COMPUTE_NEEDS_PLAN} Hivra checks what each server can run, and features can differ from a Hivra Cloud computer.`,
         },
         {
           kind: "p",
@@ -141,7 +141,7 @@ export const NO_DOCKER_HOSTING: FeaturePageContent = {
     },
     {
       q: "Can I choose the server region?",
-      a: "Not on Hivra Cloud today. For Claude Code, Codex, OpenClaw, Agent Zero and Aeon, you can connect your own server or a Hetzner Cloud project and choose where it runs.",
+      a: "Not on Hivra Cloud today. For Claude Code, Codex, OpenClaw, Agent Zero and Aeon, you can connect your own Proxmox VE server with SSH details and choose where it runs.",
     },
     {
       q: "Do you guarantee backups?",

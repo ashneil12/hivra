@@ -6,12 +6,13 @@ import { z } from "zod";
 import { isCanonicalGitCanaryDeployment } from "../canonical-git-canary";
 import { shellQuote } from "../proxmox-target";
 import {
+  portableKvmResourceValidationPython,
   serializePortableKvmDestinationReservation,
   type PortableKvmDestinationDiskReceipt,
   type PortableKvmDestinationReservation,
 } from "./destination-disk";
-import { portableKvmHostCpuValidationPython, portableKvmManagedDestinationProfileSchema } from "./destination-prepare";
-import { isPortableKvmWakeClaimed, portableKvmPlacement, resolvePortableKvmPilotPlacement } from "./pilot";
+import { portableKvmAllocationOperationId, portableKvmHostCpuValidationPython, portableKvmManagedAllocationProfileSchema } from "./destination-prepare";
+import { isPortableKvmWakeClaimed, portableKvmPlacement, resolvePortableKvmPilotPlacement, type PortableKvmPilot } from "./pilot";
 
 const prefix = "HIVRA_KVM_PORTABLE_BOOT_V1 ";
 const timeoutMs = 125_000;
@@ -63,7 +64,7 @@ export type PortableKvmDestinationBootProfile = {
   reservation: PortableKvmDestinationReservation;
   ip: string;
   machineId: string;
-  managed?: z.input<typeof portableKvmManagedDestinationProfileSchema>;
+  managed?: z.input<typeof portableKvmManagedAllocationProfileSchema>;
 };
 
 /**
@@ -73,14 +74,19 @@ export type PortableKvmDestinationBootProfile = {
  * This cannot be derived from the destination's own unverified QGA response.
  */
 export function serializePortableKvmDestinationBootProfile(profile: PortableKvmDestinationBootProfile): string {
-  const managed = portableKvmManagedDestinationProfileSchema.optional().parse(profile.managed);
+  const managed = portableKvmManagedAllocationProfileSchema.optional().parse(profile.managed);
   const ip = (managed ? privateIpv4 : z.string().refine(isIPv4)).parse(profile.ip);
+  const reservation: PortableKvmDestinationReservation = JSON.parse(serializePortableKvmDestinationReservation(profile.reservation));
+  if (reservation.resources?.balloonMb !== managed?.resources?.balloonMb
+    || reservation.resources?.cpuUnits !== managed?.resources?.cpuUnits) {
+    throw new Error("Portable KVM managed resources do not match the destination reservation");
+  }
   if (managed && (![ip, managed.cloudInit.gateway].every(value => !/\.(?:0|255)$/.test(value)) || ip === managed.cloudInit.gateway
     || ip.split(".").slice(0, 3).join(".") !== managed.cloudInit.gateway.split(".").slice(0, 3).join("."))) {
     throw new Error("Portable KVM managed seed gateway does not match the leased subnet");
   }
   return JSON.stringify({
-    reservation: JSON.parse(serializePortableKvmDestinationReservation(profile.reservation)),
+    reservation,
     ip,
     machineId: machineId.parse(profile.machineId),
     managed,
@@ -93,6 +99,7 @@ export type PortableKvmDestinationBootAdapter = {
   readAuthority(input: { ownerId: string; agentId: string }): Promise<{
     lease: unknown;
     agent: Record<string, unknown>;
+    pilot: PortableKvmPilot;
   } | null>;
   runHostScript(input: { hostId: string; script: string; timeoutMs: number }): Promise<{ ok: boolean; stdout: string }>;
 };
@@ -204,6 +211,7 @@ def require(ok, reason):
         raise RuntimeError(reason)
 
 ${portableKvmHostCpuValidationPython}
+${portableKvmResourceValidationPython}
 
 def output(*args, timeout=12):
     return subprocess.check_output(args, timeout=timeout, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -306,7 +314,7 @@ def check_config():
     current = output("qm", "config", vmid, "--current", "1").rstrip(b"\n") + b"\n"
     allowed = {"agent", "arch", "bios", "boot", "cores", "cpu", "description", "lock", "machine",
                "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsihw",
-               "smbios1", "sockets", "tags", "vcpus", "vmgenid"}
+               "smbios1", "sockets", "tags", "vcpus", "vmgenid", "balloon", "cpuunits"}
     if managed:
         allowed.update({"cicustom", "citype", "ciupgrade", "ciuser", "cpulimit", "ide2", "ipconfig0", "nameserver",
                         "serial0", "vga"})
@@ -315,6 +323,7 @@ def check_config():
         key, sep, value = line.partition(": ")
         require(sep and key in allowed and key not in fields, "unsupported_configuration")
         fields[key] = value
+    require_resource_configuration(fields, raw, r.get("resources"))
     lock_state = fields.get("lock")
     release = json.loads(private_bytes(release_marker)) if os.path.lexists(release_marker) else None
     require(release is None or (mode == "release" and release["bootId"] == expected_boot
@@ -331,6 +340,9 @@ def check_config():
         check_managed_seed(fields)
     tags = fields.get("tags", "").split(";")
     require([tag for tag in tags if tag.startswith("hivra-bind-")] == [r["bindingTag"]], "binding_mismatch")
+    if managed:
+        require([tag for tag in tags if tag.startswith("hivra-op-")] ==
+                ["hivra-op-" + managed["allocationOperationId"].replace("-", "")], "allocation_mismatch")
     disk, *options = fields.get("scsi0", "").split(",")
     require(disk == volume and len({option.partition("=")[0] for option in options}) == len(options)
             and all(re.fullmatch(r"(?:discard=(?:on|ignore)|(?:ssd|iothread|backup|replicate)=[01]|size=[0-9]+[KMGT]?)",
@@ -582,16 +594,18 @@ async function runDestinationStep(
   const serialized = serializePortableKvmDestinationBootProfile(profile);
   const reservation = profile.reservation;
   const reservationWire = serializePortableKvmDestinationReservation(reservation);
-  if (!isCanonicalGitCanaryDeployment() || process.env.HIVRA_KVM_PORTABLE_QA_ENABLED !== "true"
-    || !ownerId || process.env.HIVRA_KVM_PORTABLE_QA_OWNER_ID !== ownerId
-    || process.env.HIVRA_KVM_PORTABLE_QA_AGENT_ID !== reservation.agentId) {
+  if (!isCanonicalGitCanaryDeployment() || !ownerId) {
     throw new Error("Portable KVM destination is outside the enabled pilot");
   }
   const authoritative = await adapter.readAuthority({ ownerId, agentId: reservation.agentId });
   const lease = leaseSchema.safeParse(authoritative?.lease);
   if (!authoritative || !lease.success) throw new Error("No authoritative portable KVM lease");
   const { agent } = authoritative;
-  const pilot = resolvePortableKvmPilotPlacement(ownerId, agent);
+  if (profile.managed && portableKvmAllocationOperationId.safeParse(agent.allocation_operation_id).data
+    !== portableKvmAllocationOperationId.parse(profile.managed.allocationOperationId)) {
+    throw new Error("Portable KVM destination allocation authority changed");
+  }
+  const pilot = resolvePortableKvmPilotPlacement(ownerId, agent, authoritative.pilot);
   const phase = { boot: "restore_claimed", verify: "destination_verified",
     enable: "placement_committed", release: "connector_verified" }[mode];
   const postCommit = mode === "enable" || mode === "release";

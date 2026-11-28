@@ -30,7 +30,7 @@ import { disarmEmailDoorbell } from "./email-imap";
  * wake takes the arm down here (disarmForWake); the doorbell then stays
  * connected about a minute while the agent's own session comes back.
  *
- * Covered only with Hermes's own catch-up on and a DM channel listed for it
+ * Covered only with Hermes's own catch-up on and DMs disabled
  * (registry.ts), and only when HIVRA_WAKE_DOORBELLS lists discord. Built
  * ahead of the Canary Discord measurements, so it stays inert until they pass.
  */
@@ -78,8 +78,8 @@ export type DiscordOptInRead =
 /**
  * The opt-in read: the idle probe, asked for Discord's fingerprint, in the
  * awake computer. It prints the fingerprint and the catch-up facts, never the
- * token. The owner is told plainly when Hermes's catch-up is off or lists no
- * DM channel, since the agent would then never sleep on Discord.
+ * token. The owner is told plainly when Hermes's catch-up is off or can't
+ * recover all messages the bot accepts.
  */
 export async function readDiscordOptIn(target: HostTarget, deps: { run?: RunScript } = {}): Promise<DiscordOptInRead> {
   try {
@@ -93,7 +93,7 @@ export async function readDiscordOptIn(target: HostTarget, deps: { run?: RunScri
     const facts = probe.channelFacts?.discord;
     if (!facts) return { ok: false, reason: "no_discord" };
     if (!facts.backfill) return { ok: false, reason: "backfill_off" };
-    const dmBackfilled = !facts.dmsAllowed || facts.backfillChannels > 0;
+    const dmBackfilled = !facts.dmsAllowed;
     if (!dmBackfilled) return { ok: false, reason: "dm_not_backfilled" };
     return { ok: true, fp, backfill: true, dmBackfilled };
   } catch {

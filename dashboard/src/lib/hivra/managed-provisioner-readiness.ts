@@ -10,6 +10,7 @@ import guestBootRelease from "../../../provisioner-releases/2026.11.27.4.json";
 import hermesStandbyRelease from "../../../provisioner-releases/2026.11.27.5.json";
 import preparedRuntimeRelease from "../../../provisioner-releases/2026.11.27.6.json";
 import standbyDescriptionRelease from "../../../provisioner-releases/2026.11.27.7.json";
+import hermesGuestPhaseRelease from "../../../provisioner-releases/2026.11.28.1.json";
 import {
   PORTABLE_HIVRA_MODEL_SETTINGS_VERSIONS,
   PORTABLE_HIVRA_RUNTIME_MINIMUM_VERSIONS,
@@ -42,7 +43,7 @@ export type ManagedHivraHostReadinessResult =
 export type ManagedHivraHostReadinessPurpose = "provision" | "lifecycle" | "resize" | "runtime-update";
 type ManagedHivraHostEnvironment = Record<string, string | undefined>;
 
-const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, hermesDiagnosticsRelease, hermesBakeRelease, admissionReaderRelease, guestBootRelease, hermesStandbyRelease, preparedRuntimeRelease, standbyDescriptionRelease].map(release => [
+const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, hermesDiagnosticsRelease, hermesBakeRelease, admissionReaderRelease, guestBootRelease, hermesStandbyRelease, preparedRuntimeRelease, standbyDescriptionRelease, hermesGuestPhaseRelease].map(release => [
   release.version,
   createHash("sha256").update([...release.files]
     .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
@@ -52,7 +53,7 @@ const canaryLaunchSeals = new Map([previousCanaryRelease, digestPinRelease, herm
 function managedCanaryProvisionerAllowsLaunch(version: string, requirePinnedCatalogDigest: boolean): boolean {
   return canaryLaunchSeals.has(version)
     && (canaryLaunchSealAllowed(version, requirePinnedCatalogDigest)
-      || (requirePinnedCatalogDigest && [hermesDiagnosticsRelease.version, hermesBakeRelease.version, admissionReaderRelease.version, guestBootRelease.version, hermesStandbyRelease.version, preparedRuntimeRelease.version, standbyDescriptionRelease.version].includes(version)));
+      || (requirePinnedCatalogDigest && [hermesDiagnosticsRelease.version, hermesBakeRelease.version, admissionReaderRelease.version, guestBootRelease.version, hermesStandbyRelease.version, preparedRuntimeRelease.version, standbyDescriptionRelease.version, hermesGuestPhaseRelease.version].includes(version)));
 }
 
 export function managedCanaryLaunchSealScript(versions: readonly string[]): string {
@@ -113,7 +114,7 @@ grep -Fq 'BINDING_TAG="\${HIVRA_BINDING_TAG:-}"' "$PROVISION_SCRIPT" \\
   || { echo "Hivra provisioner lacks binding-tag enforcement" >&2; exit 1; }
 grep -Fq 'ALLOCATION_RECEIPT_FILE="/run/hivra-provision/\${VMID}.allocated"' "$PROVISION_SCRIPT" \\
   || { echo "Hivra provisioner lacks allocation receipts" >&2; exit 1; }
-if [ "$OBSERVED_VERSION" = ${shellQuote(hermesStandbyRelease.version)} ] || [ "$OBSERVED_VERSION" = ${shellQuote(preparedRuntimeRelease.version)} ] || [ "$OBSERVED_VERSION" = ${shellQuote(standbyDescriptionRelease.version)} ]; then
+if [ "$OBSERVED_VERSION" = ${shellQuote(hermesStandbyRelease.version)} ] || [ "$OBSERVED_VERSION" = ${shellQuote(preparedRuntimeRelease.version)} ] || [ "$OBSERVED_VERSION" = ${shellQuote(standbyDescriptionRelease.version)} ] || [ "$OBSERVED_VERSION" = ${shellQuote(hermesGuestPhaseRelease.version)} ]; then
   grep -Fq 'TAGS="\${BINDING_TAG};\${OPERATION_TAG}"' "$PROVISION_SCRIPT" \\
     && grep -Fq -- '--tags "$TAGS"' "$PROVISION_SCRIPT" \\
     || { echo "Hivra provisioner lacks atomic ownership tagging" >&2; exit 1; }

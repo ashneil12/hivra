@@ -9,7 +9,10 @@ jest.mock("@/lib/supabase", () => ({
     from: (table: string) => {
       const q: Record<string, unknown> = {};
       for (const m of ["select", "eq", "in", "limit"]) q[m] = () => q;
-      q.update = (patch: unknown) => { mockUpdate(table, patch); return q; };
+      q.update = (patch: unknown) => {
+        q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(mockUpdate(table, patch)).then(resolve);
+        return q;
+      };
       q.maybeSingle = () => (table === "hivra_agents" ? mockReadRow() : mockHostRow());
       q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(mockListRows(table)).then(resolve);
       return q;
@@ -241,7 +244,7 @@ describe("sleepHivraAgent", () => {
     mockReadRow.mockResolvedValue({ data: eligibleRow(), error: null });
     mockHostRow.mockResolvedValue({ data: host, error: null });
     mockListRows.mockReturnValue({ data: [], error: null });
-    mockUpdate.mockReturnValue(undefined);
+    mockUpdate.mockReturnValue({ data: [{ id: AGENT_ID }], error: null });
     mockLapsed.mockResolvedValue(false);
     mockResolveTarget.mockResolvedValue({ ok: true, target });
     mockClaim.mockResolvedValue(4);
@@ -339,6 +342,9 @@ describe("sleepHivraAgent", () => {
     expect(mockUpdate).toHaveBeenCalledWith("hivra_agents", { next_wake_at: "2026-11-12T12:58:00.000Z" });
     // The sleep script carries the tag check and the lock.
     const script = String(mockRunScript.mock.calls.find((c) => String(c[0]).includes("HIVRA_SLEEP_RESULT"))![0]);
+    expect(mockUpdate.mock.invocationCallOrder[0]).toBeLessThan(mockRunScript.mock.invocationCallOrder[1]);
+    expect(mockUpdate.mock.invocationCallOrder[0]).toBeLessThan(mockFinish.mock.invocationCallOrder[0]);
+    expect(script).toContain("HIVRA_EXPECTED_NEXT_JOB='2026-11-12T13:00:00Z'");
     expect(script).toContain("hivra-tag-1");
     expect(script).toContain("flock -x -n 9");
   });
@@ -346,6 +352,19 @@ describe("sleepHivraAgent", () => {
   it("clears the next wake when the probe saw no job", async () => {
     await run({ tier: "nap", trigger: "sweep" });
     expect(mockUpdate).toHaveBeenCalledWith("hivra_agents", { next_wake_at: null });
+  });
+
+  it.each([
+    { data: null, error: { message: "write failed" } },
+    { data: [], error: null },
+  ])("does not put the VM to sleep when a schedule reservation cannot be confirmed", async (response) => {
+    mockUpdate.mockReturnValue(response);
+    stubScripts({ probe: probeLine({ nextJobAt: "2026-11-12T13:00:00Z" }) });
+    await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toMatchObject({
+      outcome: "failed", state: "awake", reason: "schedule_reservation_failed",
+    });
+    expect(ranScript("HIVRA_SLEEP_RESULT")).toBe(false);
+    expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "awake" }));
   });
 
   it("passes manual through, and a manual sleep ignores the open page's connections", async () => {

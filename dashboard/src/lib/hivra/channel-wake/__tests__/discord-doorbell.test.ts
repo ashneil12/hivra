@@ -36,7 +36,7 @@ const FP = "0123456789abcdef";
 const DOORBELL_PY = path.join(process.cwd(), "provisioner/hivra-wake-doorbell.py");
 const target = { vmid: 1234, bindingTag: "hivra-binding-test", env: { host: "x" } };
 const ON = { HIVRA_WAKE_DOORBELLS: "email,discord", HIVRA_INGRESS_HOST_CREDENTIAL: "true" };
-const facts = { backfill: true, backfillChannels: 1, backfillAllChannels: false, dmsAllowed: true };
+const facts = { backfill: true, backfillChannels: 1, backfillAllChannels: false, dmsAllowed: false };
 const probe = { liveChannels: ["hermes:discord"], channelFps: { discord: FP }, channelFacts: { discord: facts } };
 const row = { enabled: true, credFp: FP, blockedUntil: null };
 
@@ -59,15 +59,15 @@ describe("Discord in the registry", () => {
     });
   });
 
-  it("blocks without catch-up, without a DM channel listed, or without facts", () => {
+  it("blocks without catch-up, with DMs enabled even when a channel is listed, or without facts", () => {
     const blockers = (f: unknown) => DISCORD_CHANNEL_SPEC.coverageBlockers({
       acts: true, row, probe: { ...probe, channelFacts: f === undefined ? {} : { discord: f as typeof facts } }, nowMs: 0 });
     expect(blockers(facts)).toEqual([]);
     expect(blockers({ ...facts, backfill: false })).toEqual(["backfill_off"]);
-    expect(blockers({ ...facts, backfillChannels: 0 })).toEqual(["dm_not_backfilled"]);
+    expect(blockers({ ...facts, dmsAllowed: true })).toEqual(["dm_not_backfilled"]);
     // "*" scans guild channels only, never DMs.
-    expect(blockers({ ...facts, backfillChannels: 0, backfillAllChannels: true })).toEqual(["dm_not_backfilled"]);
-    expect(blockers({ ...facts, backfill: false, backfillChannels: 0 })).toEqual(["backfill_off", "dm_not_backfilled"]);
+    expect(blockers({ ...facts, dmsAllowed: true, backfillChannels: 0, backfillAllChannels: true })).toEqual(["dm_not_backfilled"]);
+    expect(blockers({ ...facts, dmsAllowed: true, backfill: false, backfillChannels: 0 })).toEqual(["backfill_off", "dm_not_backfilled"]);
     expect(blockers(undefined)).toEqual(["no_discord_facts"]);
   });
 
@@ -120,10 +120,10 @@ const hasPerl = spawnSync("which", ["perl"]).status === 0;
     return run.stdout.trim();
   };
 
-  it("sleeps only with catch-up on and a DM channel listed, as the server checked", () => {
+  it("sleeps only with catch-up on and DMs disabled, as the server checked", () => {
     expect(gate(facts)).toBe("ok");
     expect(gate({ ...facts, backfill: false })).toBe("active");
-    expect(gate({ ...facts, backfillChannels: 0 })).toBe("active");
+    expect(gate({ ...facts, dmsAllowed: true })).toBe("active");
     expect(gate({ ...facts, backfillChannels: 0, dmsAllowed: false })).toBe("ok");
     expect(gate({ ...facts, backfillChannels: "3" })).toBe("ok");
     expect(gate({ ...facts, backfillChannels: "3; rm" })).toBe("active");
@@ -263,7 +263,7 @@ describe("the opt-in read", () => {
       .toEqual({ ok: true, fp: FP, backfill: true, dmBackfilled: true });
     expect(await read(probeLine({ channelFps: { discord: FP }, channelFacts: { discord: { ...facts, backfill: false } } })))
       .toEqual({ ok: false, reason: "backfill_off" });
-    expect(await read(probeLine({ channelFps: { discord: FP }, channelFacts: { discord: { ...facts, backfillChannels: 0 } } })))
+    expect(await read(probeLine({ channelFps: { discord: FP }, channelFacts: { discord: { ...facts, dmsAllowed: true } } })))
       .toEqual({ ok: false, reason: "dm_not_backfilled" });
     expect(await read(probeLine({ channelFps: { discord: null } }))).toEqual({ ok: false, reason: "no_discord" });
     expect(await read("HIVRA_IDLE_REFUSED asleep\n")).toEqual({ ok: false, reason: "asleep" });

@@ -3,7 +3,6 @@ import { Download } from "lucide-react";
 
 import { ActionLinks } from "@/components/public-editorial/ActionLinks";
 import { getDesktopDownloads, PUBLIC_PROJECT_LINKS, type DesktopDownloads } from "@/lib/public-project-links";
-import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
 import editorial from "../../components/public-editorial/secondary-site.module.css";
 import styles from "./download.module.css";
 
@@ -22,9 +21,11 @@ const PLATFORMS = [
 export default function DownloadPage({
   downloads = getDesktopDownloads(),
   browserHref = PUBLIC_PROJECT_LINKS.browser,
+  paidSleep = false,
 }: {
   downloads?: DesktopDownloads;
   browserHref?: string;
+  paidSleep?: boolean;
 }): ReactNode {
   return (
     <main className={editorial.main} id="main-content">
@@ -83,7 +84,7 @@ export default function DownloadPage({
           <div className={styles.body}>
             <p>
               Your Hivra-hosted computers run remotely. Closing the app doesn&rsquo;t stop them.
-              {paidKvmSleepAvailable() && " Computers with idle sleep enabled can sleep when idle. Open one again to wake it."}
+              {paidSleep && " Computers with idle sleep enabled can sleep when idle. Open one again to wake it."}
               {" Individual agent workflows can still stop, fail or reach their own usage limits."}
             </p>
             <p>

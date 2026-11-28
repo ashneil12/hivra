@@ -44,6 +44,8 @@ function entryPriceForOffer(offer: ReturnType<typeof getCardTrialOffer>): string
   return offer ? `$${(offer.monthlyCents / 100).toFixed(2)}` : ENTRY_PLAN_PRICE;
 }
 
+export const dynamic = "force-dynamic";
+
 export function generateMetadata(): Metadata {
   const price = entryPriceForOffer(getCardTrialOffer());
   return buildAbsoluteTitleMetadata({
@@ -95,7 +97,7 @@ export default async function PricingPage() {
   // One decision per render: the token question, its link and the matching
   // FAQPage entry show only while the token surfaces are on and the viewer is
   // not geo-blocked. With the switch off nothing token related is read or shown.
-  const view = await getTokenSurfaceView();
+  const [view, sleep] = await Promise.all([getTokenSurfaceView(), paidKvmSleepAvailable()]);
   const showToken = tokenSurfacesVisible(view);
   const options = PRICING_OPTIONS;
   const cardTrial = getCardTrialOffer();
@@ -103,7 +105,6 @@ export default async function PricingPage() {
   const withEntryPrice = (text: string) => text.replaceAll(ENTRY_PLAN_PRICE, entryPrice);
   // Once the Free plan is closed to new sign-ups, the page stops offering it.
   const freeClosed = isFreePlanClosed();
-  const sleep = paidKvmSleepAvailable();
   const faq = visiblePricingFaq(showToken, freeClosed, sleep);
   const intro = freeClosed ? PRICING_INTRO_FREE_CLOSED : PRICING_INTRO;
 
@@ -177,8 +178,8 @@ export default async function PricingPage() {
                   <dd>{options.selfHost.notIncluded}</dd>
                 </div>
               </dl>
-              <a className={page.action} href={PRICING_ACTIONS.viewSource.href} target="_blank" rel="noopener noreferrer">
-                {PRICING_ACTIONS.viewSource.label}
+              <a className={page.action} href={PRICING_ACTIONS.selfHostQuickstart.href} target="_blank" rel="noopener noreferrer">
+                {PRICING_ACTIONS.selfHostQuickstart.label}
                 <ArrowUpRight size={18} aria-hidden="true" />
               </a>
             </article>

@@ -77,12 +77,12 @@ export function normalizeModelValue(modelValue: string, provider?: string | null
   const trimmed = modelValue.trim();
   if (!trimmed) return trimmed;
 
-  if (provider === "openrouter" || trimmed in OPENROUTER_MODEL_ALIASES) {
-    return OPENROUTER_MODEL_ALIASES[trimmed] ?? trimmed;
+  if ((provider == null || provider === "openrouter") && Object.hasOwn(OPENROUTER_MODEL_ALIASES, trimmed)) {
+    return OPENROUTER_MODEL_ALIASES[trimmed];
   }
 
-  if (provider === "anthropic" || trimmed in ANTHROPIC_MODEL_ALIASES) {
-    return ANTHROPIC_MODEL_ALIASES[trimmed] ?? trimmed;
+  if ((provider == null || provider === "anthropic") && Object.hasOwn(ANTHROPIC_MODEL_ALIASES, trimmed)) {
+    return ANTHROPIC_MODEL_ALIASES[trimmed];
   }
 
   return trimmed;

@@ -29,27 +29,28 @@ const config = [
   "scsihw: virtio-scsi-single", "lock: backup", "memory: 2048", "cores: 2", "onboot: 0", "scsi0: local-lvm:vm-9344-disk-0,replicate=0",
   "tags: " + bindingTag, "net0: " + nic + ",link_down=1", "",
 ].join("\n");
-const managedProfile = { cpu: { vendor: "GenuineIntel" as const, requiredFlags: ["aes", "cx16", "pni", "popcnt", "sse4_1",
+const allocationOperationId = "55555555-5555-4555-8555-555555555555";
+const allocationTag = "hivra-op-" + allocationOperationId.replaceAll("-", "");
+const managedProfile = { allocationOperationId, cpu: { vendor: "GenuineIntel" as const, requiredFlags: ["aes", "cx16", "pni", "popcnt", "sse4_1",
   "sse4_2", "ssse3"] }, cpuLimit: 2, cloudInit: {
   instanceId: "d".repeat(40), gateway: "192.168.1.1", nameservers: ["192.0.2.53", "198.51.100.53"],
 } } satisfies NonNullable<PortableKvmDestinationBootProfile["managed"]>;
 const seedSnippet = `hivra-portable-meta-${operationId}.yaml`;
-const managedConfig = config.replace("vmbr1", "hivra0") + [
+const managedConfig = config.replace("vmbr1", "hivra0").replace("tags: " + bindingTag, "tags: " + bindingTag + ";" + allocationTag) + [
   "cpu: host", "cpulimit: 2", "serial0: socket", "vga: serial0", "ciuser: ubuntu", "citype: nocloud", "ciupgrade: 0",
   "ide2: local-lvm:vm-9344-cloudinit,media=cdrom,size=4M", `cicustom: meta=local:snippets/${seedSnippet}`,
   `ipconfig0: ip=${destination.ip}/24,gw=${managedProfile.cloudInit.gateway}`,
   `nameserver: ${managedProfile.cloudInit.nameservers.join(" ")}`, "",
 ].join("\n");
+const resources = { balloonMb: 2048, cpuUnits: 200 };
+const resourceConfig = managedConfig + "balloon: 2048\ncpuunits: 200\n";
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const saved = process.env;
 const roots = new Set<string>();
 
 beforeEach(() => {
-  const pair = [source, destination].map(({ hostId, vmid, ip }) => ({ hostId, vmid, ip }));
   process.env = { ...saved, VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
     VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
-    HIVRA_KVM_PORTABLE_QA_ENABLED: "true", HIVRA_KVM_PORTABLE_QA_OWNER_ID: ownerId, HIVRA_KVM_PORTABLE_QA_AGENT_ID: agentId,
-    HIVRA_KVM_PORTABLE_QA_PLACEMENTS: JSON.stringify(pair),
   };
 });
 afterEach(() => {
@@ -192,7 +193,7 @@ else:
     raise RuntimeError("unexpected fixture command")
 `;
 
-function host(current = config, managed = false) {
+function host(current = config, managed = false, resources?: NonNullable<PortableKvmDestinationBootProfile["managed"]>["resources"]) {
   const root = mkdtempSync(join(tmpdir(), "portable-boot-"));
   roots.add(root);
   for (const dir of ["bin", "sleep/portable-kvm-destinations", "pve", "lxc", "run", "lock", "net/vmbr1/bridge",
@@ -200,9 +201,9 @@ function host(current = config, managed = false) {
   const disk = { key: "scsi0" as const, bytes: 512, sha256: "6".repeat(64), snapshotId: "7".repeat(64) };
   const reservation = { agentId, operationId, generation: 2, hostId: destination.hostId, vmid: destination.vmid,
     bindingTag, checkpointSha256: "8".repeat(64), configurationSha256: digest(current), rawConfigurationSha256: digest(current),
-    storageId: "local-lvm", volumeName: "vm-9344-disk-0", volumeGroup: "pve", deviceMapperUuid: "LVM-" + "A".repeat(64), disk,
+    storageId: "local-lvm", volumeName: "vm-9344-disk-0", volumeGroup: "pve", deviceMapperUuid: "LVM-" + "A".repeat(64), disk, resources,
   };
-  const profile = { reservation, machineId, ip: destination.ip, ...(managed ? { managed: managedProfile } : {}) };
+  const profile = { reservation, machineId, ip: destination.ip, ...(managed ? { managed: { ...managedProfile, resources } } : {}) };
   const diskReceipt = { state: "disk_restored_verified" as const, reservation, readback: { sha256: disk.sha256, bytes: disk.bytes } };
   const registry = join(root, "sleep/portable-kvm-destinations");
   const bootMarker = join(registry, "9344.boot");
@@ -228,6 +229,7 @@ function host(current = config, managed = false) {
     connector_evidence: { destination, sourceFenced: true, sourceConnectorOff: true, destinationConnectorReady: true, bootId, connectorId },
   };
   const agent = { id: agentId, user_id: ownerId, infrastructure_binding_token_enforced: true,
+    allocation_operation_id: allocationOperationId,
     infrastructure_binding_token_hash: tokenHash, operation_kind: "wake", operation_payload: { portable_kvm: true }, cf_tunnel_id: tunnelId,
     status: "running", desired_state: "running", sleep_state: "waking", operation_id: operationId, sleep_generation: 2,
     proxmox_host: source.hostId, vmid: source.vmid, ip: source.ip,
@@ -260,7 +262,9 @@ function host(current = config, managed = false) {
     });
     return { ok: result.status === 0, stdout: result.stdout, stderr: result.stderr };
   });
-  const adapter = { runHostScript, readAuthority: jest.fn(async () => ({ lease, agent })) };
+  const pilot = { ownerId, agentId, placements: [source, destination] as [typeof source, typeof destination],
+    profile: {}, expiresAt: new Date(Date.now() + 3_600_000).toISOString() };
+  const adapter = { runHostScript, readAuthority: jest.fn(async (): Promise<{ lease: typeof lease; agent: typeof agent; pilot: typeof pilot } | null> => ({ lease, agent, pilot })) };
   const commit = () => {
     lease.phase = "placement_committed";
     Object.assign(agent, { proxmox_host: destination.hostId, vmid: destination.vmid, ip: destination.ip });
@@ -305,8 +309,10 @@ it("recovers a lost pre-CAS response without issuing a second start or booting a
   expect(h.events()).toBe("install_fence\nstart\nqga_0\nqga_0\n");
 });
 
-it("preserves the ordinary managed console, seed identity and leased route across cold boot and cutover", async () => {
-  const h = host(managedConfig, true);
+it.each([
+  ["legacy", managedConfig, undefined], ["explicit", resourceConfig, resources],
+] as const)("preserves the ordinary managed console, seed identity, leased route and %s resource profile across cold boot and cutover", async (_, current, envelope) => {
+  const h = host(current, true, envelope);
   h.env.TEST_RUN_GUEST = "true";
   const bootReceipt = await h.boot();
   const input = { ownerId, profile: h.profile, bootReceipt };
@@ -327,10 +333,44 @@ it("preserves the ordinary managed console, seed identity and leased route acros
   writeFileSync(join(h.root, "pve/9344.conf"), raw);
   await expect(release()).resolves.toMatchObject({ state: "destination_lock_released" });
   expect(h.events()).toMatch(/qga_1\nclear_link_cache\nqga_1\nunlock\n$/);
-  expect(readFileSync(join(h.root, "pve/9344.conf"), "utf8")).not.toContain("[");
+  const released = readFileSync(join(h.root, "pve/9344.conf"), "utf8");
+  expect(released).not.toContain("[");
+  expect(released).toContain(`tags: ${bindingTag};${allocationTag}\n`);
+  if (envelope) {
+    expect(released).toContain("balloon: 2048\n");
+    expect(released).toContain("cpuunits: 200\n");
+  }
 });
 
 it.each([
+  ["maximum memory", resourceConfig.replace("memory: 2048", "memory: 4096"), resources],
+  ["balloon floor", resourceConfig.replace("balloon: 2048", "balloon: 1024"), resources],
+  ["CPU weight", resourceConfig.replace("cpuunits: 200", "cpuunits: 100"), resources],
+  ["omitted balloon floor", resourceConfig.replace("balloon: 2048\n", ""), resources],
+  ["resources without authority", resourceConfig, undefined],
+] as const)("does not boot with %s even when the registered hashes match", async (_, current, envelope) => {
+  const h = host(current, true, envelope);
+  await expect(h.boot()).rejects.toThrow("observation failed");
+  expect(h.events()).toBe("");
+});
+
+it("refuses boot and reservation wires that disagree on the resource authority", () => {
+  const h = host(resourceConfig, true, resources);
+  expect(JSON.parse(serializePortableKvmDestinationBootProfile(h.profile)).managed.resources).toEqual(resources);
+  for (const managed of [undefined, managedProfile, { ...managedProfile, resources: { ...resources, cpuUnits: 100 } }]) {
+    expect(() => serializePortableKvmDestinationBootProfile({ ...h.profile, managed })).toThrow("resources do not match");
+  }
+  expect(() => serializePortableKvmDestinationBootProfile({
+    ...h.profile, reservation: { ...h.profile.reservation, resources: undefined },
+  })).toThrow("resources do not match");
+});
+
+it.each([
+  ["missing allocation tag", managedConfig.replace(";" + allocationTag, "")],
+  ["wrong allocation tag", managedConfig.replace(allocationTag, "hivra-op-" + "9".repeat(32))],
+  ["extra allocation tag", managedConfig.replace(allocationTag, allocationTag + ";hivra-op-" + "9".repeat(32))],
+  ["missing binding tag", managedConfig.replace(bindingTag + ";", "")],
+  ["wrong binding tag", managedConfig.replace(bindingTag, "hivra-bind-" + "9".repeat(32))],
   ["wrong gateway", managedConfig.replace("gw=192.168.1.1", "gw=192.168.1.2")],
   ["arbitrary VGA", managedConfig.replace("vga: serial0", "vga: qxl")],
   ["arbitrary disk", managedConfig.replace("vm-9344-cloudinit", "vm-9342-cloudinit")],
@@ -342,6 +382,17 @@ it.each([
   const h = host(current, true);
   await expect(h.boot()).rejects.toThrow("observation failed");
   expect(h.events()).toBe("");
+});
+
+it("refuses placement verification if allocation authority changed after quarantined boot", async () => {
+  const h = host(managedConfig, true);
+  const bootReceipt = await h.boot();
+  h.lease.phase = "destination_verified";
+  h.agent.allocation_operation_id = operationId;
+  const input = { ownerId, profile: h.profile, bootReceipt };
+  await expect(verifyPortableKvmQuarantinedDestination(input, h.adapter)).rejects.toThrow("allocation authority changed");
+  expect(h.adapter.runHostScript).toHaveBeenCalledTimes(1);
+  expect(h.events()).toBe("install_fence\nstart\nqga_0\n");
 });
 
 it("rejects a changed private metadata snippet and fails closed if guest NoCloud identity changed", async () => {
@@ -396,12 +447,14 @@ it.each(["new boot", "missing bridge fence", "host config drift"])(
   },
 );
 
-it("does not dispatch with the flag off, an expiring lease or a mismatched live placement", async () => {
+it("does not dispatch without a current runtime pilot, on non-Canary, with an expiring lease or at a mismatched live placement", async () => {
   const h = host();
-  process.env.HIVRA_KVM_PORTABLE_QA_ENABLED = "false";
+  process.env.VERCEL_GIT_COMMIT_REF = "main";
   await expect(h.boot()).rejects.toThrow("outside the enabled pilot");
   expect(h.adapter.readAuthority).not.toHaveBeenCalled();
-  process.env.HIVRA_KVM_PORTABLE_QA_ENABLED = "true";
+  process.env.VERCEL_GIT_COMMIT_REF = "canary";
+  h.adapter.readAuthority.mockResolvedValueOnce(null);
+  await expect(h.boot()).rejects.toThrow("No authoritative portable KVM lease");
   const { expires_at } = h.lease;
   h.lease.expires_at = new Date(Date.now() + 30_000).toISOString();
   await expect(h.boot()).rejects.toThrow("active pilot lease");

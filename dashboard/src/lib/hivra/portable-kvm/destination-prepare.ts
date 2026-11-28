@@ -3,6 +3,7 @@ import { portableKvmSlotPython } from "./slot-claim";
 import { isIPv4 } from "node:net";
 import { z } from "zod";
 import {
+  portableKvmManagedResourcesSchema,
   serializePortableKvmDestinationReservation,
   type PortableKvmDestinationReservation,
 } from "./destination-disk";
@@ -36,6 +37,13 @@ export const portableKvmManagedDestinationProfileSchema = z.object({
       .refine(values => new Set(values).size === values.length),
   }).strict(),
 }).strict();
+export const portableKvmAllocationOperationId = z.string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  .transform(value => value.toLowerCase());
+export const portableKvmManagedAllocationProfileSchema = portableKvmManagedDestinationProfileSchema.extend({
+  allocationOperationId: portableKvmAllocationOperationId,
+  resources: portableKvmManagedResourcesSchema.optional(),
+});
 const planSchema = z.object({
   agentId: z.string().uuid(),
   operationId: z.string().uuid(),
@@ -58,7 +66,7 @@ const planSchema = z.object({
       macAddress: portableKvmUnicastMacAddress,
     }).strict(),
     attachment: z.object({ discard: z.boolean(), ssd: z.boolean(), ioThread: z.boolean() }).strict(),
-    managed: portableKvmManagedDestinationProfileSchema.optional(),
+    managed: portableKvmManagedAllocationProfileSchema.optional(),
   }).strict(),
   disk: z.object({
     key: z.literal("scsi0"), snapshotId: sha256,
@@ -70,6 +78,7 @@ const planSchema = z.object({
   if (!managed) return true;
   const gateway = managed.cloudInit.gateway;
   return managed.cpuLimit <= plan.profile.cores && gateway !== plan.ip
+    && (!managed.resources || managed.resources.balloonMb === plan.profile.memoryMb)
     && gateway.split(".").slice(0, 3).join(".") === plan.ip.split(".").slice(0, 3).join(".")
     && [gateway, plan.ip].every(ip => !/\.(?:0|255)$/.test(ip));
 });
@@ -301,7 +310,10 @@ def check_configuration(allow_generated_section=False):
     config = fields(current)
     require(config == fields(raw_current), "destination_has_pending_configuration")
     for key, value in requested.items():
-        if key not in {"agent", "scsi0", "net0", "ide2", "ipconfig0", "cpulimit"}:
+        if key == "tags":
+            require(sorted(config.pop("tags", "").split(";")) == sorted(value.split(";")),
+                    "unexpected_destination_ownership")
+        elif key not in {"agent", "scsi0", "net0", "ide2", "ipconfig0", "cpulimit"}:
             require(config.pop(key, None) == value, "unexpected_destination_configuration")
     require(config.pop("agent", None) in {"1", "enabled=1"}, "missing_destination_guest_agent")
     require(config.pop("net0", None) == requested["net0"], "destination_nic_not_quarantined")
@@ -415,7 +427,8 @@ def measure_destination():
             "configurationSha256": hashlib.sha256(current).hexdigest(),
             "rawConfigurationSha256": hashlib.sha256(raw).hexdigest(),
             "storageId": plan["storageId"], "volumeName": volume_name, "volumeGroup": plan["volumeGroup"],
-            "deviceMapperUuid": dm_uuid, "disk": plan["disk"]}
+            "deviceMapperUuid": dm_uuid, "disk": plan["disk"],
+            **({"resources": resources} if resources else {})}
 
 def run():
     require(os.geteuid() == 0 and output("hostname", "-s").strip() == plan["hostId"].encode("ascii"), "wrong_host")
@@ -485,6 +498,7 @@ plan = json.loads(expected)
 vmid = str(plan["vmid"])
 profile = plan["profile"]
 managed = profile.get("managed")
+resources = managed.get("resources") if managed else None
 attach = profile["attachment"]
 gib = 1024 ** 3
 size_gib = plan["disk"]["bytes"] // gib
@@ -517,12 +531,15 @@ try:
         metadata = Path("/var/lib/vz/snippets", "hivra-portable-meta-" + plan["operationId"] + ".yaml")
         meta_wire = ("instance-id: " + cloudinit["instanceId"] + "\n").encode("ascii")
         requested.update({
+            "tags": plan["bindingTag"] + ";hivra-op-" + managed["allocationOperationId"].replace("-", ""),
             "cpu": "host", "cpulimit": str(managed["cpuLimit"]), "serial0": "socket", "vga": "serial0",
             "ide2": plan["storageId"] + ":cloudinit", "ciuser": "ubuntu", "citype": "nocloud", "ciupgrade": "0",
             "ipconfig0": "ip=" + plan["ip"] + "/24,gw=" + cloudinit["gateway"],
             "nameserver": " ".join(cloudinit["nameservers"]),
             "cicustom": "meta=local:snippets/" + metadata.name,
         })
+        if resources:
+            requested.update({"balloon": str(resources["balloonMb"]), "cpuunits": str(resources["cpuUnits"])})
     expires = datetime.fromisoformat(plan["expiresAt"].replace("Z", "+00:00"))
     run()
 except RuntimeError as error:
@@ -550,12 +567,15 @@ export function parsePortableKvmDestinationPrepareReceipt(
   try {
     const reservation: PortableKvmDestinationReservation = JSON.parse(receipts[0].slice(prefix.length));
     serializePortableKvmDestinationReservation(reservation);
+    const resources = plan.profile.managed?.resources;
     if (reservation.agentId !== plan.agentId || reservation.operationId !== plan.operationId
       || reservation.generation !== plan.generation || reservation.checkpointSha256 !== plan.checkpointSha256
       || reservation.hostId !== plan.hostId || reservation.vmid !== plan.vmid || reservation.bindingTag !== plan.bindingTag
       || reservation.storageId !== plan.storageId || reservation.volumeGroup !== plan.volumeGroup
       || reservation.volumeName !== `vm-${plan.vmid}-disk-0` || reservation.disk.bytes !== plan.disk.bytes
-      || reservation.disk.sha256 !== plan.disk.sha256 || reservation.disk.snapshotId !== plan.disk.snapshotId) return null;
+      || reservation.disk.sha256 !== plan.disk.sha256 || reservation.disk.snapshotId !== plan.disk.snapshotId
+      || reservation.resources?.balloonMb !== resources?.balloonMb
+      || reservation.resources?.cpuUnits !== resources?.cpuUnits) return null;
     return reservation;
   } catch { return null; }
 }

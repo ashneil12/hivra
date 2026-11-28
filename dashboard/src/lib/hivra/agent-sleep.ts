@@ -20,6 +20,7 @@ import {
   finishAgentSleep,
   logAgentSleepEvent,
   parseSleepGeneration,
+  reserveAgentSleepWake,
   type AgentSleepEventKind,
   type AgentSleepFinishResult,
   type AgentSleepState,
@@ -364,7 +365,7 @@ export interface SleepOptions {
 }
 
 /** Reasons a sleep script gives up that are the computer being busy or unsuitable, not a fault. */
-const ABORT_REASONS = new Set(["busy", "active", "not_sleepable", "pool_full", "pool_headroom"]);
+const ABORT_REASONS = new Set(["busy", "active", "schedule_changed", "not_sleepable", "pool_full", "pool_headroom"]);
 
 function stateFromObserved(observed: ObservedSleepState): AgentSleepFinishResult | null {
   if (observed === "awake") return "awake";
@@ -536,6 +537,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   // left alone without a trace. A napping agent cannot be probed (its guest is
   // paused); it was idle when it napped and its next job is guarded above.
   let verdict: IdleVerdict | null = null;
+  let guestNextJobAt: string | null = null;
   let covered: string[] = [];
   let coverage: ChannelCoverage = { covered: [], telegram: false, generic: [] };
   let preSleepArms: PreSleepArm[] = [];
@@ -562,6 +564,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
       if (!verdict.idle) {
         return { outcome: "not_idle", reason: verdict.reasons[0], reasons: verdict.reasons, nextJobAt: verdict.nextJobAt };
       }
+      guestNextJobAt = probe.nextJobAt;
       if (hostIngress) {
         const blocker = ingressIdleBlocker(parseIngressVmStats(run?.stdout ?? "", target.vmid), {
           manual,
@@ -666,6 +669,14 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
       });
     };
 
+    const nextJobAt = verdict?.nextJobAt;
+    const wakeAt = nextJobAt ? new Date(Date.parse(nextJobAt) - SCHEDULED_WAKE_LEAD_SECONDS * 1000).toISOString() : null;
+    if (state === "awake" && !(await reserveAgentSleepWake({ agentId, operationId, wakeAt }))) {
+      const finished = await finish("awake");
+      await record("fail", "awake", "schedule_reservation_failed", { lease_left: !finished });
+      return { outcome: "failed", state: "awake", reason: "schedule_reservation_failed", ms: now() - startedAt };
+    }
+
     // The host's own answer when the script could not tell us: wake it, so it
     // ends up awake, and read the state the wake reports.
     // A script that is still running on the host (the wake script says busy then)
@@ -704,6 +715,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
         bindingTag: target.bindingTag,
         tier,
         manual,
+        ...(state === "awake" ? { expectedNextJobAt: guestNextJobAt } : { fromNap: true }),
         ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
         ...(hostIngress ? { hostIngress: true } : {}),
         ...(isSleepMemoryTrimEnabled() ? { trimMemory: true } : {}),
@@ -741,6 +753,10 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
         reason: receipt.reason,
         ms: now() - startedAt,
       };
+    }
+
+    if (state === "awake" && (!receipt.probe || receipt.probe.nextJobAt !== guestNextJobAt)) {
+      return recoverByWaking("schedule_check_unconfirmed");
     }
 
     // The script says it slept. Check the probe it carried against the full
@@ -800,21 +816,11 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
       return { outcome: "failed", reason: "finish_not_recorded", ms: now() - startedAt };
     }
     await record(tier, slept, tier === "nap" ? "napped" : "hibernated", receiptDetail(receipt, {
+      ...(wakeAt ? { next_job_at: nextJobAt ?? null, scheduled_wake_at: wakeAt } : {}),
       ...(finalCoverage.telegram ? { tg_covered: true } : {}),
       ...(coverage.generic.length > 0 ? { ch_covered: coverage.generic.map((c) => c.adapter.channel).join(",") } : {}),
     }));
 
-    // Wake it ahead of its next job.
-    let nextJobAt: string | null | undefined;
-    if (finalVerdict) {
-      nextJobAt = finalVerdict.nextJobAt;
-      const wakeAt = nextJobAt ? new Date(Date.parse(nextJobAt) - SCHEDULED_WAKE_LEAD_SECONDS * 1000).toISOString() : null;
-      try {
-        await supabaseAdmin?.from("hivra_agents").update({ next_wake_at: wakeAt }).eq("id", agentId).eq("sleep_state", slept);
-      } catch {
-        // The sweep still wakes it on demand; a missed schedule only delays a job.
-      }
-    }
     return { outcome: "slept", state: slept, nextJobAt, ms: now() - startedAt };
   }
 }

@@ -9,7 +9,10 @@ jest.mock("@/lib/supabase", () => ({
     from: (table: string) => {
       const q: Record<string, unknown> = {};
       for (const m of ["select", "eq", "in", "limit"]) q[m] = () => q;
-      q.update = (patch: unknown) => { mockUpdate(table, patch); return q; };
+      q.update = (patch: unknown) => {
+        q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(mockUpdate(table, patch)).then(resolve);
+        return q;
+      };
       q.maybeSingle = () => (table === "hivra_agents" ? mockReadRow() : mockHostRow());
       q.then = (resolve: (value: unknown) => unknown) => Promise.resolve(mockListRows(table)).then(resolve);
       return q;
@@ -148,6 +151,7 @@ describe("sleepHivraAgent with Telegram wake", () => {
     mockReadRow.mockResolvedValue({ data: eligibleRow({ type: "hermes" }), error: null });
     mockHostRow.mockResolvedValue({ data: host, error: null });
     mockListRows.mockReturnValue({ data: [], error: null });
+    mockUpdate.mockReturnValue({ data: [{ id: AGENT_ID }], error: null });
     mockLapsed.mockResolvedValue(false);
     mockResolveTarget.mockResolvedValue({ ok: true, target });
     mockClaim.mockResolvedValue(4);
@@ -234,6 +238,7 @@ describe("sleepHivraAgent with agent wake profiles on", () => {
     mockReadRow.mockResolvedValue({ data: eligibleRow({ type: "openclaw" }), error: null });
     mockHostRow.mockResolvedValue({ data: host, error: null });
     mockListRows.mockReturnValue({ data: [], error: null });
+    mockUpdate.mockReturnValue({ data: [{ id: AGENT_ID }], error: null });
     mockLapsed.mockResolvedValue(false);
     mockResolveTarget.mockResolvedValue({ ok: true, target });
     mockClaim.mockResolvedValue(4);

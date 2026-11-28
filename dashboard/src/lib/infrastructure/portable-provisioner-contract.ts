@@ -6,7 +6,7 @@
  * contract cannot accidentally pull server secrets into a client bundle.
  */
 
-export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.27.7";
+export const PORTABLE_HIVRA_PROVISIONER_VERSION = "2026.11.28.1";
 export const PORTABLE_HIVRA_PROVISIONER_MAX_FILE_BYTES = 2 * 1024 * 1024;
 export const PORTABLE_HIVRA_PROVISIONER_MAX_BUNDLE_BYTES = PORTABLE_HIVRA_PROVISIONER_MAX_FILE_BYTES + 64 * 1024;
 /** Exact reviewed releases with the same Proxmox lifecycle/runtime ABI. An
@@ -136,6 +136,7 @@ export const PORTABLE_HIVRA_COMPATIBLE_PROXMOX_VERSIONS = [
   "2026.11.27.4",
   "2026.11.27.5",
   "2026.11.27.6",
+  "2026.11.27.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function isCompatibleProxmoxProvisionerVersion(version: unknown): version is string {
@@ -352,6 +353,7 @@ const PORTABLE_HIVRA_LINUX_DESKTOP_VERSIONS = [
   "2026.11.27.4",
   "2026.11.27.5",
   "2026.11.27.6",
+  "2026.11.27.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 
@@ -441,6 +443,7 @@ const PORTABLE_HIVRA_WINDOWS_INSTALLER_VERSIONS = [
   "2026.11.27.4",
   "2026.11.27.5",
   "2026.11.27.6",
+  "2026.11.27.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWindowsInstaller(version: unknown): boolean {
@@ -530,6 +533,7 @@ const PORTABLE_HIVRA_HOST_CAPACITY_ADMISSION_VERSIONS = [
   "2026.11.27.4",
   "2026.11.27.5",
   "2026.11.27.6",
+  "2026.11.27.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsHostCapacityAdmission(version: unknown): boolean {
@@ -589,6 +593,7 @@ export const PORTABLE_HIVRA_WAKE_PROXY_VERSIONS = [
   "2026.11.27.4",
   "2026.11.27.5",
   "2026.11.27.6",
+  "2026.11.27.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWakeProxy(version: unknown): boolean {
@@ -645,6 +650,7 @@ export const PORTABLE_HIVRA_HOST_CREDENTIAL_VERSIONS = [
   "2026.11.27.4",
   "2026.11.27.5",
   "2026.11.27.6",
+  "2026.11.27.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsHostCredential(version: unknown): boolean {
@@ -701,6 +707,7 @@ export const PORTABLE_HIVRA_WAKE_DOORBELL_VERSIONS = [
   "2026.11.27.4",
   "2026.11.27.5",
   "2026.11.27.6",
+  "2026.11.27.7",
   PORTABLE_HIVRA_PROVISIONER_VERSION,
 ] as const;
 export function provisionerSupportsWakeDoorbell(version: unknown): boolean {

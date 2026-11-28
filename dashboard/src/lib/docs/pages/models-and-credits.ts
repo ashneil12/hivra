@@ -1,5 +1,6 @@
 import type { DocPage } from "../types";
 import { CLI_RUN_LIFETIME, SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "models-and-credits",
@@ -45,7 +46,7 @@ export const doc: DocPage = {
         "The table above is for a computer on Hivra Cloud. Launch narrows the choices when the destination cannot use one of them.",
         "| Where the agent runs | What changes |\n| --- | --- |\n| Hivra Cloud | The full table above applies. |\n| A Proxmox server you connected | Claude Code, Codex, OpenClaw, Agent Zero and Aeon can run there. Hermes, DeepSeek Harness, OpenBot and Nuphos are Hivra Cloud only. Credits work, and credits for Claude Code need a server on provisioner release 2026.11.10.2 or later. Codex needs the server to report that it can take a model key safely. If it has not, the choice reads \"This server hasn't said it can take a model key safely yet. Update it in Capacity, or choose another option.\" |\n| A computer in your own cloud account | Not listed as an available place to run in Hivra's current status, so do not plan around it. If your Launch does show it, credits are not offered for any agent except Codex and the choice reads \"Hivra credits can't be set up for this agent on a computer in your own cloud yet.\" The agent's own sign-in becomes the default. |\n| A self-hosted installation of Hivra | There are no Hivra credits to offer. The agent's own sign-in is the default, and DeepSeek Harness defaults to your own key. |",
         "When credits are not an option, Hivra picks the agent's own sign-in as the default for you, except for DeepSeek Harness, which always needs a model at launch.",
-        "[Run agents on your own server](/docs/connect-your-own-server) covers connecting a server. Every computer that Hivra Cloud runs needs a paid plan.",
+        `[Run agents on your own server](/docs/connect-your-own-server) covers connecting a server. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
       ],
     },
     {

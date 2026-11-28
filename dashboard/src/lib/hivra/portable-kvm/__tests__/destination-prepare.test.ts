@@ -3,16 +3,20 @@ import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { verifiedDestroyHivraVmScript } from "../../delete-hivra-agent";
 import { serializePortableKvmDestinationReservation } from "../destination-disk";
 import {
   buildPortableKvmDestinationPrepareScript,
   buildPortableKvmHostCpuCompatibilityProbeScript,
   parsePortableKvmDestinationPrepareReceipt,
+  portableKvmManagedDestinationProfileSchema,
   serializePortableKvmDestinationPreparePermit,
   type PortableKvmDestinationPrepareInput,
 } from "../destination-prepare";
 
 jest.mock("server-only", () => ({}));
+jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScript: jest.fn() }));
+jest.mock("@/lib/supabase", () => ({ supabaseAdmin: {} }));
 
 const gib = 1024 ** 3;
 const vmid = 9344;
@@ -31,17 +35,24 @@ const plan: PortableKvmDestinationPrepareInput = {
   disk: { key: "scsi0", snapshotId: "4".repeat(64), bytes: 12 * gib, sha256: "5".repeat(64) },
 };
 const instanceId = "b".repeat(40);
+const allocationOperationId = "00000000-0000-4333-8333-00000000ABCD";
+const allocationTag = "hivra-op-0000000000004333833300000000abcd";
 const managedPlan: PortableKvmDestinationPrepareInput = {
   ...plan,
   profile: {
     ...plan.profile,
     network: { ...plan.profile.network, bridge: "hivra0" },
     managed: {
+      allocationOperationId,
       cpu: { vendor: "AuthenticAMD", requiredFlags: ["aes", "avx2", "cx16", "pni", "popcnt", "sse4_1", "sse4_2", "ssse3"] },
       cpuLimit: 1.25,
       cloudInit: { instanceId, gateway: "10.251.10.1", nameservers: ["10.251.10.1", "192.0.2.53"] },
     },
   },
+};
+const resources = { balloonMb: 2048, cpuUnits: 200 };
+const managedResourcePlan = {
+  ...managedPlan, profile: { ...managedPlan.profile, managed: { ...managedPlan.profile.managed!, resources } },
 };
 const roots = new Set<string>();
 afterEach(() => {
@@ -52,7 +63,6 @@ afterEach(() => {
 const hostTools = String.raw`#!/usr/bin/python3
 import hashlib
 import json
-import hashlib
 import os
 import sys
 from pathlib import Path
@@ -90,6 +100,9 @@ elif name == "pvesm" and args == ["path", "local-lvm:vm-9344-cloudinit"]:
     print(r / "devices/pve/vm-9344-cloudinit")
 elif name == "pvesm" and args == ["path", "local:snippets/" + snippet]:
     print(meta)
+elif name == "pvesm" and args == ["list", "local-lvm"]:
+    for device in (r / "devices/pve").iterdir():
+        print("local-lvm:" + device.name)
 elif name == "lvs" and args[0:8] == ["--reportformat", "json", "--units", "b", "--nosuffix", "-o",
       "vg_name,vg_uuid,lv_name,lv_uuid,lv_size,lv_attr,pool_lv,origin,data_percent,metadata_percent"]:
     pool = dict(vg_name="pve", lv_name="data", lv_size=str(100 * 1024**3), lv_attr="twi-aotz--",
@@ -103,10 +116,26 @@ elif name == "lvs" and args[0:8] == ["--reportformat", "json", "--units", "b", "
                         origin="", vg_uuid="-".join(["VVVV"] * 8), lv_uuid="-".join(["SSSS"] * 8)))
     print(json.dumps({"report": [{"lv": lvs}]}))
 elif name == "qm" and args == ["status", "9344"]:
+    if not cfg.exists():
+        sys.exit(2)
     print("status: " + env.get("VM_STATUS", "stopped"))
-elif name == "qm" and args == ["config", "9344", "--current", "1"]:
+elif name == "qm" and args in (["config", "9344"], ["config", "9344", "--current", "1"]):
     raw = cfg.read_text()
     print(raw.split("\n[special:cloudinit]\n")[0] if managed else raw, end="")
+elif name == "qm" and args == ["listsnapshot", "9344"]:
+    print("-> current")
+elif name == "qm" and args in (["stop", "9344", "--timeout", "30"],
+                                ["destroy", "9344", "--purge", "1", "--destroy-unreferenced-disks", "1"]):
+    with (r / "events").open("a") as f:
+        f.write(args[0] + "\n")
+    if "lock: backup\n" in cfg.read_text():
+        sys.exit(2)
+    if args[0] == "destroy":
+        cfg.unlink()
+        for device in (r / "devices/pve").glob("vm-9344-*"):
+            device.unlink()
+elif name == "sleep" and args == ["1"]:
+    pass
 elif name == "qm" and args[0:2] == (["set", "9344"] if managed else ["create", "9344"]):
     if managed:
         assert slot and args[2:5] == ["--skiplock", "1", "--digest"]
@@ -125,6 +154,7 @@ elif name == "qm" and args[0:2] == (["set", "9344"] if managed else ["create", "
     }
     if managed:
         expected.update({
+            "--tags": "hivra-bind-" + "a"*32 + ";${allocationTag}",
             "--cpu": "host", "--cpulimit": "1.25", "--serial0": "socket", "--vga": "serial0",
             "--ide2": "local-lvm:cloudinit", "--ciuser": "ubuntu", "--citype": "nocloud", "--ciupgrade": "0",
             "--ipconfig0": "ip=10.251.10.44/24,gw=10.251.10.1", "--nameserver": "10.251.10.1 192.0.2.53",
@@ -132,6 +162,8 @@ elif name == "qm" and args[0:2] == (["set", "9344"] if managed else ["create", "
             "--cicustom": "meta=local:snippets/" + snippet,
         })
         assert meta.read_text() == seed["meta-data"] and meta.stat().st_mode & 0o777 == 0o600
+    if env.get("RESOURCE_ENVELOPE"):
+        expected.update({"--balloon": "2048", "--cpuunits": "200"})
     assert options == expected
     assert (r / "state/portable-kvm-destinations/.attempt-9344").exists()
     with (r / "events").open("a") as f:
@@ -146,6 +178,10 @@ elif name == "qm" and args[0:2] == (["set", "9344"] if managed else ["create", "
     data = "\n".join(k[2:] + ": " + v for k, v in sorted(options.items())) + "\n"
     if env.get("OPEN_NIC"):
         data = data.replace(",link_down=1", "")
+    if env.get("READBACK_TAGS"):
+        data = data.replace("tags: " + options["--tags"], "tags: " + env["READBACK_TAGS"])
+    if env.get("ALTER_RESOURCE"):
+        data = data.replace(env["ALTER_RESOURCE"] + "\n", env.get("ALTERED_RESOURCE", "") + "\n").replace("\n\n", "\n")
     cfg.write_text(data + env.get("EXTRA_CONFIG", "") + ("\n[special:cloudinit]\nadded: nameserver\n" if managed else ""))
     (r / "devices/pve/vm-9344-disk-0").symlink_to(r / "devices/dm-0")
 elif name == "perl" and managed and args[-2:] == ["9344", hashlib.sha256(cfg.read_bytes()).hexdigest()]:
@@ -204,7 +240,7 @@ function fixture(input = plan) {
   put("dm/0:1/dm/uuid", seedUuid);
   const tool = join(root, "host-tools");
   writeFileSync(tool, hostTools, { mode: 0o700 });
-  for (const command of ["qm", "pvesh", "pvesm", "hostname", "findmnt", "lvs", "kvm", "perl", "isoinfo"]) {
+  for (const command of ["qm", "pvesh", "pvesm", "hostname", "findmnt", "lvs", "kvm", "perl", "isoinfo", "sleep"]) {
     symlinkSync(tool, join(root, "bin", command));
   }
   const run = (flags: Record<string, string> = {}, lock?: string, current = input) => {
@@ -238,10 +274,27 @@ function fixture(input = plan) {
         encoding: "utf8", timeout: 5000, env: {
           NODE_ENV: "test", PATH: join(root, "bin") + ":/usr/bin:/bin", MOCK_ROOT: root,
           MANAGED: current.profile.managed ? "yes" : "", MOCK_MAC: current.profile.network.macAddress, ...flags,
+          RESOURCE_ENVELOPE: current.profile.managed?.resources ? "yes" : "",
         },
       });
   };
-  return { root, put, run, permit, marker, events: () => readFileSync(join(root, "events"), "utf8") };
+  const runDelete = (
+    expectedAllocationOperationId: string | null,
+    expectedInfrastructureBindingTag: string | null,
+  ) => {
+    const script = verifiedDestroyHivraVmScript({
+      vmid, storage: input.storageId, expectedAllocationOperationId, expectedInfrastructureBindingTag,
+      allowManagedLegacyAuthority: false, cleanupPaths: [],
+    }).replaceAll("/run/lock", join(root, "locks"))
+      .replaceAll("/run/hivra-provision", join(root, "provision"))
+      .replaceAll("/var/lib/hivra/provision-results", join(root, "results"))
+      .replaceAll("/var/lib/hivra/provision-operations", join(root, "intents"));
+    return spawnSync("bash", ["-c", script], {
+      encoding: "utf8", timeout: 5000,
+      env: { NODE_ENV: "test", PATH: join(root, "bin") + ":/usr/bin:/bin", MOCK_ROOT: root },
+    });
+  };
+  return { root, put, run, runDelete, permit, marker, events: () => readFileSync(join(root, "events"), "utf8") };
 }
 
 it("allocates once, measures the host readback and emits the disk helper's canonical reservation", () => {
@@ -253,6 +306,7 @@ it("allocates once, measures the host readback and emits the disk helper's canon
   expect(reservation).toMatchObject({ storageId: "local-lvm", volumeName: "vm-9344-disk-0", deviceMapperUuid: dmUuid,
     hostId: plan.hostId, vmid, disk: plan.disk });
   const configuration = readFileSync(join(host.root, `qemu/${vmid}.conf`));
+  expect(configuration.toString()).toContain(`tags: ${plan.bindingTag}\n`);
   const sha256 = createHash("sha256").update(configuration).digest("hex");
   expect(reservation.configurationSha256).toBe(sha256);
   expect(reservation.rawConfigurationSha256).toBe(sha256);
@@ -397,6 +451,117 @@ it("recreates only the generated managed NoCloud seed and preserves the source i
   expect(host.events()).toBe("create\nregenerate\n");
 });
 
+it.each([
+  ["without explicit resources", managedPlan], ["with explicit resources", managedResourcePlan],
+] as const)("lets signed Delete destroy the released managed destination %s using its original allocation identity", (_, input) => {
+  const host = fixture(input);
+  const result = host.run();
+  expect({ status: result.status, error: result.stderr }).toEqual({ status: 0, error: "" });
+  const cfg = `qemu/${vmid}.conf`;
+  const prepared = readFileSync(join(host.root, cfg), "utf8");
+  expect(prepared).toContain(`tags: ${managedPlan.bindingTag};${allocationTag}\n`);
+  const reservation = parsePortableKvmDestinationPrepareReceipt(result.stdout, input);
+  expect(reservation?.resources).toEqual(input.profile.managed!.resources);
+  expect(readFileSync(host.marker, "utf8")).toBe(serializePortableKvmDestinationReservation(reservation!));
+  if (input.profile.managed!.resources) {
+    expect(prepared).toContain("balloon: 2048\n");
+    expect(prepared).toContain("cpuunits: 200\n");
+    expect(parsePortableKvmDestinationPrepareReceipt(result.stdout, managedPlan)).toBeNull();
+    expect(parsePortableKvmDestinationPrepareReceipt(result.stdout.replace('"cpuUnits":200', '"cpuUnits":100'), input)).toBeNull();
+  }
+
+  const released = prepared.replace("lock: backup\n", "");
+  expect(released).not.toBe(prepared);
+  host.put(cfg, released);
+
+  for (const [allocation, binding, error] of [
+    [null, managedPlan.bindingTag, "without complete provider ownership evidence"],
+    [managedPlan.operationId, managedPlan.bindingTag, "ownership changed before deletion"],
+    [allocationOperationId, null, "without complete provider ownership evidence"],
+    [allocationOperationId, "hivra-bind-" + "c".repeat(32), "ownership changed before deletion"],
+  ] as const) {
+    const refused = host.runDelete(allocation, binding);
+    expect(refused.status).toBe(1);
+    expect(refused.stderr).toContain(error);
+    expect(readFileSync(join(host.root, cfg), "utf8")).toBe(released);
+    expect(host.events()).toBe("create\nregenerate\n");
+  }
+
+  const deleted = host.runDelete(allocationOperationId, managedPlan.bindingTag);
+  expect({ status: deleted.status, error: deleted.stderr, receipt: deleted.stdout }).toEqual({
+    status: 0, error: "", receipt: `destroyed ${vmid}\n`,
+  });
+  expect(existsSync(join(host.root, cfg))).toBe(false);
+  expect(host.events()).toBe("create\nregenerate\nstop\ndestroy\n");
+});
+
+it.each([
+  [{ balloonMb: 2048 }], [{ cpuUnits: 200 }], [{ balloonMb: 1024, cpuUnits: 200 }],
+  [{ balloonMb: 16385, cpuUnits: 200 }], [{ balloonMb: 2048, cpuUnits: 0 }],
+  [{ balloonMb: 2048, cpuUnits: 10001 }], [{ balloonMb: 2048, cpuUnits: 50.1 }],
+  [{ balloonMb: 2048, cpuUnits: 200, source: true }],
+])("rejects an invalid or mismatched managed resource envelope: %j", invalid => {
+  const profile = managedResourcePlan.profile;
+  expect(() => serializePortableKvmDestinationPreparePermit({
+    ...managedResourcePlan, profile: { ...profile, managed: { ...profile.managed, resources: invalid as typeof resources } },
+  })).toThrow();
+});
+
+it("does not accept allocation resources in the base managed runtime profile", () => {
+  const { cpu, cpuLimit, cloudInit } = managedResourcePlan.profile.managed;
+  expect(portableKvmManagedDestinationProfileSchema.safeParse({ cpu, cpuLimit, cloudInit, resources }).success).toBe(false);
+});
+
+it.each([
+  ["memory: 2048", "memory: 4096"], ["balloon: 2048", "balloon: 1024"], ["cpuunits: 200", "cpuunits: 100"],
+  ["balloon: 2048", ""], ["cpuunits: 200", ""],
+])("does not reserve a destination with resource readback drift (%s → %s)", (key, value) => {
+  const host = fixture(managedResourcePlan);
+  const result = host.run({ ALTER_RESOURCE: key, ALTERED_RESOURCE: value });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("unexpected_destination_configuration");
+  expect(existsSync(host.marker)).toBe(false);
+});
+
+it.each([plan, managedPlan])("rejects unauthorized resource fields in prepared config", input => {
+  const host = fixture(input);
+  const result = host.run({ EXTRA_CONFIG: "balloon: 2048\ncpuunits: 200\n" });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("unsupported_destination_configuration");
+  expect(existsSync(host.marker)).toBe(false);
+});
+
+const invalidOwnershipTags = [
+  ["missing allocation", managedPlan.bindingTag],
+  ["wrong allocation", `${managedPlan.bindingTag};hivra-op-22222222222242228222222222222222`],
+  ["missing binding", allocationTag],
+  ["wrong binding", `hivra-bind-${"c".repeat(32)};${allocationTag}`],
+] as const;
+
+it.each([
+  ...invalidOwnershipTags,
+  ["extra tag", `${managedPlan.bindingTag};${allocationTag};extra`] as const,
+])("rejects the managed destination readback with %s", (_, tags) => {
+  const host = fixture(managedPlan);
+  const result = host.run({ READBACK_TAGS: tags });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("unexpected_destination_ownership");
+  expect(existsSync(host.marker)).toBe(false);
+  expect(host.events()).toBe("create\n");
+});
+
+it.each(invalidOwnershipTags)("refuses to Delete the partial destination config with %s", (_, tags) => {
+  const host = fixture(managedPlan);
+  expect(host.run({ READBACK_TAGS: tags }).status).toBe(1);
+  const cfg = join(host.root, `qemu/${vmid}.conf`);
+  const partial = readFileSync(cfg, "utf8");
+  const refused = host.runDelete(allocationOperationId, managedPlan.bindingTag);
+  expect(refused.status).toBe(1);
+  expect(refused.stderr).toContain("ownership changed before deletion");
+  expect(readFileSync(cfg, "utf8")).toBe(partial);
+  expect(host.events()).toBe("create\n");
+});
+
 it("preserves the ordinary globally administered Proxmox unicast MAC and refuses group or empty addresses", () => {
   const profile = { ...managedPlan.profile, network: { ...managedPlan.profile.network, macAddress: "BC:24:11:12:34:56" } };
   const input = { ...managedPlan, profile };
@@ -490,3 +655,14 @@ it("validates the managed permit without allowing scripts, passwords, SSH keys o
     })).toThrow();
   }
 });
+
+it.each([undefined, "", "00000000-0000-7333-8333-00000000ABCD", "00000000-0000-4333-7333-00000000ABCD"])(
+  "refuses an invalid or missing managed allocation operation ID (%s)",
+  invalid => {
+    expect(() => serializePortableKvmDestinationPreparePermit({
+      ...managedPlan, profile: {
+        ...managedPlan.profile, managed: { ...managedPlan.profile.managed!, allocationOperationId: invalid as string },
+      },
+    })).toThrow();
+  },
+);

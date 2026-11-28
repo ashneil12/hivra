@@ -108,9 +108,9 @@ export const EMAIL_CHANNEL_SPEC: ChannelWakeSpec = {
  * The message that woke the agent reaches Hermes only through Discord's
  * replay (a short nap) or Hermes's own catch-up (DISCORD_MISSED_MESSAGE_BACKFILL,
  * off by default), and that catch-up reads DMs only from channels it lists.
- * So it is covered only while the probe sees the catch-up on and, as Hermes
- * always accepts DMs, at least one channel listed for it. OpenClaw's Discord
- * (openclaw:discord) has no catch-up and is never covered. The doorbell switch
+ * A list of known DM channels cannot cover a new DM, so a bot that accepts DMs
+ * must stay awake. OpenClaw's Discord (openclaw:discord) has no catch-up and
+ * is never covered. The doorbell switch
  * (HIVRA_WAKE_DOORBELLS) is checked by the adapter.
  */
 export const DISCORD_CHANNEL_SPEC: ChannelWakeSpec = {
@@ -127,13 +127,13 @@ export const DISCORD_CHANNEL_SPEC: ChannelWakeSpec = {
     if (!facts) reasons.push("no_discord_facts");
     else {
       if (!facts.backfill) reasons.push("backfill_off");
-      if (facts.dmsAllowed && facts.backfillChannels === 0) reasons.push("dm_not_backfilled");
+      if (facts.dmsAllowed) reasons.push("dm_not_backfilled");
     }
     return reasons;
   },
   hostFactsPerl: String.raw`defined($f) && JSON::PP::is_bool($f->{backfill}) && $f->{backfill}
         && JSON::PP::is_bool($f->{dmsAllowed}) && defined($f->{backfillChannels}) && !ref($f->{backfillChannels})
-        && $f->{backfillChannels} =~ /\A[0-9]{1,6}\z/ && (!$f->{dmsAllowed} || $f->{backfillChannels} > 0)`,
+        && $f->{backfillChannels} =~ /\A[0-9]{1,6}\z/ && !$f->{dmsAllowed}`,
 };
 
 /** The channels with a generic adapter; order is the gate's order. */

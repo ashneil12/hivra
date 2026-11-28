@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, LayoutDashboard, Terminal, PenTool, BarChart, HardHat, Search, Eye, X, Copy, Check, Save } from "lucide-react";
+import { ArrowLeft, LayoutDashboard, Terminal, PenTool, BarChart, HardHat, Search, Eye, X, Copy, Check, Save } from "lucide-react";
 import type { AgentTemplate } from "@/data/agency-templates";
 import { copyTextToClipboard } from "@/lib/client/clipboard";
 import { clientLog } from "@/lib/client/logger";
@@ -246,6 +246,7 @@ export default function LibraryPage() {
                         display: "flex",
                         justifyContent: "center",
                         alignItems: "center",
+                        gap: "0.5rem",
                         cursor: "pointer",
                         transition: "all 0.2s",
                       }}
@@ -253,30 +254,7 @@ export default function LibraryPage() {
                       onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                       title={libraryCopy.viewPrompt}
                     >
-                      <Eye size={14} />
-                    </button>
-                    
-                    <button 
-                      onClick={() => router.push(`/dashboard/chat?templateId=${t.id}`)}
-                      style={{
-                        flex: 1,
-                        minHeight: 44,
-                        padding: "10px",
-                        background: "var(--btn-bg)", color: "var(--btn-text)",
-                        border: "none",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        cursor: "pointer",
-                        fontFamily: "var(--font-mono), monospace",
-                        fontSize: 10,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.15em",
-                        fontWeight: 600,
-                      }}
-                    >
-                      <span>{libraryCopy.deploy}</span>
-                      <ArrowRight size={14} />
+                      <Eye size={14} /> {libraryCopy.viewPrompt}
                     </button>
                   </div>
                 </div>
@@ -327,6 +305,7 @@ export default function LibraryPage() {
                         display: "flex",
                         justifyContent: "center",
                         alignItems: "center",
+                        gap: "0.5rem",
                         cursor: "pointer",
                         transition: "all 0.2s",
                       }}
@@ -334,30 +313,7 @@ export default function LibraryPage() {
                       onMouseLeave={e => { e.currentTarget.style.background = "transparent"; }}
                       title={libraryCopy.viewPrompt}
                     >
-                      <Eye size={14} />
-                    </button>
-                    
-                    <button 
-                      onClick={() => router.push(`/dashboard/chat?templateId=${t.id}`)}
-                      style={{
-                        flex: 1,
-                        minHeight: 44,
-                        padding: "10px",
-                        background: "var(--btn-bg)", color: "var(--btn-text)",
-                        border: "none",
-                        display: "flex",
-                        justifyContent: "space-between",
-                        alignItems: "center",
-                        cursor: "pointer",
-                        fontFamily: "var(--font-mono), monospace",
-                        fontSize: 10,
-                        textTransform: "uppercase",
-                        letterSpacing: "0.15em",
-                        fontWeight: 600,
-                      }}
-                    >
-                      <span>{libraryCopy.deploy}</span>
-                      <ArrowRight size={14} />
+                      <Eye size={14} /> {libraryCopy.viewPrompt}
                     </button>
                   </div>
                 </div>
@@ -407,10 +363,8 @@ export default function LibraryPage() {
           copied={copied}
           closeLabel={libraryCopy.closePreview}
           copyLabel={copied ? libraryCopy.copied : libraryCopy.copyPrompt}
-          deployLabel={libraryCopy.deployTemplate}
           onClose={() => setPreviewTemplate(null)}
           onCopy={() => handleCopy(previewTemplate.prompt)}
-          onDeploy={() => router.push(`/dashboard/chat?templateId=${previewTemplate.id}`)}
         />
       )}
     </DashboardPageShell>
@@ -427,10 +381,8 @@ function LibraryPreviewDialog({
   copied,
   closeLabel,
   copyLabel,
-  deployLabel,
   onClose,
   onCopy,
-  onDeploy,
 }: {
   title: string;
   icon: ReactNode;
@@ -438,10 +390,8 @@ function LibraryPreviewDialog({
   copied: boolean;
   closeLabel: string;
   copyLabel: string;
-  deployLabel: string;
   onClose: () => void;
   onCopy: () => void;
-  onDeploy: () => void;
 }) {
   const closeRef = useRef<HTMLButtonElement | null>(null);
   const dialogRef = useInfrastructureDialog({ onClose, initialFocusRef: closeRef });
@@ -558,28 +508,6 @@ function LibraryPreviewDialog({
             {copyLabel}
           </button>
 
-          <button
-            onClick={onDeploy}
-            style={{
-              flex: "1 1 140px",
-              minHeight: 44,
-              justifyContent: "center",
-              padding: "10px 20px",
-              background: "var(--btn-bg)", color: "var(--btn-text)",
-              border: "none",
-              display: "flex",
-              gap: "0.5rem",
-              alignItems: "center",
-              cursor: "pointer",
-              fontFamily: "var(--font-mono), monospace",
-              fontSize: 10,
-              textTransform: "uppercase",
-              letterSpacing: "0.15em",
-              fontWeight: 600,
-            }}
-          >
-            {deployLabel} <ArrowRight size={14} />
-          </button>
         </footer>
       </div>
     </div>

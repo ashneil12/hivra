@@ -22,6 +22,7 @@
 // Pure (no server imports) so the tests can run the program itself.
 
 import { TELEGRAM_ENV_VALUE_PY } from "./idle-probe-program";
+import { OPENCLAW_SQLITE_SCHEDULE_PY } from "./openclaw-schedule-program";
 
 export const PROFILE_PROBE_BODY = String.raw`import base64, calendar, errno, hashlib, json, os, re, signal, socket, subprocess, sys, threading, time
 # hivra-idle-probe v1 (profile). Runs as root via the guest agent. Counts and times only.
@@ -264,7 +265,7 @@ def has_cron_jobs(text):
         if not s or s.startswith("#") or re.match(r"[A-Za-z_][A-Za-z0-9_]*\s*=", s): continue
         return True
     return False
-for s in PF["schedules"]:
+${OPENCLAW_SQLITE_SCHEDULE_PY}for s in PF["schedules"]:
     k, p = s["kind"], P(s["path"])
     if k == "hermes-jobs":
         hermes_jobs(p)
@@ -273,6 +274,7 @@ for s in PF["schedules"]:
                 for prof in os.listdir(P(s["profilesDir"]))[:50]: hermes_jobs(P(s["profilesDir"]) + "/" + prof + s["profilePath"])
             except OSError: pass
     elif k == "json-next-run": next_runs(p, s["key"])
+    elif k == "openclaw-sqlite": openclaw_sqlite_jobs(p)
     elif k == "json-nonempty":
         j = rjson(p, 1 << 20)
         if isinstance(j, dict) and j.get(s["key"]): nexts.append(time.time())

@@ -75,6 +75,16 @@ describe("LibraryPage", () => {
     expect(screen.queryByRole("button", { name: /copied!/i })).not.toBeInTheDocument();
   });
 
+  it("offers agency prompts for preview and copy without a deploy action", async () => {
+    render(<LibraryPage />);
+    const preview = await screen.findByRole("button", { name: /view prompt/i });
+    expect(screen.queryByRole("button", { name: /^deploy$/i })).not.toBeInTheDocument();
+    fireEvent.click(preview);
+    expect(screen.getByRole("button", { name: /copy prompt/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /deploy this template/i })).not.toBeInTheDocument();
+    expect(pushMock).not.toHaveBeenCalled();
+  });
+
   it("opens the preview as a modal dialog that locks page scroll and closes on Escape", async () => {
     render(
       <main>
@@ -110,14 +120,14 @@ describe("LibraryPage", () => {
     fireEvent.click(viewButton);
 
     const close = await screen.findByRole("button", { name: /close prompt preview/i });
-    const deploy = screen.getByRole("button", { name: /deploy this template/i });
+    const copy = screen.getByRole("button", { name: /copy prompt/i });
     expect(close).toHaveFocus();
 
-    deploy.focus();
+    copy.focus();
     fireEvent.keyDown(document, { key: "Tab" });
     expect(close).toHaveFocus();
     fireEvent.keyDown(document, { key: "Tab", shiftKey: true });
-    expect(deploy).toHaveFocus();
+    expect(copy).toHaveFocus();
 
     fireEvent.click(close);
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
@@ -151,7 +161,7 @@ describe("LibraryPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "查看提示词" }));
 
     expect(await screen.findByRole("button", { name: "复制提示词" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "部署此模板" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "关闭提示词预览" })).toBeInTheDocument();
   });
 
   it("renders the prompt library interface in Spanish when that locale is selected", async () => {
@@ -172,7 +182,7 @@ describe("LibraryPage", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Ver prompt" }));
 
     expect(await screen.findByRole("button", { name: "Copiar prompt" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Desplegar esta plantilla" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cerrar vista previa del prompt" })).toBeInTheDocument();
   });
 
   it("clears the preview copy reset timer when the page unmounts early", async () => {

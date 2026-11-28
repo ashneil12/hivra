@@ -52,6 +52,22 @@ function resolves(href: string): boolean {
 const AGENT_DOCS = DOC_SECTIONS.find((section) => section.id === "agents")!.docs;
 
 describe("docs hub", () => {
+  it("distinguishes a hosted server connection from self-hosting the platform", () => {
+    const copy = docCopy(DOCS["connect-your-own-server"]);
+
+    expect(copy).toContain("When you connect a server to hosted Hivra, Hivra still runs the dashboard and database.");
+    expect(copy).toContain("[self-host quickstart](https://github.com/ashneil12/hivra/blob/main/docs/self-host/QUICKSTART.md)");
+    expect(copy).toContain("single-operator preview");
+  });
+
+  it("documents a fresh OpenClaw launch, not adoption of a running install", () => {
+    const connectionOptions = DOCS["connect-your-own-server"].blocks.find((block) => block.heading === "Pick how to connect");
+    const copy = connectionOptions?.paragraphs.join("\n");
+
+    expect(copy).toContain("On a connected Proxmox VE server, Launch creates a new OpenClaw computer.");
+    expect(copy).toContain("Connecting the server does not import or take over an existing OpenClaw installation.");
+  });
+
   it("lists every doc in exactly one section, under the section the doc names", () => {
     const listed = DOC_SECTIONS.flatMap((section) => section.docs.map((slug) => ({ slug, section: section.id })));
     expect(new Set(listed.map(({ slug }) => slug)).size).toBe(listed.length);

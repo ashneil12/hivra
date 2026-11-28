@@ -71,6 +71,7 @@ export function useAgentWake(
    * has seen it awake, so a sleep found on the first read is woken at once.
    */
   loaded = true,
+  sendOwnsWake = false,
 ): AgentWake {
   const [failure, setFailure] = useState<string | null>(null);
   const [wokeMs, setWokeMs] = useState<number | null>(null);
@@ -90,15 +91,16 @@ export function useAgentWake(
   // With the early_wake switch: a wake request sent while the page reads the agent for the
   // first time, used only if that read finds it asleep.
   const earlyRef = useRef<{ agentId: string; answer: Promise<WakeAgentResult> } | null>(null);
+  const sendOwnedWakeRef = useRef(sendOwnsWake);
 
   // A page opened afresh wakes a sleeping agent at once anyway, so the request can go out
   // beside the first read instead of after it. An agent that is awake answers at once.
   useEffect(() => {
     // Without the sleep screens every agent reads as awake, so the answer would only be thrown away.
-    if (loaded || !agentSleepUiEnabled() || !isFastWakeEnabled("early_wake", process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE)) return;
+    if (loaded || sendOwnsWake || !agentSleepUiEnabled() || !isFastWakeEnabled("early_wake", process.env.NEXT_PUBLIC_HIVRA_FAST_WAKE)) return;
     if (earlyRef.current?.agentId === agentId) return;
     earlyRef.current = { agentId, answer: wakeAgent(agentId) };
-  }, [agentId, loaded]);
+  }, [agentId, loaded, sendOwnsWake]);
 
   // A page opened afresh (or left) starts without a hold from an earlier visit.
   useEffect(() => {
@@ -109,6 +111,8 @@ export function useAgentWake(
   const resting = rest?.agentId === agentId ? rest.reason : null;
 
   useEffect(() => {
+    const leftRetainedChat = sendOwnedWakeRef.current && !sendOwnsWake;
+    sendOwnedWakeRef.current = sendOwnsWake;
     if (view === "awake") {
       if (loaded) {
         seenAwakeRef.current = agentId;
@@ -122,6 +126,17 @@ export function useAgentWake(
       startedRef.current = null;
       if (started && started.agentId === agentId) setWokeMs(started.serverMs ?? Date.now() - started.at);
       requestedRef.current = null;
+      return;
+    }
+    if (sendOwnsWake) {
+      if (view === "asleep" && !resting) {
+        seenAwakeRef.current = null;
+        setRest({ agentId, reason: manualSleepHolds.has(agentId) ? "manual" : "idle" });
+      }
+      return;
+    }
+    if (leftRetainedChat && resting === "idle") {
+      setRest(null);
       return;
     }
     if (startedRef.current?.agentId !== agentId) startedRef.current = { agentId, at: Date.now(), serverMs: null };
@@ -163,11 +178,11 @@ export function useAgentWake(
         onWokeRef.current();
       }
     });
-  }, [agentId, view, attempt, resting, loaded]);
+  }, [agentId, view, attempt, resting, loaded, sendOwnsWake]);
 
   // An agent that napped while the page sat open wakes when its owner comes back.
   useEffect(() => {
-    if (resting !== "idle") return;
+    if (resting !== "idle" || sendOwnsWake) return;
     const comeBack = () => setRest(null);
     const onVisible = () => { if (document.visibilityState === "visible") comeBack(); };
     // A click inside the agent's own frame never reaches this window, but it takes focus
@@ -184,7 +199,7 @@ export function useAgentWake(
       document.removeEventListener("visibilitychange", onVisible);
       window.removeEventListener("blur", onBlur);
     };
-  }, [resting]);
+  }, [resting, sendOwnsWake]);
 
   useEffect(() => {
     if (wokeMs === null) return;

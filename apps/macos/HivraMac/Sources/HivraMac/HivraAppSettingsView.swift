@@ -60,16 +60,18 @@ struct HivraAppSettingsView: View {
             } footer: {
                 Text("System follows your Mac’s appearance. This preference controls the native app interface.")
             }
-            Section {
-                Toggle("Show developer connections", isOn: Binding(
-                    get: { profileStore.developerConnections },
-                    set: { profileStore.setDeveloperConnections($0) }
-                ))
-                .tint(HivraDesign.foreground(for: colorScheme))
-            } header: {
-                Text("Advanced")
-            } footer: {
-                Text("For self-hosting and testing: connect to Hivra running on this Mac, Canary, or another address.")
+            if profileStore.allowsDeveloperConnections {
+                Section {
+                    Toggle("Show developer connections", isOn: Binding(
+                        get: { profileStore.developerConnections },
+                        set: { profileStore.setDeveloperConnections($0) }
+                    ))
+                    .tint(HivraDesign.foreground(for: colorScheme))
+                } header: {
+                    Text("Advanced")
+                } footer: {
+                    Text("For self-hosting and testing: connect to Hivra running on this Mac or another address.")
+                }
             }
         }
         .formStyle(.grouped)

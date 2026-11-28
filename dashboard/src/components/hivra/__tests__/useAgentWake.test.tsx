@@ -6,10 +6,10 @@ import type { AgentSleepView } from "@/lib/hivra/agent-sleep-ui";
 const mockWakeAgent = jest.fn();
 jest.mock("@/lib/hivra/agent-api", () => ({ wakeAgent: (...args: unknown[]) => mockWakeAgent(...args) }));
 
-type Props = { agentId?: string; view: AgentSleepView; state?: string | null; loaded?: boolean };
+type Props = { agentId?: string; view: AgentSleepView; state?: string | null; loaded?: boolean; sendOwnsWake?: boolean };
 const mount = (initial: Props) =>
   renderHook(
-    ({ agentId = "agent-1", view, state = null, loaded = true }: Props) => useAgentWake(agentId, view, state, jest.fn(), loaded),
+    ({ agentId = "agent-1", view, state = null, loaded = true, sendOwnsWake }: Props) => useAgentWake(agentId, view, state, jest.fn(), loaded, sendOwnsWake),
     { initialProps: initial },
   );
 
@@ -73,6 +73,25 @@ describe("useAgentWake: a sleep the owner asked for from this page", () => {
 });
 
 describe("useAgentWake: an agent that naps while the page sits open", () => {
+  it("leaves a retained Chat asleep through local interaction and doesn't join another wake", async () => {
+    const { result, rerender } = mount({ view: "awake", sendOwnsWake: true });
+    rerender({ view: "asleep", state: "hibernated", sendOwnsWake: true });
+    await waitFor(() => expect(result.current.resting).toBe("idle"));
+    fireEvent.pointerDown(window);
+    fireEvent.keyDown(window, { key: "a" });
+    fireEvent.focus(window);
+    rerender({ view: "waking", state: "waking", sendOwnsWake: true });
+    expect(mockWakeAgent).not.toHaveBeenCalled();
+  });
+
+  it("gives an idle wake back to the page when the owner selects another surface", async () => {
+    const { result, rerender } = mount({ view: "awake", sendOwnsWake: true });
+    rerender({ view: "asleep", state: "napping", sendOwnsWake: true });
+    await waitFor(() => expect(result.current.resting).toBe("idle"));
+    rerender({ view: "asleep", state: "napping", sendOwnsWake: false });
+    await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
+  });
+
   it("leaves it asleep instead of waking it every nap window", async () => {
     const { result, rerender } = mount({ view: "awake" });
     rerender({ view: "asleep", state: "napping" });

@@ -23,6 +23,7 @@ import {
   planSizeParts,
 } from "@/lib/blog/plan-facts";
 import { PUBLIC_START_HREF } from "@/lib/public-start";
+import { SELF_HOST_QUICKSTART_URL } from "@/lib/public-project-links";
 import { PAYMENT_GRACE_HOURS, PLANS } from "@/lib/subscription/plans";
 import { HOLDER_TIER_TERMS } from "@/lib/billing/holder-tier-terms";
 
@@ -78,7 +79,7 @@ export const PRICING_ACTIONS = {
   chooseEntry: { label: `Choose ${HOSTED_SIZES[0].cpu} vCPU and ${HOSTED_SIZES[0].ramGb} GB`, href: HOSTED_SIZES[0].href },
   chooseLarger: { label: `Choose ${HOSTED_SIZES[1].cpu} vCPU and ${HOSTED_SIZES[1].ramGb} GB`, href: HOSTED_SIZES[1].href },
   connectServer: { label: "Connect your server", href: PUBLIC_START_HREF },
-  viewSource: { label: "View the source and setup instructions", href: SELF_HOST_SOURCE_URL },
+  selfHostQuickstart: { label: "Read the self-host quickstart", href: SELF_HOST_QUICKSTART_URL },
   launchCloud: { label: "Launch on Hivra Cloud", href: HOSTED_SIZES[0].href },
   selfHostFromGitHub: { label: "Self-host from GitHub", href: SELF_HOST_SOURCE_URL },
 } as const;
@@ -231,7 +232,7 @@ export const PRICING_OPTIONS = {
     price: "$0",
     priceNote: "for the software",
     meta: "Your server · Your control",
-    body: "Run the platform from the public source code on a server you provide and manage. You choose the infrastructure and pay its provider directly. You are also responsible for setup, updates, backups and AI usage.",
+    body: "Run the Hivra platform yourself from the public source code. This single-operator preview runs the dashboard and database on your own infrastructure without a Hivra Cloud account. You supply the compute and cover setup, updates, backups and AI usage.",
     goodFor: "Good for developers who want to operate their own deployment, customise the software or avoid depending on a managed service.",
     included: "Open-source platform, the self-host guide, control over your server.",
     notIncluded: "A server, managed maintenance, AI usage or Hivra Cloud-only agent options.",

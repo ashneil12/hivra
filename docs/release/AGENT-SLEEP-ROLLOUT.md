@@ -70,9 +70,19 @@ select at, kind, trigger, from_state, to_state, duration_ms, reason, detail
 suspend, admission, start, resume, fixup), with `script_ms` for the host
 script and, for a wake, `total_ms` end to end.
 
-Agents with live chat channels (Discord, Slack, WhatsApp and similar) never
-sleep. Telegram is the exception below. An agent the idle check cannot read
-counts as busy.
+For schedules the guest probe understands, the sleep lease records
+`next_wake_at` before the host can suspend the VM. If the reservation fails
+or the host's last probe sees a different next job, the VM stays awake. A
+hibernate from a nap keeps the existing reservation. The sleep event for the
+original transition includes `next_job_at` and `scheduled_wake_at` when a job
+is pending. Compare a schedule-triggered wake with the guest scheduler's own
+run history: a wake event isn't proof that the job ran, and a job that only
+runs after an owner opens the computer doesn't count as a scheduled wake.
+
+Agents with a live chat channel that has no verified wake coverage stay awake.
+For Discord, an allowed DM list for catch-up does not cover a new DM, so a bot
+that accepts DMs stays awake even if one or more DM channels are on the list.
+An agent the idle check cannot read counts as busy.
 
 ## Wake on Telegram messages (Hermes)
 
@@ -114,7 +124,8 @@ splits host time from connection time.
 
 The agent's public connector can move from its computer to the host, behind a
 small wake proxy, so a request wakes a napping agent; host doorbells and the
-Matrix push gateway wake it on email, Discord and Matrix messages. Every
+Matrix push gateway can wake it on eligible email and Matrix messages. The
+Discord doorbell can detect messages but does not guarantee DM replay. Every
 switch is off by default, and each one only ever keeps agents awake when it
 is off.
 

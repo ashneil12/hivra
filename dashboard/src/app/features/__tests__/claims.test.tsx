@@ -142,8 +142,8 @@ describe("feature page claims", () => {
     expect(bannedClaimsOn(route, ["Your agent remembers everything."])).not.toEqual([]);
   });
 
-  it("makes no banned claim on /features", () => {
-    const { container } = render(<FeaturesPage />);
+  it("makes no banned claim on /features", async () => {
+    const { container } = render(await FeaturesPage());
     const copy = [...renderedCopy(container), ...crawlerCopy(featuresMetadata)];
     expect(bannedClaimsOn("/features", copy)).toEqual([]);
     expect(falseCliRunClaims(visibleText(container))).toEqual([]);
@@ -231,8 +231,8 @@ describe("feature page claims", () => {
     expect(visible.length).toBeGreaterThan(0);
   });
 
-  it("writes the FAQPage JSON-LD of /features from the visible questions and answers", () => {
-    const { container } = render(<FeaturesPage />);
+  it("writes the FAQPage JSON-LD of /features from the visible questions and answers", async () => {
+    const { container } = render(await FeaturesPage());
     const graph = JSON.parse(container.querySelector('script[type="application/ld+json"]')?.textContent ?? "{}")["@graph"] as Array<{
       "@type": string;
       mainEntity?: Array<{ name: string; acceptedAnswer: { text: string } }>;
@@ -247,7 +247,7 @@ describe("feature page claims", () => {
   });
 
   it.each(["/features", ...SLUGS.map((slug) => `/features/${slug}`)])("keeps %s free of dashes, notes, brackets, retired names and token copy", async (route) => {
-    const { container } = route === "/features" ? render(<FeaturesPage />) : await renderFeature(route.split("/")[2]);
+    const { container } = route === "/features" ? render(await FeaturesPage()) : await renderFeature(route.split("/")[2]);
     const text = visibleText(container);
     expect(text).not.toMatch(/[–—]/);
     expect(text).not.toMatch(/Editorial checks|not public website copy|Implementation notes/i);
@@ -265,7 +265,7 @@ describe("feature page claims", () => {
   });
 
   it("states the two sizes in the prose form, with the size beside every price", async () => {
-    const pages = [visibleText(render(<FeaturesPage />).container)];
+    const pages = [visibleText(render(await FeaturesPage()).container)];
     cleanup();
     pages.push(visibleText((await renderFeature("multi-agent")).container));
     cleanup();
@@ -279,14 +279,14 @@ describe("feature page claims", () => {
     }
   });
 
-  it("words the refund as the card-payments guarantee and links it to the terms", () => {
-    const { container } = render(<FeaturesPage />);
+  it("words the refund as the card-payments guarantee and links it to the terms", async () => {
+    const { container } = render(await FeaturesPage());
     expect(visibleText(container)).toContain(`A ${MONEY_BACK_GUARANTEE} applies under the current terms.`);
     expect(container.querySelector('a[href="/terms"]')?.textContent).toBe("current terms");
   });
 
-  it("distinguishes persistence from uptime and never offers a free hosted plan or trial", () => {
-    const { container } = render(<FeaturesPage />);
+  it("distinguishes persistence from uptime and never offers a free hosted plan or trial", async () => {
+    const { container } = render(await FeaturesPage());
     const text = visibleText(container);
     expect(text).toContain("Your files can outlast your session, even if the computer pauses when idle.");
     expect(text).not.toMatch(/stays on|not paused for inactivity/i);
@@ -296,7 +296,7 @@ describe("feature page claims", () => {
 
   it("keeps model access honest: the plan does not include AI usage, and signing in with your own account is the provider's call", async () => {
     const sentence = "The plan does not include AI usage. Bring your own account or key where the agent supports it, or pay with Hivra credits.";
-    const directory = visibleText(render(<FeaturesPage />).container);
+    const directory = visibleText(render(await FeaturesPage()).container);
     cleanup();
     const browser = visibleText((await renderFeature("browser-automation")).container);
     cleanup();
@@ -310,7 +310,7 @@ describe("feature page claims", () => {
 
   it("says the AI-usage sentence once on each page, with no Hosting-and-inference line beside it", async () => {
     const sentence = "The plan does not include AI usage.";
-    const directory = visibleText(render(<FeaturesPage />).container);
+    const directory = visibleText(render(await FeaturesPage()).container);
     cleanup();
     const browser = visibleText((await renderFeature("browser-automation")).container);
     cleanup();
@@ -322,8 +322,8 @@ describe("feature page claims", () => {
     expect(directory).not.toContain("The plan covers the managed computer resources");
   });
 
-  it("answers the /features FAQ on AI work without an API key directly, without repeating the approved sentence", () => {
-    const { container } = render(<FeaturesPage />);
+  it("answers the /features FAQ on AI work without an API key directly, without repeating the approved sentence", async () => {
+    const { container } = render(await FeaturesPage());
     const row = [...container.querySelectorAll("details")].find((details) => (details.querySelector("summary")?.textContent ?? "").startsWith("Will Hivra do the AI work without an API key?"));
     const answer = row?.querySelector("p")?.textContent ?? "";
     expect(answer).toMatch(/^Not as part of the plan\./);
@@ -345,7 +345,7 @@ describe("feature page claims", () => {
     expect(text).toContain("Moving an existing setup is manual.");
     // No agent is "the paid one": the answer states the rule that holds for every computer Hivra Cloud runs.
     expect(text).toContain(
-      "Not on a computer that Hivra Cloud runs for you. Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself. The OpenClaw software is free. The computer that runs it is what you pay for.",
+      "A free Hivra account does not include managed compute. Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself. The OpenClaw software is free. Hosting and model usage are separate.",
     );
     expect(text).not.toContain("needs a paid size");
     expect(text).toContain("hosted on a paid Hivra computer, or try Hermes, also on a paid Hivra computer");
@@ -415,9 +415,9 @@ describe("feature page claims", () => {
     const text = visibleText((await renderFeature("no-docker-hosting")).container);
     expect(text).toContain("Hermes runs on Hivra Cloud only.");
     expect(text).toContain(
-      "Claude Code, Codex, OpenClaw, Agent Zero and Aeon can also run on a server you connect yourself, such as a Hetzner Cloud project or a Linux server that Hivra can reach over SSH. Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.",
+      "Claude Code, Codex, OpenClaw, Agent Zero and Aeon can also run on a server you connect yourself, using a Proxmox VE server connected with SSH details. Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.",
     );
-    expect(text).toContain("Not on Hivra Cloud today. For Claude Code, Codex, OpenClaw, Agent Zero and Aeon, you can connect your own server or a Hetzner Cloud project and choose where it runs.");
+    expect(text).toContain("Not on Hivra Cloud today. For Claude Code, Codex, OpenClaw, Agent Zero and Aeon, you can connect your own Proxmox VE server with SSH details and choose where it runs.");
     expect(text).not.toMatch(/\bin preview\b|preview bring-your-own|Hetzner-project deployment option/);
     // Staged rollout is something Hivra can do, not something that happens to every update.
     expect(text).toContain("Hivra can roll a new version out in stages, starting with a single agent.");

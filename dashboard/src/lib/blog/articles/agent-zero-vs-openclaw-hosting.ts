@@ -1,5 +1,5 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "../plan-facts";
 
 export const article: BlogArticle = {
   slug: "agent-zero-vs-openclaw-hosting",
@@ -54,7 +54,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "**DIY on a VPS.** A 1 vCPU, 2 GB box for a browserless OpenClaw runs about $5 to $10 a month. The 2 vCPU, 4 GB box that Agent Zero's guide recommends, or OpenClaw with the browser on, runs from €5.49 a month at Hetzner (excluding VAT and IPv4) to $20-24 at Vultr, Linode, or DigitalOcean. Hetzner showed the CX23 and CX33 as unavailable in October 2026, so check stock. Add your time: install, reverse proxy, auth, updates, and the occasional 2 a.m. restart. The [cost of running an AI agent](/blog/cost-of-running-ai-agent) breaks this down in detail.",
         "**Dedicated agent hosts.** Services that specialize in running OpenClaw for you exist too. They cost more than a raw VPS for a single always-on instance, because the security setup is part of what you pay for. Compare their current price pages before you pick one.",
-        `**Hivra.** Every Hivra Cloud computer needs a paid plan, whichever agent runs on it, [from ${ENTRY_PLAN_PRICE} a month](/pricing) for a compute pool of ${ENTRY_PLAN_SIZE}, with the UI kept private and no setup on your side.\n\nModel usage is the one cost hosting never includes, for anyone. Both agents need an LLM to think with, and model spend is often the larger number: a few dollars a month for light use, $50 or more for heavy daily work, depending on the model you pick. On Hivra you can use a managed model option (DeepSeek V4 Pro through Venice), paid from managed Venice credits you top up, or switch to your own provider any time: in the Control UI for OpenClaw, in Settings for Agent Zero. Keys you set there are stored on the agent's VM, and usage on your own key bills through your provider with no Hivra markup.`,
+        `**Hivra.** ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} [Paid plans start at ${ENTRY_PLAN_PRICE} a month](/pricing) for a compute pool of ${ENTRY_PLAN_SIZE}, with the UI kept private and no setup on your side.\n\nModel usage is the one cost hosting never includes, for anyone. Both agents need an LLM to think with, and model spend is often the larger number: a few dollars a month for light use, $50 or more for heavy daily work, depending on the model you pick. On Hivra you can use a managed model option (DeepSeek V4 Pro through Venice), paid from managed Venice credits you top up, or switch to your own provider any time: in the Control UI for OpenClaw, in Settings for Agent Zero. Keys you set there are stored on the agent's VM, and usage on your own key bills through your provider with no Hivra markup.`,
       ],
     },
     {

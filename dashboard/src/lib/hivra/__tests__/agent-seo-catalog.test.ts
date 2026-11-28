@@ -216,13 +216,10 @@ describe("agent SEO catalog", () => {
     expect(sized).toBeGreaterThan(0);
   });
 
-  // Owner decision 2026-10-21: every computer Hivra Cloud runs for you is paid, for every agent alike. The old
-  // test expected "needs a paid size" on exactly the agents whose retired minPlan floor was not "free", which made
-  // OpenClaw and Agent Zero look like the only paid ones.
-  it("states the same paid-computer rule on every agent page, and no description names one agent as the paid one", () => {
+  it("states the shared holder exception on every core agent page without singling out agents in metadata", () => {
     for (const entry of AGENT_SEO_ENTRIES) {
       const copy = copyOf(entry.slug);
-      expect(copy).toMatch(/needs a paid plan/);
+      expect(copy).toContain("gated, capacity-limited token-holder access for supported computers");
       expect(copy).not.toMatch(/needs a paid size/i);
       expect(entry.metaDescription).not.toMatch(/\bpaid\b/i);
     }

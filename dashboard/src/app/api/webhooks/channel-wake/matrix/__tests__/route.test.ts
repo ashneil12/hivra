@@ -54,6 +54,15 @@ describe("Matrix push gateway route", () => {
     expect(mockHandle.mock.calls[2][0]).toBeNull();
   });
 
+  it("returns a retryable HTTP error without rejected pushkeys when sleep is in progress", async () => {
+    mockHandle.mockResolvedValueOnce({ status: 503 });
+    const res = await POST(post("{}"));
+    expect(res.status).toBe(503);
+    expect(res.headers.get("Cache-Control")).toBe("no-store");
+    expect(await res.json()).toEqual({ errcode: "M_UNKNOWN", error: "Try again" });
+    expect(mockAfter).not.toHaveBeenCalled();
+  });
+
   it("passes a body over 64 KB as null", async () => {
     mockHandle.mockResolvedValueOnce({ status: 400 });
     await POST(post(JSON.stringify({ pad: "x".repeat(70 * 1024) })));

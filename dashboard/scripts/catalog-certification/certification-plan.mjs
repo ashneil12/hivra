@@ -220,7 +220,7 @@ export function chooseCertificationTarget({
   if (!Number.isFinite(nowMs)) throw planError("invalid current time");
   if (!/^[0-9a-f]{40}$/.test(currentCanarySha ?? "")) throw planError("currentCanarySha must be a full lowercase SHA");
   if (!currentProvisionerVersion) throw planError("currentProvisionerVersion is required");
-  const latest = latestRowsByProfile(ledgerRows);
+  const latest = latestRowsByProfile(ledgerRows.filter((row) => row.failure?.stage !== "account"));
   const candidates = catalog.map((entry) => ({
     entry,
     row: latest.get(entry.id) ?? null,
@@ -248,10 +248,10 @@ export function chooseCertificationTarget({
     const aRank = rank(a);
     const bRank = rank(b);
     if (aRank !== bRank) return aRank - bRank;
+    const aAgent = a.entry.category === "agent" ? 0 : 1;
+    const bAgent = b.entry.category === "agent" ? 0 : 1;
+    if (aAgent !== bAgent) return aAgent - bAgent;
     if (!a.row && !b.row) {
-      const aAgent = a.entry.category === "agent" ? 0 : 1;
-      const bAgent = b.entry.category === "agent" ? 0 : 1;
-      if (aAgent !== bAgent) return aAgent - bAgent;
       return compareEntries(a, b);
     }
     if ((a.state.dueAtMs ?? 0) !== (b.state.dueAtMs ?? 0)) return (a.state.dueAtMs ?? 0) - (b.state.dueAtMs ?? 0);
@@ -329,6 +329,11 @@ function cli(argv = process.argv.slice(2)) {
   const canarySha = options.get("--canary-sha");
   if (!dashboardDir || !ledger || !canarySha) throw planError("--dashboard, --ledger and --canary-sha are required");
   const catalog = loadCatalog(dashboardDir);
+  if (options.has("--target")) {
+    const target = catalog.find((entry) => entry.id === options.get("--target"));
+    if (!target) throw planError("requested target is not in the served catalog");
+    return target.id;
+  }
   const provisionerVersion = options.get("--provisioner-version") ?? readProvisionerVersion(dashboardDir);
   const ledgerRows = readCertificationLedger(ledger);
   if (options.get("--report")) return report(catalog, ledgerRows, canarySha, provisionerVersion);

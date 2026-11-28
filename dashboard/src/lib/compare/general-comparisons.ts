@@ -134,7 +134,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
             items: [
               { lead: "Choose one small job.", text: "An ordinary task, a scheduled task and a task that writes a file. Use the same job on both so the comparison is fair." },
               { lead: "Start the server.", text: "On Hetzner, deleting a server before month end bills only the hourly rate, but a server that is switched off still bills until you delete it. Set up SSH, a firewall, TLS and the agent, and write down the steps." },
-              { lead: "Start a Hivra computer.", text: `A paid Hivra Cloud computer is ${ENTRY_PRICE_PROSE}, with a ${REFUND_LINKED}. Every Hivra Cloud computer needs a paid plan; a free account works with a server you connect yourself.` },
+              { lead: "Start a Hivra computer.", text: `A paid Hivra Cloud computer is ${ENTRY_PRICE_PROSE}, with a ${REFUND_LINKED}. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} A free account works with a server you connect yourself.` },
               { lead: "Restart both and check.", text: "Confirm that files, credentials, sessions and task history survived a restart, and that scheduled tasks still run." },
               { lead: "Add up a full month.", text: `Include the server or plan, any extras such as Hetzner backups or saved server images, extra traffic, the time you spent, and AI usage. The [hosting cost calculator](${HOSTING_COST_CALCULATOR_HREF}) takes your own hours and rate.` },
               { lead: "Keep one and remove the other.", text: "Export what you need first: Hermes can export sessions from its dashboard, and on Hivra you can download memory files." },
@@ -180,7 +180,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
       },
       {
         q: "Can I use both a VPS and Hivra?",
-        a: "Yes. Many people keep a server for other services and run the agent on a Hivra computer, or the other way round. A Hivra account costs nothing to open; every Hivra Cloud computer is paid, and a free account works with a server you connect yourself.",
+        a: `Yes. Many people keep a server for other services and run the agent on a Hivra computer, or the other way round. A Hivra account costs nothing to open. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} A free account works with a server you connect yourself.`,
       },
       {
         q: "Can I keep my agent running 24/7 on each?",
@@ -240,7 +240,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
         heading: "Where Hivra fits",
         blocks: paragraphs(
           `Hivra gives each agent a computer of its own, and you open it: a terminal, files, a browser and Git sit beside the agent in the dashboard. The agents are the ones people already use: ${HIVRA_AGENTS_CELL}. Claude Code and Codex are the vendors' own command line tools, and Hermes is the official Hermes Agent. Hivra is not affiliated with, endorsed by or a partner of Railway, Anthropic, OpenAI, Nous Research or the makers of any other agent it runs.`,
-          `The price is ${ENTRY_PRICE_PROSE}, or ${formatPlanSize("larger")}, before AI model spending, with a ${REFUND_LINKED}. ${STAYS_ON} ${AI_USAGE} A Hivra account costs nothing and works with a server you connect yourself, while every Hivra Cloud computer is paid.`,
+          `The price is ${ENTRY_PRICE_PROSE}, or ${formatPlanSize("larger")}, before AI model spending, with a ${REFUND_LINKED}. ${STAYS_ON} ${AI_USAGE} A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
           "The trade is plain. Hivra is not a place to host your web application, your database or your customers' traffic, and it does not try to be. If your need is a persistent agent that you can open and use every day, a fixed price and a prepared environment are the point. If your need is software infrastructure, Railway is the better tool.",
         ),
       },
@@ -484,7 +484,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
       },
       {
         q: "Does Railway have a free option?",
-        a: "Railway lists a Free plan at $0 a month that starts with a 30-day trial with $5 of credit and then gives $1 of credit a month. It also offers a Free VM that is deleted with its files if unclaimed. A Hivra account costs nothing and works with a server you connect yourself, but every Hivra Cloud computer is paid.",
+        a: `Railway lists a Free plan at $0 a month that starts with a 30-day trial with $5 of credit and then gives $1 of credit a month. It also offers a Free VM that is deleted with its files if unclaimed. A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
       },
       {
         q: "Can I move from Railway to Hivra later?",
@@ -528,7 +528,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
         heading: "Where Hivra fits",
         blocks: paragraphs(
           `Hivra gives each agent a computer of its own, and you open it: a terminal, files, a browser and Git sit beside the agent in the dashboard. The agents are the ones people already use: ${HIVRA_AGENTS_CELL}. Hermes is the official Hermes Agent, and Hivra is not affiliated with or endorsed by Render, Nous Research or the makers of any other agent it runs.`,
-          `${STAYS_ON} The plan includes a ${REFUND_LINKED}. A Hivra account costs nothing and works with a server you connect yourself, while every Hivra Cloud computer is paid.`,
+          `${STAYS_ON} The plan includes a ${REFUND_LINKED}. A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
           "On Render you assemble the pieces. You deploy the template, enter a model provider key in the dashboard's API Keys tab, decide how the Hermes dashboard is reached and secured, choose the size and keep the service updated. The template page does not describe how access to the Hermes dashboard is secured, so read the template's own instructions and set up a login or private access before you rely on it. Hivra opens Hermes behind the Hivra sign-in.",
           "The trade is plain. Hivra is not a place to host your web application, your database or your customers' traffic, and it does not try to be. If you need a persistent agent that you open and use every day, a fixed price and a prepared computer are the point. If you need software infrastructure, Render is the better tool.",
         ),
@@ -748,7 +748,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
       },
       {
         q: "Does Render have a free option?",
-        a: "Render lists a Hobby workspace at $0 a month and free web services that sleep when idle and have no disk, so they are not suited to an agent that keeps memory. A Hivra account costs nothing and works with a server you connect yourself, but every Hivra Cloud computer is paid.",
+        a: `Render lists a Hobby workspace at $0 a month and free web services that sleep when idle and have no disk, so they are not suited to an agent that keeps memory. A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
       },
       {
         q: "Which is better for Hermes Agent?",
@@ -784,7 +784,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
         heading: "What you are actually paying for",
         blocks: paragraphs(
           "Moving frameworks costs you attention, not a licence fee. The attention goes on four things: working out what your OpenClaw setup actually contains, running the import, rebuilding what the import does not carry, and checking that the new agent behaves the way the old one did. Hivra itself has no import tool. Hermes' own `hermes import-agent openclaw` command (installed with `hermes plugins install agent-importers`; the older `hermes claw migrate` spelling also works once the plugin is installed) imports your persona, memory, skills, MCP servers, and model and messaging settings. Its `--dry-run` flag previews the result without changing anything.",
-          "Hosting is a separate line. " + "Every Hivra Cloud computer is paid: " + ENTRY_PRICE_PROSE + ", with a " + REFUND_LINKED + ". A free account works with a computer or server you connect yourself. " + AI_USAGE,
+          "Hosting is a separate line. " + HOSTED_COMPUTE_NEEDS_PLAN_SHORT + " Paid plans start at " + ENTRY_PRICE_PROSE + ", with a " + REFUND_LINKED + ". A free account works with a computer or server you connect yourself. " + AI_USAGE,
           "If you run OpenClaw yourself today, the comparison is your own machine against that monthly price. If you already run a machine all day, self-hosting adds little hosting cost, though you still spend time on updates and recovery. If you do not, compare the Hivra monthly price with the cost of a small VPS from its provider's own pricing page, and remember that a VPS leaves the setup and upkeep to you.",
         ),
       },
@@ -917,7 +917,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
       },
       {
         q: "Can I run OpenClaw and Hermes side by side while I test?",
-        a: "Yes, on separate computers. Keep the existing OpenClaw bot running, launch Hermes on a separate Hivra computer, and avoid pointing both at the same production accounts or tokens. Every Hivra Cloud computer is paid, so a second computer is a second monthly price.",
+        a: `Yes, on separate computers. Keep the existing OpenClaw bot running, launch Hermes on a separate Hivra computer, and avoid pointing both at the same production accounts or tokens. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
       },
       {
         q: "Does a Hivra computer keep running when I close the browser?",
@@ -995,7 +995,7 @@ export const GENERAL_COMPARISONS: Record<string, ComparePage> = {
         heading: "Where Hivra fits",
         blocks: paragraphs(
           `Hivra gives each agent a computer of its own, and you open it: a terminal, files and a browser sit beside the agent in the dashboard. It is aimed at developers and AI power users who want to keep their own agent running on a predictable monthly computer, rather than assemble one. The agents are ${HIVRA_AGENTS_CELL}. Claude Code and Codex are the vendors' own command line tools. Hivra is independent and is not affiliated with or endorsed by the vendors named on this page, Anthropic, OpenAI or Nous Research.`,
-          `The price is ${ENTRY_PRICE_PROSE}, or ${formatPlanSize("larger")}, before AI model spending, with a ${REFUND_LINKED}. ${STAYS_ON} ${AI_USAGE} A Hivra account costs nothing and works with a server you connect yourself, while every Hivra Cloud computer is paid.`,
+          `The price is ${ENTRY_PRICE_PROSE}, or ${formatPlanSize("larger")}, before AI model spending, with a ${REFUND_LINKED}. ${STAYS_ON} ${AI_USAGE} A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
           "The trade is plain. Hivra is not an API that creates thousands of isolated per-request sandboxes, it is not a screen-driving product built for computer-use agents through an API, and it does not give SSH access to a Hivra Cloud computer. If your need is a persistent agent you open and use every day, a fixed price and a prepared environment are the point.",
         ),
       },

@@ -1,6 +1,6 @@
 import type { DocPage } from "../types";
 import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "codex",
@@ -24,7 +24,7 @@ export const doc: DocPage = {
       heading: "Before you start",
       paragraphs: [
         "You need three things.",
-        `- **A Hivra account.** A Hivra Cloud computer needs a paid plan, which starts at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. You can use your own server if your account is eligible to connect it. See [Plans and billing](/docs/plans-and-billing) and [Run agents on your own server](/docs/connect-your-own-server).`,
+        `- **A Hivra account.** ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. You can use your own server if your account is eligible to connect it. See [Plans and billing](/docs/plans-and-billing) and [Run agents on your own server](/docs/connect-your-own-server).`,
         "- **A way to reach a model.** Pick one of three: sign in with your ChatGPT account, use a Venice API key, or pay with Hivra credits. The next block explains each.",
         "- **Room on your plan.** Codex can start as small as 0.5 CPU and 1 GB of memory with its browser off. With the browser on it needs at least 1.5 CPU and 3 GB.",
         "If you plan to use your own server, Codex runs on a Proxmox VE server you connected. The one-command Ubuntu route is for Linux Sandbox only.",

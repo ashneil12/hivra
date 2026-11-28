@@ -56,6 +56,15 @@ function safeReason(value) {
     .slice(0, 500);
 }
 
+export function certificationRunDisposition(row) {
+  if (!row.evidenceFile || row.failure?.stage === "teardown" || (row.sweepPassed && !row.teardown) || row.teardown && (
+    row.teardown.error || row.teardown.agentsLeft !== 0 ||
+    row.teardown.instancesLeft !== 0 || row.teardown.accountDeleted !== false
+  )) return "hold";
+  if (row.failure?.stage === "account") return "account";
+  return row.passed ? "pass" : "fail";
+}
+
 export function certificationRowFromSweep({ result, file, target, canarySha, provisionerVersion, runId, sweepExitCode, now = () => new Date() }) {
   if (!result) {
     return {
@@ -78,14 +87,14 @@ export function certificationRowFromSweep({ result, file, target, canarySha, pro
   const revisionMatches = result.checkoutSha === canarySha && result.expectedCanarySha === canarySha;
   const teardown = result.teardown
     ? {
-        agentsLeft: result.teardown.agentsLeft ?? 0,
-        instancesLeft: result.teardown.instancesLeft ?? 0,
-        accountDeleted: Boolean(result.teardown.accountDeleted),
+      agentsLeft: result.teardown.agentsLeft ?? null,
+      instancesLeft: result.teardown.instancesLeft ?? null,
+      accountDeleted: result.teardown.accountDeleted ?? null,
         error: result.teardown.error ? safeReason(result.teardown.error) : undefined,
       }
     : null;
   const cleanupLeaked = Boolean(teardown && (teardown.agentsLeft > 0 || teardown.instancesLeft > 0));
-  const cleanupVerified = Boolean(teardown && !teardown.error &&
+  const cleanupVerified = Boolean(teardown && !teardown.error && result.teardown.accountDeleted === false &&
     result.teardown.agentsLeft === 0 && result.teardown.instancesLeft === 0);
   let passed = Boolean(result.passed) && revisionMatches && cleanupVerified && sweepExitCode === 0;
   let failure = result.failure
@@ -113,7 +122,7 @@ export function certificationRowFromSweep({ result, file, target, canarySha, pro
     failure = {
       stage: "teardown",
       category: "harness_environment",
-      reason: "teardown did not verify an empty certification account",
+      reason: "teardown did not verify an empty and preserved certification account",
     };
   } else if (result.passed && sweepExitCode !== 0) {
     failure = {
@@ -157,6 +166,12 @@ export function appendCertificationResult({ ledgerFile, row }) {
 }
 
 function cli(argv = process.argv.slice(2)) {
+  if (argv[0] === "--disposition") {
+    if (argv.length !== 2) throw appendError("--disposition requires one ledger row file");
+    const row = JSON.parse(readFileSync(argv[1], "utf8"));
+    if (row?.schema !== CERTIFICATION_LEDGER_SCHEMA) throw appendError("row has the wrong schema");
+    return certificationRunDisposition(row);
+  }
   const options = parseArgs(argv);
   const ledgerFile = required(options, "--ledger");
   const outDir = required(options, "--out-dir");
@@ -183,7 +198,8 @@ function cli(argv = process.argv.slice(2)) {
 const invokedPath = process.argv[1] ? pathToFileURL(process.argv[1]).href : null;
 if (invokedPath === import.meta.url) {
   try {
-    process.stdout.write(`${JSON.stringify(cli(), null, 2)}\n`);
+    const result = cli();
+    process.stdout.write(`${typeof result === "string" ? result : JSON.stringify(result, null, 2)}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

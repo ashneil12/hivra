@@ -132,6 +132,40 @@ describe("Matrix push gateway", () => {
     expect(wake).not.toHaveBeenCalled();
   });
 
+  it.each(["draining", "hibernating"])("asks the homeserver to retry while %s without using the wake cap", async (transition) => {
+    mockRows.push(matrixRow());
+    mockReadAgent.mockResolvedValueOnce({ status: "running", sleep_state: transition })
+      .mockResolvedValueOnce({ status: "running", sleep_state: "hibernated" });
+    const wake = jest.fn();
+
+    expect(await handleMatrixNotify(push(key), { env: ENV, wake })).toEqual({ status: 503 });
+    expect(mockUpdates).toEqual([]);
+    expect(wake).not.toHaveBeenCalled();
+
+    expect(await handleMatrixNotify(push(key), { env: ENV, wake })).toEqual({ status: 200, rejected: [], woke: [AGENT], deferred: [] });
+    expect(mockUpdates).toHaveLength(1);
+    expect(wake).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a mixed batch before waking another device or acknowledging any rejected keys", async () => {
+    const otherAgent = "00000000-0000-4000-8000-0000000a0002";
+    const stale = matrixPushkey(SEED, AGENT, OLD_ARM);
+    const body = push(key);
+    body.notification.devices.push(...push(stale).notification.devices, ...push(matrixPushkey(SEED, otherAgent, ARM)).notification.devices);
+    mockRows.push(matrixRow(), matrixRow({ agent_id: otherAgent }));
+    mockReadAgent.mockImplementation(async (id: string) => ({ status: "running", sleep_state: id === AGENT ? "napping" : "draining" }));
+    const wake = jest.fn();
+
+    expect(await handleMatrixNotify(body, { env: ENV, wake })).toEqual({ status: 503 });
+    expect(mockUpdates).toEqual([]);
+    expect(wake).not.toHaveBeenCalled();
+
+    mockReadAgent.mockImplementation(async (id: string) => ({ status: "running", sleep_state: id === AGENT ? "napping" : "awake" }));
+    expect(await handleMatrixNotify(body, { env: ENV, wake })).toEqual({ status: 200, rejected: [stale], woke: [AGENT], deferred: [] });
+    expect(mockUpdates).toHaveLength(1);
+    expect(wake).toHaveBeenCalledTimes(1);
+  });
+
   it("wakes a napping agent with the channel trigger path", async () => {
     mockRows.push(matrixRow());
     mockReadAgent.mockResolvedValue({ id: AGENT, status: "running", sleep_state: "napping" });

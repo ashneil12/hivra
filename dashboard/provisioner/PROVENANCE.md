@@ -80,3 +80,7 @@ inferring them from a live host.
 Release `2026.11.27.7` accepts the exact Proxmox-escaped Hermes standby
 ownership description. It preserves the previous release and does not change
 Hermes upstream code, the guest image pins or native update behavior.
+
+Release `2026.11.28.1` adds elapsed-time markers to the baked Hermes guest
+installer and its final standby attestation. It does not change upstream
+Hermes, baked image pins, stock launch behavior or readiness checks.

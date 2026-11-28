@@ -17,7 +17,7 @@
 import { getManagedVeniceProxyBaseUrl } from "@/lib/venice/managed-endpoints";
 import { getAgent } from "./agent-catalog";
 import { publicHivraAgentActivity } from "./agent-authority";
-import { ModelKeySelectionSchema, VENICE_DEFAULT_MODEL } from "./model-key-selection";
+import { HERMES_COMPUTER_MODEL, ModelKeySelectionSchema, VENICE_DEFAULT_MODEL } from "./model-key-selection";
 export { VENICE_DEFAULT_MODEL } from "./model-key-selection";
 
 export { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, OPENCLAW_DEFAULT_MODEL } from "./model-key-selection";
@@ -103,6 +103,9 @@ export function validateLlmInput(raw: unknown, agentType: string): LlmValidation
   const parsed = ModelKeySelectionSchema.safeParse(o);
   if (!parsed.success || !parsed.data) return { ok: false, error: "Check the model settings, API key and selected wallet before launching." };
   const selection = parsed.data;
+  if (agentType === "hermes" && !HERMES_COMPUTER_MODEL.test(selection.model)) {
+    return { ok: false, error: "Choose a valid Hermes model ID before launching." };
+  }
   if (managedShimOnly && typeof o.model === "string" && o.model.trim() && !isManagedClaudeCodeModel(selection.model)) {
     return { ok: false, error: `${def?.name || agentType} on Hivra credits runs Claude models only` };
   }

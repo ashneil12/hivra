@@ -1,4 +1,4 @@
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import type { ComparePage } from "../types";
 import { formatCheckedMonth } from "../competitor-facts";
 import {
@@ -51,7 +51,7 @@ export const page: ComparePage = {
         `Hivra is for a person who wants an agent to have a computer of its own and would rather open it than assemble it. You choose a supported agent, Hivra creates the computer and runs the agent's own installer, and you work through a browser view for that agent. Hivra starts at ${ENTRY_PRICE_PROSE}, and ${STAYS_ON}`,
         "The price is simple to forecast. It is one flat monthly figure, there is no per-hour meter, and the plan does not change with how hard the agent works. AI usage is paid separately and does change with it.",
         "The trade-off is reach. A Hivra computer is a Linux computer for an agent, not a fleet of desktops for your code to create and tear down. We know of no public Hivra API or SDK for creating computers from code, and Hivra does not describe per-user workspaces to resell, live-resize, clone or fork operations, or Mac or iPhone targets. If your product needs those, Orgo covers ground Hivra does not.",
-        "Hivra is independent and is not affiliated with Orgo, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A Hivra account costs nothing, but every Hivra Cloud computer is a paid plan. A free account works with a server you connect yourself.",
+        "Hivra is independent and is not affiliated with Orgo, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A free Hivra account does not include managed compute. A free account works with a server you connect yourself.",
       ),
     },
     {
@@ -188,7 +188,7 @@ export const page: ComparePage = {
     },
     {
       q: "Is there a free way to try each?",
-      a: `Orgo's lowest published plan is $29 a month, and its full pricing page mentions $3 of starting credit for a new account that we could not confirm. You can also pay by the hour from credit you add. A Hivra account costs nothing, but every Hivra Cloud computer is paid, with a ${MONEY_BACK_GUARANTEE}. A free account works with a server you connect yourself.`,
+      a: `Orgo's lowest published plan is $29 a month, and its full pricing page mentions $3 of starting credit for a new account that we could not confirm. You can also pay by the hour from credit you add. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans come with a ${MONEY_BACK_GUARANTEE}. A free account works with a server you connect yourself.`,
     },
     {
       q: "Does Orgo support Windows, Mac and iPhone?",

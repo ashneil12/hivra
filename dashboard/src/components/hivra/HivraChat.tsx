@@ -17,6 +17,7 @@ import { PanelLeft, Plus, RotateCcw } from "lucide-react";
 
 import { agentSleepUiEnabled } from "@/lib/hivra/agent-sleep-ui";
 import { boxChatRunEventsUrl, listBoxChatRuns, listBoxSessions, readBoxSession, stampAgentFirstUsage, stopBoxChatRun, uploadBoxFile, wakeAgent, type BoxChatRun, type BoxMessage } from "@/lib/hivra/agent-api";
+import { inspectChatReadiness } from "@/lib/hivra/chat-readiness";
 import { getGoal } from "@/lib/hivra/agent-identity";
 import { firstMessageStarters } from "@/lib/hivra/first-message-starters";
 import { startAgentWelcomeRun, isHiddenWelcomeTitle } from "@/lib/hivra/agent-welcome";
@@ -152,6 +153,7 @@ export interface HivraChatProps {
  /** The computer this chat talks to, for the effort update the model picker offers (the same
  * in-place connection-service update as Manage's). Without it the picker points to Manage. */
  computerId?: string;
+ guestPaused?: boolean;
  /** The effort update restarted the computer's connection service. */
  onConnectionServiceRestarted?: () => void;
 }
@@ -298,6 +300,7 @@ type RunStreamResult =
  | { kind: "superseded" };
 type RunFollowResult = RunStreamResult | { kind: "missing" } | { kind: "unreachable" };
 const RUN_RETRY_DELAYS_MS = [0, 1000, 2000, 4000, 8000, 15000];
+const CHAT_WAKE_RECHECK_MS = [1_000, 2_000, 4_000, 8_000, 15_000, 15_000];
 // While the computer swaps its agent CLI for the vetted version it answers a new
 // run with 503 agent_updating for a few seconds. Keep the message and send it
 // again, for about two minutes before giving up.
@@ -326,11 +329,13 @@ type TurnEnd =
  | { kind: "superseded" }
  | { kind: "aborted" }
  | { kind: "unreachable" }
+ | { kind: "wake_failed"; reason: string }
  | { kind: "refused"; status: number; reason: string };
 
 // What a reply says when its turn could not start (null: say nothing more).
 function turnFailureNote(end: TurnEnd): string | null {
  if (end.kind === "unreachable") return "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.";
+ if (end.kind === "wake_failed") return "⚠ " + end.reason;
  if (end.kind === "refused") return end.reason ? "⚠ " + end.reason : "⚠ Your agent hit an error (HTTP " + end.status + "). Try again.";
  return null;
 }
@@ -381,11 +386,12 @@ function saveActiveId(boxUrl: string, id: string) {
  try { window.localStorage.setItem(keyFor(boxUrl) + "_active", id); } catch { /* ignore */ }
 }
 
-export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel, computerId, onConnectionServiceRestarted }: HivraChatProps) {
+export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel, computerId, guestPaused, onConnectionServiceRestarted }: HivraChatProps) {
  const skey = storageKey || boxUrl;
+ const retainAcrossSleep = guestPaused !== undefined;
  // What the composer's pickers change on the computer: its model, its effort
  // levels and its access. The effort picked is sent with each turn.
- const controls = useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey, modelLocked: Boolean((modelLabel || "").trim()), lockedModelName: (modelLabel || "").trim(), computerId, onConnectionServiceRestarted });
+ const controls = useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey, modelLocked: Boolean((modelLabel || "").trim()), lockedModelName: (modelLabel || "").trim(), computerId, guestPaused, onConnectionServiceRestarted });
  const effortRef = useRef<string | null>(null);
  useEffect(() => { effortRef.current = controls.effort; }, [controls.effort]);
  // The model name to surface in the composer. Falls back to the agent's CLI
@@ -597,7 +603,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  }, [agentKind, boxUrl, changeAttachments, token]);
  // Files come one after another (a multi-file pick or a drop), each in turn.
  const uploadAttachment = useCallback((file: File) => {
- if (!token) return;
+ if (!token || guestPaused) return;
  uploadCountRef.current += 1;
  setUploading(true);
  uploadChainRef.current = uploadChainRef.current
@@ -607,7 +613,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  uploadCountRef.current -= 1;
  if (uploadCountRef.current === 0) setUploading(false);
  });
- }, [token, uploadOne]);
+ }, [guestPaused, token, uploadOne]);
  const removeAttachment = useCallback((path: string) => {
  releasePreviews(attachmentsRef.current.filter((x) => x.path === path));
  changeAttachments((prev) => prev.filter((x) => x.path !== path));
@@ -615,7 +621,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // Files dropped anywhere on the chat attach to the composer.
  const columnRef = useRef<HTMLDivElement>(null);
  const rootRef = useRef<HTMLDivElement>(null);
- const fileDrag = useFileDrop({ root: columnRef, enabled: Boolean(token), onFiles: (files) => files.forEach(uploadAttachment) });
+ const fileDrag = useFileDrop({ root: columnRef, enabled: Boolean(token) && !guestPaused, onFiles: (files) => files.forEach(uploadAttachment) });
 
  // Load persisted sessions for this box (or start fresh), and re-open whichever
  // chat was active last time (falls back to the newest).
@@ -638,6 +644,15 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  setInput(window.localStorage.getItem(draftKey(skey, activeId)) || "");
  } catch { /* storage disabled */ }
  }, [activeId, skey]);
+ const changeDraft = useCallback((draft: string) => {
+ setInput(draft);
+ if (!retainAcrossSleep || !activeId) return;
+ try {
+ const k = draftKey(skey, activeId);
+ if (draft) window.localStorage.setItem(k, draft);
+ else window.localStorage.removeItem(k);
+ } catch { /* storage disabled */ }
+ }, [activeId, retainAcrossSleep, skey]);
  // …and persist it (debounced) as the user types.
  const draftTimerRef = useRef<number | null>(null);
  useEffect(() => {
@@ -656,6 +671,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // Pull the box's REAL session history (the VM's own session store) and merge
  // it into the sidebar as stubs; each stub's messages load lazily on click.
  useEffect(() => {
+ if (guestPaused) return;
  let cancelled = false;
  setBoxHistoryChecked(false);
  setHasBoxHistory(false);
@@ -675,13 +691,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  });
  };
  void pull();
+ if (retainAcrossSleep) return () => { cancelled = true; };
  const onFocus = () => void pull();
  window.addEventListener("focus", onFocus);
  return () => {
  cancelled = true;
  window.removeEventListener("focus", onFocus);
  };
- }, [boxUrl, token]);
+ }, [boxUrl, guestPaused, retainAcrossSleep, token]);
 
  useEffect(() => {
  activeIdRef.current = activeId;
@@ -738,13 +755,13 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  setActiveId(s.id);
  if (matchesMedia(NARROW_QUERY)) setShowRail(false);
  onChatOpened?.();
- if (s.claudeSessionId && !s.loaded && s.messages.length === 0) {
+ if (!guestPaused && s.claudeSessionId && !s.loaded && s.messages.length === 0) {
  void readBoxSession(boxUrl, s.claudeSessionId, token).then((msgs) => {
  setSessions((prev) => prev.map((x) => (x.id === s.id && !x.loaded ? { ...x, messages: boxHistoryToChat(msgs), loaded: true } : x)));
  });
  }
  },
- [boxUrl, onChatOpened, token],
+ [boxUrl, guestPaused, onChatOpened, token],
  );
 
  // Smart autoscroll: follow the stream only while the user is at the bottom.
@@ -1029,13 +1046,32 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // through the run's log. A normal send and the first-contact welcome share
  // this path; each words its own failure to start.
  const driveTurn = useCallback(
- async (sessionId: string, runId: string, turn: TurnHandle, post: (signal: AbortSignal) => Promise<Response>, onAccepted?: () => void): Promise<TurnEnd> => {
+ async (sessionId: string, runId: string, turn: TurnHandle, post: (signal: AbortSignal) => Promise<Response>, onAccepted?: () => void, wakeBeforePost = false): Promise<TurnEnd> => {
  let resp: Response;
  let updatingDetail: { error?: unknown } | null = null;
  // A computer that was asleep when the message went out answers nothing (or
  // 503). Wake it and send again, once. Only where sleep is switched on.
  const wakeId = agentSleepUiEnabled() ? (computerId || instanceId || "") : "";
  let wakeTried = false;
+ if (wakeBeforePost && wakeId) {
+ wakeTried = true;
+ const signal = turn.controller.signal;
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, pending: "Waking up your agent. Your message will send in a moment." }));
+ for (let step = 0; ; step++) {
+ const woke = await wakeAgent(wakeId, signal, "chat");
+ if (!turn.isCurrent() || signal.aborted) return { kind: "superseded" };
+ if (woke.state === "failed") return { kind: "wake_failed", reason: woke.message };
+ if (woke.state === "awake") break;
+ if (step >= CHAT_WAKE_RECHECK_MS.length) return { kind: "wake_failed", reason: "Your computer is still waking. Try sending again in a moment." };
+ await waitUnlessAborted(CHAT_WAKE_RECHECK_MS[step], signal);
+ if (!turn.isCurrent() || signal.aborted) return { kind: "superseded" };
+ }
+ const readiness = await inspectChatReadiness(boxUrl, agentKind === "codex" ? "codex" : "claude-code", token);
+ if (!turn.isCurrent() || signal.aborted) return { kind: "superseded" };
+ if (readiness !== "native_connected" && readiness !== "provider_configured") {
+ return { kind: "wake_failed", reason: "Your computer woke up, but chat isn’t ready. Try again once it’s connected." };
+ }
+ }
  const wakeThenRetry = async (): Promise<boolean> => {
  wakeTried = true;
  updateRunMessage(sessionId, runId, (m) => ({ ...m, pending: "Waking up your agent. Your message will send in a moment." }));
@@ -1098,7 +1134,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
  return { kind: "settled" };
  },
- [agentKind, computerId, finalizeRun, followRun, instanceId, readRunStream, updateRunMessage],
+ [agentKind, boxUrl, computerId, finalizeRun, followRun, instanceId, readRunStream, token, updateRunMessage],
  );
 
  // `from` names a queued message going out: it goes to its own conversation with
@@ -1169,13 +1205,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  }
  };
 
- const end = await driveTurn(sessionId, runId, turn, post, onAccepted);
+ const end = await driveTurn(sessionId, runId, turn, post, onAccepted, guestPaused);
  if (end.kind === "superseded") return;
  if (end.kind === "aborted") {
  updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
  } else if (end.kind !== "settled") {
  const note = turnFailureNote(end) ?? "";
- updateRunMessage(sessionId, runId, (m) => ({ ...m, text: note, streaming: false, outcome: "error" }));
+ updateRunMessage(sessionId, runId, (m) => ({ ...m, text: note, pending: undefined, streaming: false, outcome: "error" }));
+ if (end.kind === "wake_failed" && !from && activeIdRef.current === sessionId) setInput((draft) => draft || raw);
  setLastFailed(sessionId, text);
  }
  // A turn that could not start holds back what was queued behind it.
@@ -1183,7 +1220,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  turn.finish();
  if (end.kind === "settled") followIfOpen();
  },
- [agentKind, beginTurn, boxUrl, changeAttachments, driveTurn, releasePreviews, scrollDown, setLastFailed, setQueuePaused, updateSession, updateRunMessage, token, skey],
+ [agentKind, beginTurn, boxUrl, changeAttachments, driveTurn, guestPaused, releasePreviews, scrollDown, setLastFailed, setQueuePaused, updateSession, updateRunMessage, token, skey],
  );
 
  // Take back a welcome reply that never got going: the chat falls back to the
@@ -1268,8 +1305,8 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // computer's run list (started on another device or in another view).
  const anyChatStarted = useMemo(() => sessions.some((s) => s.messages.length > 0 || Boolean(s.claudeSessionId)), [sessions]);
  useEffect(() => {
- if (loadedKey !== skey || !boxHistoryChecked || hasBoxHistory || welcomeOnBox !== "none") return;
- if (anyBusy || autoWelcomeAttemptedRef.current || anyChatStarted || !active) return;
+ if (guestPaused || loadedKey !== skey || !boxHistoryChecked || hasBoxHistory || welcomeOnBox !== "none") return;
+ if ((retainAcrossSleep && input.trim()) || anyBusy || autoWelcomeAttemptedRef.current || anyChatStarted || !active) return;
  if (readWelcomed(skey)) return;
  autoWelcomeAttemptedRef.current = true;
  // Fire the activation event once per box (the flag above makes this run at
@@ -1286,7 +1323,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // Best-effort analytics only.
  }
  startWelcome(active.id, false);
- }, [active, agentKind, anyBusy, anyChatStarted, boxHistoryChecked, firstTask, hasBoxHistory, loadedKey, skey, startWelcome, welcomeOnBox]);
+ }, [active, agentKind, anyBusy, anyChatStarted, boxHistoryChecked, firstTask, guestPaused, hasBoxHistory, input, loadedKey, retainAcrossSleep, skey, startWelcome, welcomeOnBox]);
 
  // Stop a session's in-flight turn. The box keeps a detached run going without
  // this page, so Stop asks the box to end it; aborting the fetch also stops
@@ -1299,7 +1336,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  abortRef.current.delete(sessionId);
  runRef.current.delete(sessionId);
  turnStateRef.current.delete(sessionId);
- if (runId) {
+ if (runId && !guestPaused) {
  void stopBoxChatRun(boxUrl, runId, token).then((stopped) => {
  if (!stopped && runsSupportedRef.current) {
  clientLog.warn("chat run stop was not confirmed by the computer", { source: "hivra-chat", failureType: "hivra_chat_run_stop_unconfirmed", agentKind });
@@ -1314,7 +1351,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // Stopping a reply must not start the next queued message on its own.
  if ((queuesRef.current[sessionId]?.length ?? 0) > 0) setQueuePaused(sessionId, true);
  setSessionBusy(sessionId, false);
- }, [agentKind, boxUrl, setQueuePaused, setSessionBusy, token, updateSession]);
+ }, [agentKind, boxUrl, guestPaused, setQueuePaused, setSessionBusy, token, updateSession]);
 
  // A reply whose run the computer has no log of. A welcome with no sign it
  // ever started never reached the computer (a reload while the computer was
@@ -1479,8 +1516,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  });
  }, [agentKind, boxUrl, token]);
  useEffect(() => {
- if (loadedKey !== skey) return;
+ if (guestPaused || loadedKey !== skey) return;
  void resumeDetachedRuns();
+ if (retainAcrossSleep) return;
  const onWake = () => {
  if (document.visibilityState !== "hidden") void resumeDetachedRuns();
  };
@@ -1492,7 +1530,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  window.removeEventListener("online", onWake);
  document.removeEventListener("visibilitychange", onWake);
  };
- }, [loadedKey, resumeDetachedRuns, skey]);
+ }, [guestPaused, loadedKey, resumeDetachedRuns, retainAcrossSleep, skey]);
  const stop = useCallback(() => stopSession(activeIdRef.current), [stopSession]);
 
  // Send what was typed: now, or, while the agent is working, into the queue.
@@ -1525,14 +1563,14 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  const resumeQueue = useCallback(() => setQueuePaused(activeIdRef.current, false), [setQueuePaused]);
  // The next queued message goes out once its conversation's reply is over.
  useEffect(() => {
- if (loadedKey !== skey) return;
+ if (guestPaused || loadedKey !== skey) return;
  for (const [sessionId, items] of Object.entries(queues)) {
  if (items.length === 0 || pausedQueues.has(sessionId) || busyIds.has(sessionId) || abortRef.current.has(sessionId)) continue;
  const [next, ...rest] = items;
  setQueues((prev) => ({ ...prev, [sessionId]: rest }));
  void send(next.text, { sessionId, images: next.attachments.map((a) => a.path) });
  }
- }, [busyIds, loadedKey, pausedQueues, queues, send, skey]);
+ }, [busyIds, guestPaused, loadedKey, pausedQueues, queues, send, skey]);
  const openQueue = queues[activeId] ?? [];
 
  // Record a thumbs up/down on an assistant message and fire the funnel event.
@@ -1788,7 +1826,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  <ChatComposer
  agentName={agentName}
  input={input}
- onInputChange={setInput}
+ onInputChange={changeDraft}
  onSend={submit}
  onStop={stop}
  busy={busy}
@@ -1803,7 +1841,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  onQueueEdit={editQueued}
  onQueueResume={resumeQueue}
  fileDrag={fileDrag}
- canUpload={Boolean(token)}
+ canUpload={Boolean(token) && !guestPaused}
  attachments={attachments}
  onRemoveAttachment={removeAttachment}
  uploading={uploading}
@@ -1812,6 +1850,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  textareaRef={composerRef}
  dockRef={composerDockRef}
  >
+ {guestPaused && !busy ? <p role="status" className={chatStyles.retryRow}>Sending a message will wake your computer.</p> : null}
  {showLatest && messages.length > 0 ? (
  <JumpToLatest
  onJump={() => {

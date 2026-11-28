@@ -11,7 +11,7 @@
 
 import { PROVIDERS, type Provider } from "@/lib/models";
 import { getCatalogAppManifest } from "@/lib/hivra/catalog-manifests";
-import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
+import { DEEPSEEK_HARNESS_DEFAULT_MODEL, HERMES_COMPUTER_MODEL, HERMES_DEFAULT_MODEL, MANAGED_CLAUDE_CODE_DEFAULT_MODEL, VENICE_DEFAULT_MODEL } from "@/lib/hivra/model-key-selection";
 import { supportsHermesAuthProvider } from "@/lib/provider-auth";
 import { validateProviderKeyShape } from "@/lib/provider-key-shape";
 import { isPrivateVenicePrivacy, isPrivateVeniceModel, type VenicePrivacy } from "@/lib/venice/model-privacy";
@@ -46,7 +46,6 @@ const CODEX_MODEL = /^[A-Za-z0-9._:/[\]-]{1,64}$/;
 const HERMES_MODEL = /^[\x21-\x7e]{1,128}$/;
 /** Hermes as a Hivra computer takes a plain model ID: the computer writes it
  * into Hermes's own settings, and rejects anything else. */
-const HERMES_COMPUTER_MODEL = /^[A-Za-z0-9._:/-]{1,64}$/;
 const CODEX_KEY = /^[\x21-\x7e]{8,256}$/;
 /** Claude Code on credits: Venice's Claude models (plain IDs, no legacy dates). */
 const CLAUDE_CODE_MODEL = /^claude-(?:fable|opus|sonnet|haiku)-[a-z0-9-]{1,40}$/;

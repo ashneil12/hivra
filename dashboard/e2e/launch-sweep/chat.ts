@@ -99,6 +99,35 @@ export async function acknowledgeOpenHandsUsageConsent(frame: Frame): Promise<bo
   }
 }
 
+async function openHandsCanvasComposer(frame: Frame): Promise<Locator | null> {
+  if (isOpenHandsUsageConsent(await bodyText(frame))) {
+    await acknowledgeOpenHandsUsageConsent(frame);
+    return null;
+  }
+
+  const onboarding = frame.getByTestId('onboarding-modal');
+  if (await onboarding.isVisible()) {
+    const defaultAgent = onboarding.getByTestId('onboarding-agent-option-openhands')
+      .and(onboarding.getByRole('radio', { name: /^OpenHands\b/i, checked: true }));
+    const skip = frame.getByTestId('onboarding-skip').and(frame.getByRole('button', { name: 'Skip for now', exact: true }));
+    if (!(await defaultAgent.isVisible()) || !(await skip.isVisible())) {
+      throw new SweepFailure('open', 'product', 'OpenHands Canvas cannot preserve its default agent without advancing provider setup.');
+    }
+    await skip.click({ timeout: 5_000 });
+    await onboarding.waitFor({ state: 'hidden', timeout: 5_000 });
+  }
+
+  const externalSetup = frame.getByRole('heading', {
+    name: /^(?:sign in|log in)(?: (?:to|with) .+)?$|^(?:connect|configure|set up) (?:a |your )?(?:provider|model|api key)\b/i,
+  }).filter({ visible: true }).first();
+  if (await externalSetup.isVisible()) {
+    throw new SweepFailure('open', 'product', 'OpenHands Canvas requires external sign-in or provider setup. No credentials were entered.');
+  }
+  const composer = frame.getByTestId('chat-input').and(frame.locator('[contenteditable="true"]')).filter({ visible: true }).first();
+  if (!(await composer.isVisible())) return null;
+  return await composer.click({ trial: true, timeout: 1_000 }).then(() => composer, () => null);
+}
+
 function occurrences(text: string, needle: string): number {
   return text.split(needle).length - 1;
 }
@@ -225,7 +254,7 @@ async function findComposer(
     // then presses the agent's Chat (or, for a dashboard agent, Dashboard).
     if (!navigated && Date.now() > navigateAt) {
       navigated = true;
-      const names = target.proof === 'hivra-chat' ? ['Chat'] : ['Dashboard', 'Chat'];
+      const names = target.proof === 'hivra-chat' ? ['Chat'] : target.profileId === 'openhands' ? ['Dashboard'] : ['Dashboard', 'Chat'];
       for (const name of names) {
         const item = page.getByRole('link', { name, exact: true })
           .or(page.getByRole('button', { name, exact: true }))
@@ -245,8 +274,10 @@ async function findComposer(
       }
     } else {
       for (const frame of await agentFrames(page)) {
-        if (target.profileId === 'openhands' && await acknowledgeOpenHandsUsageConsent(frame)) {
-          await sleep(2_000);
+        if (target.profileId === 'openhands') {
+          const composer = await openHandsCanvasComposer(frame);
+          if (composer) return { frame, composer, surface: 'OpenHands web UI' };
+          lastSeen = (await bodyText(frame)).replace(/\s+/g, ' ').trim().slice(0, 300) || lastSeen;
           continue;
         }
         if (noticeAttempts < 3 && await acknowledgeNotice(frame)) {
@@ -311,10 +342,12 @@ export async function proveChat(
   // question never appear sends it again; so does the sweep, up to 3 times.
   const asked = question.prompt.slice(0, 24);
   const askedBefore = occurrences(await bodyText(frame), asked);
+  const isOpenHands = target.profileId === 'openhands';
+  const maxAttempts = isOpenHands ? 1 : 3;
   let sentAt = Date.now();
   let shown = false;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    sentAt = await sendQuestion(page, frame, composer, question);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    sentAt = isOpenHands ? await sendOpenHandsQuestion(frame, composer, question) : await sendQuestion(page, frame, composer, question);
     const shownBy = Date.now() + 20_000;
     while (Date.now() < shownBy) {
       const text = await bodyText(frame);
@@ -328,7 +361,7 @@ export async function proveChat(
       await sleep(2_000);
     }
     if (shown) break;
-    if (attempt < 3) await sleep(15_000);
+    if (attempt < maxAttempts) await sleep(15_000);
   }
 
   const end = sentAt + options.replyTimeoutMs;
@@ -348,9 +381,26 @@ export async function proveChat(
     'product',
     `${surface}: no answer within ${Math.round(options.replyTimeoutMs / 60_000)} min` +
       (blocked ? ' (it is asking for a sign-in or key)' : '') +
-      (shown ? '' : ' (the question never appeared in the chat after 3 tries)') +
+      (shown ? '' : ` (the question never appeared in chat after ${isOpenHands ? 'one native Send click' : '3 tries'})`) +
       `. End of screen: "${tail}"`,
   );
+}
+
+async function sendOpenHandsQuestion(frame: Frame, composer: Locator, question: SweepQuestion): Promise<number> {
+  if (await frame.getByText(/your llm isn.t set up yet/i).first().isVisible()) {
+    throw new SweepFailure('chat', 'product', 'OpenHands Canvas has no usable LLM profile. No credentials were entered and no prompt was sent.');
+  }
+  await composer.fill(question.prompt);
+  if (await composer.innerText() !== question.prompt) {
+    throw new SweepFailure('chat', 'harness_bug', 'OpenHands Canvas did not retain the exact prompt.');
+  }
+  const send = frame.getByTestId('submit-button').and(frame.locator('button:enabled')).filter({ visible: true }).first();
+  await send.waitFor({ timeout: 5_000 }).catch(() => {
+    throw new SweepFailure('chat', 'product', 'OpenHands Canvas native Send did not become enabled. No prompt was sent.');
+  });
+  const sentAt = Date.now();
+  await send.click({ timeout: 5_000 });
+  return sentAt;
 }
 
 /** Type the question into the composer and send it, the way a customer would. */

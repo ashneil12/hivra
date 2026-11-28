@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { buildTestEnvExports, selectProductionEnvValue, shellQuote } from "../catalog-certification/canary-test-env.mjs";
-import { certificationRowFromSweep } from "../catalog-certification/append-certification-result.mjs";
+import { loadCanaryTestEnv } from "../catalog-certification/canary-test-env.mjs";
+import { certificationRowFromSweep, certificationRunDisposition } from "../catalog-certification/append-certification-result.mjs";
 import { buildCertificationAllowlist } from "../catalog-certification/export-allowlist.mjs";
 import { chooseRemediation, remediationFingerprint, remediationRow, REMEDIATION_LEDGER_SCHEMA } from "../catalog-certification/catalog-remediation.mjs";
 import {
@@ -13,7 +15,8 @@ import {
   readProvisionerVersion,
   summarizeCatalog,
 } from "../catalog-certification/certification-plan.mjs";
-import { parseServedRevision } from "../catalog-certification/served-canary-revision.mjs";
+import { resolveServedRevision } from "../catalog-certification/served-canary-revision.mjs";
+import { createVercelGetter } from "../catalog-certification/vercel-rest.mjs";
 
 const SHA = "0123456789abcdef0123456789abcdef01234567";
 const OTHER_SHA = "fedcba9876543210fedcba9876543210fedcba98";
@@ -62,19 +65,17 @@ test("allowlist emits only clean, exact-revision passes and drops a subsequent p
   assert.equal(buildCertificationAllowlist([pinned], [pinnedPass], launchSeals).apps.example.provisionerVersion, launchSeals.pinned);
 });
 
-function inspectFixture(overrides = {}) {
-  return JSON.stringify({
-    id: "dpl_2W4wvcDcfy51XFEgBkGF5nfc8tGn",
-    readyState: "READY",
-    target: "production",
-    aliases: [HOST],
-    ...overrides,
-  });
+const PROJECT = "prj_example01";
+const DEPLOYMENT = "dpl_2W4wvcDcfy51XFEgBkGF5nfc8tGn";
+
+function aliasFixture(overrides = {}) {
+  return { alias: HOST, deploymentId: DEPLOYMENT, projectId: PROJECT, ...overrides };
 }
 
 function deploymentFixture(overrides = {}) {
-  return JSON.stringify({
-    id: "dpl_2W4wvcDcfy51XFEgBkGF5nfc8tGn",
+  return {
+    id: DEPLOYMENT,
+    projectId: PROJECT,
     source: "git",
     readyState: "READY",
     target: "production",
@@ -87,74 +88,81 @@ function deploymentFixture(overrides = {}) {
       githubCommitRef: "canary",
       githubCommitSha: SHA,
     },
-    project: { id: "prj_example", name: "hermesos-canary" },
     ...overrides,
-  });
+  };
 }
 
-test("served revision parser proves alias, git source, branch and exact SHA", () => {
-  const parsed = parseServedRevision({
-    inspectJson: inspectFixture(),
-    deploymentJson: deploymentFixture(),
-    host: HOST,
-    owner: "ashneil12",
-    repo: "hivra",
-    ref: "canary",
+test("served revision uses scoped GETs and proves the exact alias, project and Git SHA", async () => {
+  const visited = [];
+  const get = createVercelGetter("our-team", {
+    env: { HIVRA_VERCEL_TOKEN: "mock" },
+    fetchImpl: async (url, options) => {
+      assert.equal(options.method, "GET");
+      assert.equal(options.redirect, "error");
+      assert.equal(options.headers.Authorization, "Bearer mock");
+      assert.equal(url.origin, "https://api.vercel.com");
+      assert.equal(url.searchParams.get("slug"), "our-team");
+      visited.push(url.pathname);
+      return Response.json(visited.length === 1 ? aliasFixture() : deploymentFixture());
+    },
   });
-  assert.equal(parsed.sha, SHA);
-  assert.equal(parsed.ref, "canary");
-  assert.equal(parsed.deploymentId, "dpl_2W4wvcDcfy51XFEgBkGF5nfc8tGn");
+  assert.deepEqual(await resolveServedRevision({ projectId: PROJECT, get }), { deploymentId: DEPLOYMENT, host: HOST, sha: SHA, projectId: PROJECT });
+  assert.deepEqual(visited, [`/v4/aliases/${HOST}`, `/v13/deployments/${DEPLOYMENT}`]);
+  await assert.rejects(get("/v13/deployments/../not-allowed"), /unsupported API read/);
+  await assert.rejects(get("/v4/aliases/hivra.cloud"), /unsupported API read/);
 });
 
-test("served revision parser refuses a CLI-sourced or cross-repo deployment", () => {
-  assert.throws(
-    () => parseServedRevision({
-      inspectJson: inspectFixture(),
-      deploymentJson: deploymentFixture({ source: "cli" }),
-      host: HOST,
-      owner: "ashneil12",
-      repo: "hivra",
-      ref: "canary",
-    }),
-    /not Git-sourced/,
-  );
-  assert.throws(
-    () => parseServedRevision({
-      inspectJson: inspectFixture(),
-      deploymentJson: deploymentFixture({
-        meta: {
-          githubHost: "github.com",
-          githubOrg: "attacker",
-          githubRepo: "hivra",
-          githubCommitRef: "canary",
-          githubCommitSha: SHA,
-        },
-      }),
-      host: HOST,
-      owner: "ashneil12",
-      repo: "hivra",
-      ref: "canary",
-    }),
-    /did not come from ashneil12\/hivra/,
-  );
+test("served revision refuses a wrong alias or a non-Canary deployment", async () => {
+  await assert.rejects(resolveServedRevision({
+    projectId: PROJECT, get: async () => aliasFixture({ projectId: "prj_elsewhere" }),
+  }), /alias does not match/);
+  for (const overrides of [
+    { source: "cli" }, { projectId: "prj_elsewhere" }, { readyState: "BUILDING" }, { alias: [] },
+    { gitSource: { type: "github", ref: "main", sha: SHA } },
+    { meta: { ...deploymentFixture().meta, githubOrg: "outsider" } },
+    { meta: { ...deploymentFixture().meta, githubCommitSha: OTHER_SHA } },
+  ]) {
+    const get = async (path) => path.startsWith("/v4/") ? aliasFixture() : deploymentFixture(overrides);
+    await assert.rejects(resolveServedRevision({ projectId: PROJECT, get }), /Git (Canary alias|revision)/);
+  }
 });
 
-test("Canary env export selects production Supabase rows without exporting a Clerk key", () => {
+test("Canary env read selects only bound production-scope Supabase values", async () => {
+  const serviceRole = "fixture-service-role-long-enough";
   const rows = [
     { key: "CLERK_SECRET_KEY", value: "sk_test_fixture", target: ["production"], updatedAt: 2 },
     { key: "SUPABASE_URL", value: "https://preview.supabase.co", target: ["preview"], updatedAt: 3 },
     { key: "SUPABASE_URL", value: "https://example.supabase.co", target: ["production"], updatedAt: 2 },
-    { key: "SUPABASE_SERVICE_ROLE_KEY", value: "service-role-value-long-enough", target: ["production"], updatedAt: 2 },
+    { key: "SUPABASE_URL", value: "https://branch.supabase.co", target: ["production"], gitBranch: "other", updatedAt: 3 },
+    { key: "SUPABASE_SERVICE_ROLE_KEY", value: serviceRole, target: ["production"], updatedAt: 2 },
   ];
-  assert.equal(selectProductionEnvValue(rows, "SUPABASE_URL"), "https://example.supabase.co");
-  const exportsText = buildTestEnvExports(rows);
-  assert.match(exportsText, /export LAUNCH_SWEEP_SUPABASE_URL='https:\/\/example\.supabase\.co'/);
-  assert.doesNotMatch(exportsText, /CLERK_SECRET_KEY|sk_test_fixture|preview\.supabase/);
-  assert.equal(buildTestEnvExports(rows.slice(1)), exportsText);
+  const get = async (path, query) => {
+    if (path.startsWith("/v4/")) return aliasFixture();
+    assert.equal(path, `/v8/projects/${PROJECT}/env`);
+    assert.deepEqual(query, { decrypt: "true" });
+    return { envs: rows };
+  };
+  assert.deepEqual(await loadCanaryTestEnv({ projectId: PROJECT, deploymentId: DEPLOYMENT, get }), {
+    LAUNCH_SWEEP_SUPABASE_URL: "https://example.supabase.co",
+    LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY: serviceRole,
+  });
 });
 
-test("shellQuote preserves apostrophes without breaking shell syntax", () => {
-  assert.equal(shellQuote("a'b"), `'a'"'"'b'`);
+test("an alias move refuses to read env rows, and API failures omit response bodies", async () => {
+  const get = async (path) => {
+    assert.equal(path, `/v4/aliases/${HOST}`);
+    return aliasFixture({ deploymentId: "dpl_different" });
+  };
+  await assert.rejects(loadCanaryTestEnv({ projectId: PROJECT, deploymentId: DEPLOYMENT, get }), /changed after revision/);
+  const denied = createVercelGetter("team_12345678", {
+    env: { HIVRA_VERCEL_TOKEN: "mock" },
+    fetchImpl: async (url) => {
+      assert.equal(url.searchParams.get("teamId"), "team_12345678");
+      return new Response("credential-like response", { status: 403 });
+    },
+  });
+  await assert.rejects(denied(`/v4/aliases/${HOST}`), { message: "[vercel-rest] Vercel API read failed (HTTP 403)" });
+  assert.throws(() => createVercelGetter("", { env: { HIVRA_VERCEL_TOKEN: "mock" } }), /explicit Vercel team/);
 });
 
 function manifest(id, category = "app", imageTag = "1") {
@@ -213,6 +221,35 @@ test("planner does not recertify a fresh pass for unchanged inputs", () => {
     now: NOW,
   });
   assert.equal(chosen, null);
+});
+
+test("a shared standing-account failure does not replace the last usable target result", () => {
+  const entry = catalogEntries()[1];
+  const chosen = chooseCertificationTarget({
+    catalog: [entry],
+    ledgerRows: [
+      ledgerRow({ ledgerLine: 1 }),
+      ledgerRow({ ledgerLine: 2, passed: false, canarySha: OTHER_SHA, failure: { stage: "account" } }),
+    ],
+    currentCanarySha: SHA,
+    currentProvisionerVersion: PROVISIONER,
+    now: NOW,
+  });
+  assert.equal(chosen, null);
+});
+
+test("planner prefers a due agent retry over a due generic app retry in the same group", () => {
+  const [app, , agent] = catalogEntries();
+  const ledgerRows = [app, agent].map((entry, index) => ledgerRow({
+    profileId: entry.id,
+    manifestSha256: entry.manifestSha256,
+    canarySha: OTHER_SHA,
+    passed: false,
+    finishedAt: new Date(NOW.getTime() - (2 - index) * 60_000).toISOString(),
+  }));
+  assert.equal(chooseCertificationTarget({
+    catalog: [app, agent], ledgerRows, currentCanarySha: SHA, currentProvisionerVersion: PROVISIONER, now: NOW,
+  }).id, agent.id);
 });
 
 test("planner recertifies when the manifest or provisioner changes", () => {
@@ -332,7 +369,7 @@ function sweepResult(overrides = {}) {
     expectedCanarySha: SHA,
     expectedProvisionerVersion: PROVISIONER,
     catalog: { manifestSha256: "manifestsha", runtimeKind: "docker-web", runtimeRefs: ["corentinth/it-tools:latest"] },
-    teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: true },
+    teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: false },
     screenshots: ["pass.png"],
     ...overrides,
   };
@@ -389,13 +426,70 @@ test("a passing app requires a successful sweep and verified teardown without de
   const result = sweepResult({ teardown });
   assert.equal(certificationRowFromSweep({ ...args, result }).passed, true);
   assert.equal(certificationRowFromSweep({ ...args, result, sweepExitCode: 1 }).passed, false);
-  for (const unverified of [undefined, {}, { ...teardown, error: "unverified" }]) {
+  for (const unverified of [undefined, {}, { ...teardown, error: "unverified" }, { ...teardown, accountDeleted: true }]) {
     const row = certificationRowFromSweep({ ...args, result: sweepResult({ teardown: unverified }) });
     assert.equal(row.passed, false);
     assert.equal(row.failure.stage, "teardown");
   }
 });
 
+test("an uncertain launch cleanup stops the entire runner, even if the product already failed", () => {
+  const evidenceFile = "abcd1234-trilium.json";
+  const failure = { stage: "ready", category: "product" };
+  const clean = { agentsLeft: 0, instancesLeft: 0, accountDeleted: false };
+  assert.equal(certificationRunDisposition({ evidenceFile, failure, teardown: { ...clean, error: "unverified" } }), "hold");
+  const incomplete = certificationRowFromSweep({
+    result: sweepResult({ passed: false, failure, teardown: { agentsLeft: 0, instancesLeft: 0 } }),
+    file: evidenceFile, target: "trilium", canarySha: SHA, provisionerVersion: PROVISIONER, runId: "abcd1234", sweepExitCode: 1,
+  });
+  assert.equal(certificationRunDisposition(incomplete), "hold");
+  assert.equal(certificationRunDisposition({ evidenceFile, failure, teardown: { ...clean, agentsLeft: 1 } }), "hold");
+  assert.equal(certificationRunDisposition({ evidenceFile, failure, teardown: { ...clean, accountDeleted: true } }), "hold");
+  assert.equal(certificationRunDisposition({ evidenceFile, sweepPassed: true, teardown: null }), "hold");
+  assert.equal(certificationRunDisposition({ failure }), "hold");
+  assert.equal(certificationRunDisposition({ evidenceFile, failure, teardown: clean }), "fail");
+  assert.equal(certificationRunDisposition({ evidenceFile, failure: { stage: "account" } }), "account");
+  assert.equal(certificationRunDisposition({ evidenceFile, passed: true, teardown: clean }), "pass");
+});
+
+test("the operator's teardown hold persists across invocations and releases the serial lock", () => {
+  const state = mkdtempSync(path.join(tmpdir(), "catalog-teardown-hold-"));
+  try {
+    const marker = path.join(state, "TEARDOWN_REVIEW_REQUIRED");
+    writeFileSync(marker, "run=abcd1234\n");
+    const runner = new URL("../catalog-certification/run-once.sh", import.meta.url);
+    for (let index = 0; index < 2; index++) {
+      assert.throws(() => execFileSync("bash", [runner.pathname], {
+        env: { ...process.env, CERT_STATE: state },
+        stdio: "pipe",
+      }), (error) => error.status === 77 && error.stderr.toString().includes("verify the previous run"));
+      assert.equal(existsSync(path.join(state, "certification-lock.d")), false);
+      assert.equal(existsSync(marker), true);
+    }
+  } finally {
+    rmSync(state, { force: true, recursive: true });
+  }
+});
+
+test("the shell's disposition command reads a clean or unsafe receipt without appending again", () => {
+  const state = mkdtempSync(path.join(tmpdir(), "catalog-disposition-"));
+  try {
+    const file = path.join(state, "ledger-row.json");
+    const helper = new URL("../catalog-certification/append-certification-result.mjs", import.meta.url);
+    const row = {
+      schema: CERTIFICATION_LEDGER_SCHEMA, evidenceFile: "abcd1234-example.json",
+      passed: true, teardown: { agentsLeft: 0, instancesLeft: 0, accountDeleted: false },
+    };
+    const disposition = () => execFileSync(process.execPath, [helper.pathname, "--disposition", file], { encoding: "utf8" }).trim();
+    writeFileSync(file, JSON.stringify(row));
+    assert.equal(disposition(), "pass");
+    writeFileSync(file, JSON.stringify({ ...row, passed: false, teardown: { ...row.teardown, error: "unverified" } }));
+    assert.equal(disposition(), "hold");
+    assert.deepEqual(readdirSync(state), ["ledger-row.json"]);
+  } finally {
+    rmSync(state, { force: true, recursive: true });
+  }
+});
 
 function certificationFailure(overrides = {}) {
   return {

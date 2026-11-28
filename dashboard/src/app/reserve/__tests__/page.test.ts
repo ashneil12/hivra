@@ -13,7 +13,7 @@ jest.mock("next/navigation", () => ({ redirect: jest.fn() }));
 // (owner decision, 21 October 2026), so it now says what a free account is for and what is paid.
 const DASH = new RegExp(`${String.fromCharCode(0x2013)}|${String.fromCharCode(0x2014)}`);
 const DESCRIPTION =
-  "Create your Hivra account. A free account works with a computer or server you connect yourself. Every Hivra Cloud computer needs a paid plan.";
+  "Create your Hivra account. A free account works with a computer or server you connect yourself. Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers.";
 
 describe("/reserve and /reserved", () => {
   it.each([

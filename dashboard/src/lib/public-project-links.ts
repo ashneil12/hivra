@@ -60,6 +60,8 @@ export const PUBLIC_PROJECT_LINKS: Readonly<{
   x: "https://x.com/HivraOS",
 };
 
+export const SELF_HOST_QUICKSTART_URL = "https://github.com/ashneil12/hivra/blob/main/docs/self-host/QUICKSTART.md";
+
 /** Official profiles for Organization structured data (schema.org sameAs). */
 export function officialProfileLinks(): string[] {
   const { x, repository } = PUBLIC_PROJECT_LINKS;

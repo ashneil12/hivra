@@ -83,7 +83,7 @@ function checkSchedule(s: ScheduleSource): void {
     if (s.profilesDir !== undefined) { checkPath(s.profilesDir); checkPath(s.profilePath); }
   } else if (s.kind === "json-next-run" || s.kind === "json-nonempty") {
     if (!KEY.test(s.key)) fail("schedule key");
-  } else if (s.kind !== "crontab" && s.kind !== "dir-nonempty") fail("schedule kind");
+  } else if (s.kind !== "crontab" && s.kind !== "dir-nonempty" && s.kind !== "openclaw-sqlite") fail("schedule kind");
 }
 function checkChannel(c: ChannelSource): void {
   if (c.owner) checkMatch(c.owner);

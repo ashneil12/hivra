@@ -1,4 +1,4 @@
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, LARGER_PLAN_PRICE, LARGER_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import type { ComparePage } from "../types";
 import { formatCheckedMonth } from "../competitor-facts";
 import {
@@ -48,7 +48,7 @@ export const page: ComparePage = {
       blocks: paragraphs(
         `Hivra is for a person who wants an agent to have a computer of its own and would rather open it than assemble it. You choose a supported agent, Hivra creates the computer and runs the agent's own installer, and you work through a browser view with chat, a terminal and files. Hivra starts at ${ENTRY_PRICE_PROSE}, and ${STAYS_ON}`,
         "The trade-off is the desktop. We do not describe the Hivra browser view as a full Linux desktop with arbitrary graphical apps such as an office suite or a design tool, and a person cannot watch the agent drive a mouse and keyboard on a shared screen the way Cubicles describes. If your agent's job is mostly code, a repo, scheduled work and a chat, that matters less. If its job is to click through applications, it matters a lot.",
-        "Hivra is independent and is not affiliated with Cubicles, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A Hivra account costs nothing, but every Hivra Cloud computer is a paid plan. A free account works with a server you connect yourself.",
+        "Hivra is independent and is not affiliated with Cubicles, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A free Hivra account does not include managed compute. A free account works with a server you connect yourself.",
       ),
     },
     {
@@ -56,7 +56,7 @@ export const page: ComparePage = {
       tone: "callout",
       blocks: paragraphs(
         "Cubicles is the better choice when the agent needs a screen. Its computers are full Ubuntu desktops with Chrome and Firefox, VS Code, Docker, LibreOffice and anything else you install, and its pages say you can watch the agent work live from any browser and share the screen through a view-only link or invite someone to use it. Hivra does not offer that desktop surface today.",
-        "Cubicles is also the better choice when you want to try something without paying. At the time we read its pages, it offered one free Standard computer per account, without adding payment details, while capacity lasts. Every Hivra Cloud computer is a paid plan, so there is no free hosted computer to try, only a refund route if it is not right.",
+        "Cubicles is also the better choice when you want to try something without paying. At the time we read its pages, it offered one free Standard computer per account, without adding payment details, while capacity lasts. A free Hivra account does not include managed compute.",
         "It is better when you want to drive computers from code. Its documentation describes a REST API that can create, start, stop and delete desktops, run commands, take screenshots, move files and manage agents (OpenClaw, Hermes, Claude Code, Codex or OpenCode), and an MCP server that can start, stop and restart desktops, run commands, read and write files and take screenshots. Its docs say creating or deleting desktops is not available through MCP. We have not published a public API or SDK for creating Hivra computers from code, so that kind of scripting is not what Hivra offers today.",
         "And it is better if you want several separate computers, one per job. Its pages say you can have no limit on how many, each on its own monthly subscription, and can put one to sleep when idle, with its files kept. Note that its service details say stopping a computer does not cancel the subscription, so a stopped computer is still charged.",
         "Choose Hivra when you want the agent itself managed for you, a fixed monthly figure with a stated size, and a guarantee you can read before you pay. Choose Cubicles when a real desktop is the point.",
@@ -195,7 +195,7 @@ export const page: ComparePage = {
     },
     {
       q: "Is there a free way to try each?",
-      a: `Cubicles' pages list a free Standard computer for each account while there is room. A Hivra account costs nothing, but every Hivra Cloud computer is paid, with a ${MONEY_BACK_GUARANTEE}. A free account works with a server you connect yourself.`,
+      a: `Cubicles' pages list a free Standard computer for each account while there is room. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans come with a ${MONEY_BACK_GUARANTEE}. A free account works with a server you connect yourself.`,
     },
   ],
   closing: CLOSING,

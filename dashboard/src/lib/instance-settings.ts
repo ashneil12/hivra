@@ -610,7 +610,7 @@ export function buildAdvancedInstanceConfigPayload(
   } : undefined;
 
   return buildStoredInstanceConfig(currentConfig, {
-    ...(typeof model === "string" ? { model: normalizeModelValue(model) } : {}),
+    ...(typeof model === "string" ? { model } : {}),
     ...(memorySystem ? { memorySystem: memorySystem as Record<string, unknown> } : {}),
     honcho: honchoPatch,
     agentSettings: agentSettingsPatch,

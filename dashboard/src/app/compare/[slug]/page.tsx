@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { buildAbsoluteTitleMetadata } from "@/lib/metadata";
 import { COMPARE_PAGES, COMPARE_PAGE_SLUGS } from "@/lib/compare/pages";
 import { HOSTED_COMPETITORS, hostedComparisonPath } from "@/lib/compare/hosted-competitors";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
 import CompareArticle from "../CompareArticle";
 import HostedComparison from "../HostedComparison";
 
@@ -13,6 +14,8 @@ import HostedComparison from "../HostedComparison";
 interface ComparePageParams {
   params: Promise<{ slug: string }>;
 }
+
+export const dynamic = "force-dynamic";
 
 export async function generateMetadata({ params }: ComparePageParams): Promise<Metadata> {
   const { slug } = await params;
@@ -39,7 +42,7 @@ export function generateStaticParams() {
 export default async function ComparisonPage({ params }: ComparePageParams) {
   const { slug } = await params;
   const hosted = HOSTED_COMPETITORS.find((provider) => provider.slug === slug);
-  if (hosted) return <HostedComparison provider={hosted} />;
+  if (hosted) return <HostedComparison provider={hosted} sleep={await paidKvmSleepAvailable()} />;
   const page = COMPARE_PAGES[slug];
   if (!page) notFound();
 

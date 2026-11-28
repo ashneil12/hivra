@@ -62,9 +62,22 @@ describe('models.ts', () => {
   });
 
   describe('normalizeModelValue', () => {
+    it.each([
+      ['claude-sonnet-4-20250514', 'custom_llm'],
+      ['claude-sonnet-4-20250514', 'openrouter'],
+      ['deepseek/deepseek-reasoner', 'custom_llm'],
+      ['deepseek/deepseek-reasoner', 'venice'],
+    ])('preserves %s when explicitly selected on %s', (model, provider) => {
+      expect(normalizeModelValue(model, provider)).toBe(model);
+    });
+
     it('should pass canonical OpenRouter Claude 4.6 IDs through unchanged', () => {
       expect(normalizeModelValue('anthropic/claude-opus-4.6', 'openrouter')).toBe('anthropic/claude-opus-4.6');
       expect(normalizeModelValue('anthropic/claude-sonnet-4.6', 'openrouter')).toBe('anthropic/claude-sonnet-4.6');
+    });
+
+    it('keeps the OpenRouter compatibility alias for OpenRouter', () => {
+      expect(normalizeModelValue('deepseek/deepseek-reasoner', 'openrouter')).toBe('deepseek/deepseek-chat');
     });
 
     it('should rewrite stale regressed Anthropic snapshot IDs to the current direct API IDs', () => {

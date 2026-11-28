@@ -77,6 +77,25 @@ describe("computer backup host scripts", () => {
     expect(run).toContain("--keep-daily \"$KEEP_DAILY\"");
   });
 
+  it("passes both portable checkpoint digests without changing the host fence marker", () => {
+    const scope = { agentId: AGENT, operationId: JOB, generation: 1, hostId: "qa-source", vmid: 1107, bindingTag: TAG };
+    const fence = { ...scope, state: "fenced" as const, configurationSha256: "d".repeat(64) };
+    const portableFence = { ...fence, rawConfigurationSha256: "e".repeat(64) };
+    const script = buildBackupStartScript(input({ kind: "portable_checkpoint", portableFence }));
+    bashSyntax(script);
+    bashSyntax(heredoc(script, "HIVRA_BACKUP_RUN"));
+    const params = heredoc(script, "HIVRA_BACKUP_PARAMS");
+    expect(params).toContain(`PORTABLE_CONFIG_SHA='${fence.configurationSha256}'\n`);
+    expect(params).toContain(`PORTABLE_RAW_CONFIG_SHA='${portableFence.rawConfigurationSha256}'\n`);
+    expect(params).toContain(`PORTABLE_FENCE='${JSON.stringify(scope)}'\n`);
+    expect(heredoc(buildBackupStartScript(input({ kind: "store" })), "HIVRA_BACKUP_PARAMS"))
+      .not.toContain("PORTABLE_RAW_CONFIG_SHA");
+    expect(() => buildBackupStartScript(input({ kind: "portable_checkpoint", portableFence: fence as typeof portableFence })))
+      .toThrow("Portable checkpoint requires the exact fenced QA source");
+    expect(() => buildBackupStartScript(input({ kind: "portable_checkpoint", portableFence: { ...portableFence, rawConfigurationSha256: "wrong" } })))
+      .toThrow("Portable checkpoint requires the exact fenced QA source");
+  });
+
   it("refuses bad input", () => {
     expect(() => buildBackupStartScript(input({ bindingTag: "nope" }))).toThrow();
     expect(() => buildBackupStartScript(input({ jobId: "x; rm" }))).toThrow();
