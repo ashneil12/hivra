@@ -45,20 +45,20 @@ const SPECS = [EMAIL];
 
 describe("only Telegram on: byte-identical scripts", () => {
   // Taken from the code before the channel framework (merge 215a8f89). The
-  // port must change nothing for a Telegram-only sleep or wake. The sleep and
-  // probe values were taken again when the idle check stopped reading Hermes
-  // safety switches as chat channels; the wake values are the original ones.
+  // port must change nothing for a Telegram-only sleep or wake. Sleep and idle
+  // probe goldens include the OpenClaw SQLite scheduler reader; the wake and
+  // Telegram gate goldens are unchanged.
   it("keeps every sleep, probe and wake script exactly as before", () => {
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false, telegramCoverage: TG })))
-      .toBe("61e76cc493ecc5c775324cff266973954bf77288831cd3bf3dff7cc9a4d3a8e5");
+      .toBe("3de559fa827c5359a9f41ac959fc26563a38a963e5c05c181cd27b0fec09f5e0");
     expect(digest(buildSleepHostScript({ ...target, tier: "hibernate", manual: true, telegramCoverage: TG, fastConfigRead: true })))
-      .toBe("2960242b75a607516a43a58f4eb911bdb70edd1477a3e0336273693fc2475805");
+      .toBe("689ecca10bc07d0289f919fd222df198eda2fb05453b61d8b35d7bba865112da");
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false })))
-      .toBe("4c1360b7e232391ab9939d51b401f55d5b315b51954a2963bbef3c76b874ee08");
+      .toBe("0e2dbd1db0723810871482066af818cb4dc6b2e14ddc6e6ae7c120115fdcf2aa");
     expect(digest(buildIdleProbeHostScript(target, { telegram: true })))
-      .toBe("3e23d92953397537f1595374c879615ba4fd6ceb3404466a2d81adebda2e9d3c");
+      .toBe("8adb309a735272e0461c4eb36dd5a03cab1fb518cc2a615c0ca7bef61bc8ea36");
     expect(digest(buildIdleProbeHostScript(target)))
-      .toBe("249388893e6c0c7f330bfd5383c2a2c51109f87e86d4f34344601897e11d04ba");
+      .toBe("cd2ed17a796fedf965e79c39818c252c1c2f2d5a0639da15a2cf7644c37fe67f");
     expect(digest(buildWakeHostScript({ ...target, admission, killStaleSockets: true })))
       .toBe("72364b82e417ec2bb0c0804bf4c87cc09cb3bf74ac66336418cf07030d57076e");
     expect(digest(buildWakeHostScript({ ...target, admission })))
