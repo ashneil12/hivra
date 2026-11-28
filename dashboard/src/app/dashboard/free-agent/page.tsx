@@ -3,14 +3,20 @@ import { notFound } from "next/navigation";
 
 import { DashboardPageShell } from "@/components/layout/DashboardPageShell";
 import { LiteAgentApp } from "@/components/lite-agent/LiteAgentApp";
+import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
+import { readCanaryLiteQaConfig } from "@/lib/lite-agents/canary-qa";
 import { isFreeCloudAgentEnabled } from "@/lib/lite-agents/flag";
 
 export const dynamic = "force-dynamic";
 
-/** The free Lite cloud agent. Preview: absent unless NEXT_PUBLIC_HIVRA_FREE_CLOUD_AGENT is on. */
 export default async function FreeAgentPage() {
-  if (!isFreeCloudAgentEnabled()) notFound();
-  await auth.protect();
+  if (isCanonicalGitCanaryDeployment()) {
+    const { userId } = await auth();
+    if (!userId || !await readCanaryLiteQaConfig(userId)) notFound();
+  } else {
+    if (!isFreeCloudAgentEnabled()) notFound();
+    await auth.protect();
+  }
 
   return (
     <DashboardPageShell

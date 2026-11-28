@@ -7,6 +7,8 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 
 import { enforceAuthenticatedRouteRateLimit, RATE_LIMIT_PRESETS } from "@/lib/authenticated-rate-limit";
+import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
+import { readCanaryLiteQaConfig } from "@/lib/lite-agents/canary-qa";
 import { callLiteWorker, liteWorkerConfig } from "@/lib/lite-agents/client";
 import { isFreeCloudAgentEnabled } from "@/lib/lite-agents/flag";
 import { log } from "@/lib/logger";
@@ -14,20 +16,23 @@ import { log } from "@/lib/logger";
 /**
  * The browser's only way to the Lite agent Worker. It signs each allow-listed
  * call as the signed-in user, so the Worker never sees a browser and one
- * account can never name another. Everything 404s while the flag is off.
+ * account can never name another. Access is gated before forwarding.
  */
 const MAX_BODY_BYTES = 32 * 1024;
 
 type Context = { params: Promise<{ path?: string[] }> };
 
 async function handle(request: Request, context: Context, method: "GET" | "POST" | "PATCH" | "DELETE") {
-  if (!isFreeCloudAgentEnabled()) return NextResponse.json({ error: "not_found" }, { status: 404 });
+  const canary = isCanonicalGitCanaryDeployment();
+  const enabled = !canary && isFreeCloudAgentEnabled();
+  const hidden = () => NextResponse.json({ error: "not_found" }, { status: 404 });
+  if (!enabled && !canary) return hidden();
 
   const { userId } = await auth();
-  if (!userId) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  if (!userId) return enabled ? NextResponse.json({ error: "unauthorized" }, { status: 401 }) : hidden();
 
-  const config = liteWorkerConfig();
-  if (!config) return NextResponse.json({ error: "not_configured" }, { status: 503 });
+  const config = canary ? await readCanaryLiteQaConfig(userId) : liteWorkerConfig();
+  if (!config) return enabled ? NextResponse.json({ error: "not_configured" }, { status: 503 }) : hidden();
 
   const { path = [] } = await context.params;
   const workerPath = `/v1/${path.map((part) => encodeURIComponent(part)).join("/")}`;

@@ -45,6 +45,7 @@ export async function callLiteWorker(
     },
     ...(text ? { body: text } : {}),
     cache: "no-store",
+    redirect: "error",
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
   let parsed: unknown = null;
