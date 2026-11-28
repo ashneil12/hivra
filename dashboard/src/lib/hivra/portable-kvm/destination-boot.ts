@@ -11,7 +11,7 @@ import {
   type PortableKvmDestinationReservation,
 } from "./destination-disk";
 import { portableKvmHostCpuValidationPython, portableKvmManagedDestinationProfileSchema } from "./destination-prepare";
-import { isPortableKvmWakeClaimed, portableKvmPlacement, resolvePortableKvmPilotPlacement } from "./pilot";
+import { isPortableKvmWakeClaimed, portableKvmPlacement, resolvePortableKvmPilotPlacement, type PortableKvmPilot } from "./pilot";
 
 const prefix = "HIVRA_KVM_PORTABLE_BOOT_V1 ";
 const timeoutMs = 125_000;
@@ -93,6 +93,7 @@ export type PortableKvmDestinationBootAdapter = {
   readAuthority(input: { ownerId: string; agentId: string }): Promise<{
     lease: unknown;
     agent: Record<string, unknown>;
+    pilot: PortableKvmPilot;
   } | null>;
   runHostScript(input: { hostId: string; script: string; timeoutMs: number }): Promise<{ ok: boolean; stdout: string }>;
 };
@@ -582,16 +583,14 @@ async function runDestinationStep(
   const serialized = serializePortableKvmDestinationBootProfile(profile);
   const reservation = profile.reservation;
   const reservationWire = serializePortableKvmDestinationReservation(reservation);
-  if (!isCanonicalGitCanaryDeployment() || process.env.HIVRA_KVM_PORTABLE_QA_ENABLED !== "true"
-    || !ownerId || process.env.HIVRA_KVM_PORTABLE_QA_OWNER_ID !== ownerId
-    || process.env.HIVRA_KVM_PORTABLE_QA_AGENT_ID !== reservation.agentId) {
+  if (!isCanonicalGitCanaryDeployment() || !ownerId) {
     throw new Error("Portable KVM destination is outside the enabled pilot");
   }
   const authoritative = await adapter.readAuthority({ ownerId, agentId: reservation.agentId });
   const lease = leaseSchema.safeParse(authoritative?.lease);
   if (!authoritative || !lease.success) throw new Error("No authoritative portable KVM lease");
   const { agent } = authoritative;
-  const pilot = resolvePortableKvmPilotPlacement(ownerId, agent);
+  const pilot = resolvePortableKvmPilotPlacement(ownerId, agent, authoritative.pilot);
   const phase = { boot: "restore_claimed", verify: "destination_verified",
     enable: "placement_committed", release: "connector_verified" }[mode];
   const postCommit = mode === "enable" || mode === "release";

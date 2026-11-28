@@ -53,7 +53,7 @@ export async function GET(req: NextRequest) {
         return "error" as const;
       }),
       (async () => {
-        if (process.env.HIVRA_KVM_PORTABLE_QA_ENABLED !== "true" || !isCanonicalGitCanaryDeployment()) return false;
+        if (!isCanonicalGitCanaryDeployment()) return false;
         try {
           const { resumeManagedPortableKvmOwnerWake } = await import("@/lib/hivra/portable-kvm/managed-wake");
           await resumeManagedPortableKvmOwnerWake();

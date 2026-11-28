@@ -9,7 +9,7 @@ import { resolveHivraLifecycleTarget, type HivraLifecycleAgentRow } from "../age
 import { buildBackupPollScript, buildBackupStartScript, parseBackupPoll, parseBackupStartReceipt } from "../computer-backups/scripts";
 import { computerBackupPassword } from "../computer-backups/sweep";
 import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence } from "./source-fence";
-import { portableKvmPlacement, resolvePortableKvmPilotPlacement } from "./pilot";
+import { portableKvmPlacement, resolvePortableKvmPilotPlacement, type PortableKvmPilot } from "./pilot";
 
 const uuid = z.string().uuid();
 const leaseSchema = z.object({
@@ -23,8 +23,8 @@ export function portableKvmCheckpointPassword(agentId: string, operationId: stri
   return backupKey ? createHmac("sha256", backupKey).update(`hivra-kvm-portable-v1:${operationId}`).digest("hex") : null;
 }
 
-export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent: HivraLifecycleAgentRow) {
-  const placement = resolvePortableKvmPilotPlacement(ownerId, agent);
+export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent: HivraLifecycleAgentRow, pilot: PortableKvmPilot) {
+  const placement = resolvePortableKvmPilotPlacement(ownerId, agent, pilot);
   if (!placement) return null;
   if (!supabaseAdmin) throw new Error("Portable KVM checkpoint store unavailable");
   const { data, error } = await supabaseAdmin.rpc("read_hivra_kvm_portable_handoff", {

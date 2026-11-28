@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import {
   isPortableKvmReadyToCheckpoint, isPortableKvmWakeClaimed, portableKvmPlacement, resolvePortableKvmPilotPlacement,
-  type PortableKvmPlacement,
+  type PortableKvmPilot, type PortableKvmPlacement,
 } from "./pilot";
 
 const digest = z.string().regex(/^[0-9a-f]{64}$/);
@@ -71,9 +71,11 @@ async function activeHandoff(ownerId: string, agent: Row, placement: PilotPlacem
   return handoff;
 }
 
-export async function requestPortableKvmOwnerWake(ownerId: string, agent: Row, rpc: PortableKvmWakeDriver["rpc"]): Promise<Outcome | null> {
+export async function requestPortableKvmOwnerWake(
+  ownerId: string, agent: Row, pilot: PortableKvmPilot | null, rpc: PortableKvmWakeDriver["rpc"],
+): Promise<Outcome | null> {
   if (ownerId !== agent.user_id || !isPortableKvmWakeClaimed(agent)) return null;
-  const placement = resolvePortableKvmPilotPlacement(ownerId, agent);
+  const placement = resolvePortableKvmPilotPlacement(ownerId, agent, pilot);
   if (!placement) return denied;
   const handoff = await activeHandoff(ownerId, agent, placement, rpc);
   if (!handoff) return denied;
@@ -87,12 +89,12 @@ export async function requestPortableKvmOwnerWake(ownerId: string, agent: Row, r
 }
 
 export async function advancePortableKvmIdleHandoff(
-  ownerId: string, agent: Record<string, unknown>, driver: PortableKvmWakeDriver,
+  ownerId: string, agent: Record<string, unknown>, pilot: PortableKvmPilot | null, driver: PortableKvmWakeDriver,
   options: { restoreOnly?: boolean; deadline?: number } = {},
 ): Promise<Outcome | null> {
   const claimed = isPortableKvmWakeClaimed(agent);
   if (ownerId !== agent.user_id || typeof agent.id !== "string") return null;
-  const placement = resolvePortableKvmPilotPlacement(ownerId, agent);
+  const placement = resolvePortableKvmPilotPlacement(ownerId, agent, pilot);
   if (!placement) return claimed ? { state: "failed", reason: "portable_kvm_pilot_disabled" } : null;
   if (!claimed && !isPortableKvmReadyToCheckpoint(agent)) return null;
   const agentId = agent.id;

@@ -10,11 +10,13 @@ not fence or transfer an unqualified source.
 The server gate requires the canonical Git Canary deployment, an exact standing
 QA owner and computer, and a separately confirmed paid managed fixture that is
 not assigned to the existing single-target QA writer fence. Do not retarget or
-disable that fence. Keep `HIVRA_KVM_PORTABLE_QA_ENABLED` unset until there is a
-qualified fixture. Configure `HIVRA_KVM_PORTABLE_QA_OWNER_ID`,
-`HIVRA_KVM_PORTABLE_QA_AGENT_ID`, and `HIVRA_KVM_PORTABLE_QA_PLACEMENTS` (an
-array of two exact `{hostId, vmid, ip}` records). No browser-supplied placement is
-used. Both private placements must preserve the same guest IP and MAC and have
+disable that fence. Leave the private enrollment's `runtime_profile` and
+`runtime_expires_at` null until the fixture is qualified. The operator enables
+the pilot for that exact enrollment and a bounded window by setting both. The
+app reads the enrollment at request time with a read-only service role RPC;
+it does not use build-time selectors or browser-supplied placements. Clear both
+fields to stop new pilot work, then reconcile any already claimed operation
+without legacy fallback. Both private placements must preserve the same guest IP and MAC and have
 compatible routing and isolation. Independently exclude the reserved address
 and both VMIDs from other allocators. The live source configuration already
 claims its VMID and IP. Reserve a vacant placement before enrollment with
@@ -49,7 +51,7 @@ CPU features on both independently qualified hosts, one LVM-thin `scsi0`
 named connector. The operator snapshots the ordinary launch's instance ID and
 network settings before hibernation, and the owner must explicitly
 opt into sleep. Checkpointing is only attempted once hibernation has discarded
-saved RAM. `HIVRA_KVM_PORTABLE_QA_PROFILE` pins the observed source machine ID,
+saved RAM. The runtime profile pins the observed source machine ID,
 explicit emulated machine, MAC, normalized attachment flags, measured managed
 CPU requirements, and qualified cloud-init instance ID, gateway and DNS. It
 also pins each host's
