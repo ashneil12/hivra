@@ -6,7 +6,7 @@ import DownloadPage from "./DownloadPage";
 
 // The finished browser title from the website pack, so it skips the layout's " | Hivra" suffix (absoluteTitle).
 const TITLE = "Download Hivra | Desktop Availability";
-const DESCRIPTION = "Find the Hivra Mac download, system requirements, and browser access.";
+const DESCRIPTION = "Find Hivra desktop downloads, system requirements, and browser access.";
 
 // buildWebsiteMetadata sets only canonical, Open Graph and Twitter fields, so the
 // page title and description must be set here or the site defaults show instead.

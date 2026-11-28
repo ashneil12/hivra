@@ -20,7 +20,7 @@ export type PublicRepository =
       stars: GitHubStars | null;
     }>;
 
-export type DesktopPlatform = "macos";
+export type DesktopPlatform = "macos" | "windows" | "linux";
 
 export type DesktopRelease =
   | Readonly<{ status: "pending"; href: null }>
@@ -42,6 +42,10 @@ export function getDesktopDownloads(env: Record<string, string | undefined> = pr
           label: "For Apple silicon and Intel Macs, macOS 14 or newer.",
         }
       : { status: "pending", href: null },
+    // Windows and Linux builds exist, but unsigned CI artifacts are not public
+    // downloads. Keep these pending until their release destinations exist.
+    windows: { status: "pending", href: null },
+    linux: { status: "pending", href: null },
   };
 }
 

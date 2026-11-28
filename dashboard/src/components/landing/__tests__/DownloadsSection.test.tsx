@@ -12,14 +12,17 @@ test("the unpublished macOS app has no download URL and the browser route remain
   expect(screen.getByRole("link", { name: "Open Hivra in your browser" })).toHaveAttribute("href", "/dashboard");
 });
 
-test("no Windows desktop app is advertised, because none exists", () => {
+test("Windows and Linux are visible as pending desktop apps", () => {
   render(<DownloadsSection />);
-  expect(screen.queryByText(/Windows/)).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Download for Windows Coming soon" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Download for Linux Coming soon" })).toBeDisabled();
 });
 
 test("a published macOS release is linked with its label", () => {
   render(<DownloadsSection downloads={{
     macos: { status: "published", href: "https://releases.example.test/Hivra-macOS.dmg", label: "1.0.0 · Apple silicon" },
+    windows: { status: "pending", href: null },
+    linux: { status: "pending", href: null },
   }} />);
   const mac = screen.getByRole("link", { name: "Download for Mac" });
   expect(mac).toHaveAttribute("href", "https://releases.example.test/Hivra-macOS.dmg");
