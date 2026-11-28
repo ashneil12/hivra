@@ -20,6 +20,7 @@ import {
 } from "./computer-backups/scripts";
 import { computerBackupPassword, computerBackupSettings } from "./computer-backups/sweep";
 import { isAgentStored } from "./sleep-storage-state";
+import { isCanonicalGitCanaryDeployment } from "./canonical-git-canary";
 
 export { isAgentStored, requestAgentUnstore } from "./sleep-storage-state";
 
@@ -89,6 +90,7 @@ export interface SleepStorageInput {
   deadline: number;
   /** No new host call starts after this (the run's budget for starting work). Left out: the deadline alone decides. */
   startBy?: number;
+  scanCanaryQa?: boolean;
   /** Whether sleep acts on this host at all. Asked only when something may be packed. */
   hostActs: (host: string) => Promise<boolean>;
   resolveTarget: (row: AgentRow, source: string) => Promise<{ ok: true; target: HivraLifecycleTarget } | { ok: false; code?: string }>;
@@ -302,6 +304,7 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<SleepSt
     column: "sleep_store_job_id" | "sleep_unstore_job_id",
     disks?: BackupDisk[],
     sourceId?: string,
+    canaryQa = false,
   ): Promise<"started" | "refused"> => {
     const agentId = String(row.id);
     const target = await targetFor(row);
@@ -331,15 +334,17 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<SleepSt
       problem("failed to record a storage job", insertError, "sleep_storage_job_insert_failed", agentId);
       return "refused";
     }
-    const { data: claimed, error: claimError } = await db
-      .from("hivra_agents")
-      .update({ [column]: jobId, ...(kind === "store" ? { sleep_store_tried_at: iso() } : {}) })
-      .eq("id", agentId)
-      .eq("sleep_state", "hibernated")
-      .is("operation_id", null)
-      .is(column, null)
-      .select("id");
-    if (claimError || !Array.isArray(claimed) || claimed.length !== 1) {
+    const { data: claimed, error: claimError } = canaryQa
+      ? await db.rpc("claim_hivra_canary_deep_hibernate_store", { p_agent_id: agentId, p_job_id: jobId })
+      : await db
+        .from("hivra_agents")
+        .update({ [column]: jobId, ...(kind === "store" ? { sleep_store_tried_at: iso() } : {}) })
+        .eq("id", agentId)
+        .eq("sleep_state", "hibernated")
+        .is("operation_id", null)
+        .is(column, null)
+        .select("id");
+    if (claimError || (canaryQa ? claimed !== true : !Array.isArray(claimed) || claimed.length !== 1)) {
       await db.from("hivra_computer_backups").update({ status: "skipped", reason: "agent_changed", finished_at: iso() }).eq("id", jobId);
       return "refused";
     }
@@ -410,31 +415,39 @@ export async function runSleepStorage(input: SleepStorageInput): Promise<SleepSt
 
   // --- 3. Pack long sleepers: only with the setting on -------------------------
   const days = sleepStoreAfterDays(env.HIVRA_SLEEP_STORE_AFTER_DAYS);
-  if (days === null || outOfTime() || !computerBackupPassword("00000000-0000-0000-0000-000000000000", env)) {
+  const scanQa = input.scanCanaryQa === true && isCanonicalGitCanaryDeployment(env);
+  if ((!scanQa && days === null) || outOfTime() || !computerBackupPassword("00000000-0000-0000-0000-000000000000", env)) {
     return done();
   }
-  const { data: candidateData, error: candidateError } = await db.rpc("hivra_sleep_store_candidates", {
-    p_cutoff: new Date(now() - days * 86_400_000).toISOString(),
-    p_limit: STORE_SCAN_LIMIT,
-  });
-  if (candidateError) {
-    problem("failed to load agents to pack into storage", candidateError, "sleep_storage_candidates_failed");
-    return done();
+  type Candidate = { id: string; proxmox_host: string | null };
+  const candidates = new Map<string, { row: Candidate; canaryQa: boolean }>();
+  if (scanQa) {
+    const { data, error } = await db.rpc("hivra_canary_deep_hibernate_candidate");
+    if (error) problem("failed to load the scoped Canary storage candidate", error, "sleep_storage_canary_candidate_failed");
+    else for (const row of (data ?? []) as Candidate[]) candidates.set(row.id, { row, canaryQa: true });
   }
-  for (const candidate of (candidateData ?? []) as Array<{ id: string; proxmox_host: string | null }>) {
+  if (days !== null) {
+    const { data, error } = await db.rpc("hivra_sleep_store_candidates", {
+      p_cutoff: new Date(now() - days * 86_400_000).toISOString(), p_limit: STORE_SCAN_LIMIT,
+    });
+    if (error) problem("failed to load agents to pack into storage", error, "sleep_storage_candidates_failed");
+    else for (const row of (data ?? []) as Candidate[]) {
+      if (!candidates.has(row.id)) candidates.set(row.id, { row, canaryQa: false });
+    }
+  }
+  for (const { row: candidate, canaryQa } of candidates.values()) {
     if (outOfTime()) break;
     const host = hostOf(candidate);
     if (busyHosts.has(host) || reservedHosts.has(host) || !(await input.hostActs(host))) continue;
     const { data: row, error } = await db.from("hivra_agents").select("*").eq("id", candidate.id).maybeSingle();
     if (error || !row) continue;
-    const started = await startJob(row as AgentRow, "store", "sleep_store_job_id");
+    const started = await startJob(row as AgentRow, "store", "sleep_store_job_id", undefined, undefined, canaryQa);
     if (started === "started") {
       counts.storeStarted += 1;
       busyHosts.add(host);
     } else {
       counts.refused += 1;
-      // Not retried every minute: the candidate list leaves it out for a day.
-      await db.from("hivra_agents").update({ sleep_store_tried_at: iso() }).eq("id", candidate.id);
+      if (!canaryQa) await db.from("hivra_agents").update({ sleep_store_tried_at: iso() }).eq("id", candidate.id);
     }
   }
   return done();

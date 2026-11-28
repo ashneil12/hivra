@@ -784,6 +784,7 @@ async function runStorage(ctx: Context): Promise<void> {
   const once = () => runSleepStorage({
     db: ctx.db,
     env: ctx.env,
+    scanCanaryQa: true,
     now: ctx.now,
     startBy: ctx.deadline,
     deadline: ctx.startedAt + HIBERNATE_HARD_LIMIT_MS,

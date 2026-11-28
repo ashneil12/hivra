@@ -25,7 +25,9 @@ type Filter = (row: Row) => boolean;
 /** A small in-memory stand-in for the two tables, with just the query shapes this code uses. */
 function makeDb(seed: { agents: Row[]; jobs?: Row[]; candidates?: () => Row[] }) {
   const tables: Record<string, Row[]> = { hivra_agents: seed.agents, hivra_computer_backups: seed.jobs ?? [] };
-  const rpc = jest.fn(async () => ({ data: seed.candidates ? seed.candidates() : [], error: null }));
+  const rpc = jest.fn<Promise<{ data: Row[] | boolean; error: null }>, [string, Record<string, unknown>?]>(
+    async () => ({ data: seed.candidates ? seed.candidates() : [], error: null }),
+  );
   const from = (table: string) => {
     const filters: Filter[] = [];
     let mode: "select" | "update" | "insert" = "select";
@@ -145,6 +147,28 @@ describe("settings and state", () => {
 });
 
 describe("runSleepStorage", () => {
+  it("only the Git Canary sweep can use the exact fixture scan, and a failed fresh claim dispatches nothing", async () => {
+    const agents = [agent(1), agent(2)];
+    const canaryEnv = { HIVRA_COMPUTER_BACKUP_KEY: ENV.HIVRA_COMPUTER_BACKUP_KEY, VERCEL: "1", VERCEL_ENV: "production",
+      VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud", VERCEL_GIT_COMMIT_REF: "canary",
+      VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra" };
+    const t = setup({ agents }, { env: canaryEnv });
+    t.rpc.mockImplementation(async name => ({ data: name === "hivra_canary_deep_hibernate_candidate"
+      ? [{ id: agents[0].id, proxmox_host: agents[0].proxmox_host }] : false, error: null }));
+    await runSleepStorage(t.input);
+    await runSleepStorage({ ...t.input, scanCanaryQa: true, env: { ...canaryEnv, VERCEL_GIT_COMMIT_REF: "main" } });
+    expect(t.rpc).not.toHaveBeenCalled();
+    const result = await runSleepStorage({ ...t.input, scanCanaryQa: true });
+    expect(t.rpc.mock.calls.map(([name]) => name)).toEqual(["hivra_canary_deep_hibernate_candidate", "claim_hivra_canary_deep_hibernate_store"]);
+    expect(result.counts).toMatchObject({ refused: 1, storeStarted: 0 });
+    expect(agents[0].sleep_store_tried_at).toBeNull();
+    expect(t.runHostScriptWithStdin).not.toHaveBeenCalled();
+    t.rpc.mockResolvedValueOnce({ data: [{ id: agents[0].id, proxmox_host: agents[0].proxmox_host }], error: null });
+    t.rpc.mockResolvedValueOnce({ data: true, error: null });
+    await expect(runSleepStorage({ ...t.input, scanCanaryQa: true })).resolves.toMatchObject({ counts: { storeStarted: 1 } });
+    expect(t.runHostScriptWithStdin).toHaveBeenCalledTimes(1);
+  });
+
   it("starts packing one long sleeper per host and records the job on the agent", async () => {
     const agents = [agent(1), agent(2), agent(3, { proxmox_host: "h2" })];
     const t = setup({ agents, candidates: () => agents.map((a) => ({ id: a.id, proxmox_host: a.proxmox_host })) });
