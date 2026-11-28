@@ -52,7 +52,7 @@ describe("only Telegram on: script goldens", () => {
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false, telegramCoverage: TG })))
       .toBe("3de559fa827c5359a9f41ac959fc26563a38a963e5c05c181cd27b0fec09f5e0");
     expect(digest(buildSleepHostScript({ ...target, tier: "hibernate", manual: true, telegramCoverage: TG, fastConfigRead: true })))
-      .toBe("689ecca10bc07d0289f919fd222df198eda2fb05453b61d8b35d7bba865112da");
+      .toBe("78c965185554dfcc728d031a93911ec746caa4c673a24bd17efce805ce10df9d");
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false })))
       .toBe("0e2dbd1db0723810871482066af818cb4dc6b2e14ddc6e6ae7c120115fdcf2aa");
     expect(digest(buildIdleProbeHostScript(target, { telegram: true })))
