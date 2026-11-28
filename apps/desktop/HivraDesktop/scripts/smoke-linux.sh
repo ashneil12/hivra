@@ -47,7 +47,7 @@ dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -
   fi
   handler=$(xdg-mime query default x-scheme-handler/hivra 2>/dev/null || true)
   if [ "$handler" != "hivra-desktop-handler.desktop" ]; then
-    echo "Hivra did not register as the hivra:// handler (got '$handler')" >&2
+    echo "Hivra did not register as the hivra:// handler (got \"$handler\")" >&2
     exit 1
   fi
   echo "Hivra registered as the hivra:// handler"
