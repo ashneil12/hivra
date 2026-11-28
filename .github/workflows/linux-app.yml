@@ -58,46 +58,29 @@ jobs:
         run: |
           if [ -z "$HIVRA_DESKTOP_CONNECTION" ]; then unset HIVRA_DESKTOP_CONNECTION; fi
           npx --yes @tauri-apps/cli@2.12.4 build --bundles deb,appimage
-      - name: Smoke-test the native shell
+      - name: Verify the Debian desktop integration
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p target/release/smoke
-          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -c '
-            # Xvfb has no GPU compositor; these are smoke-test environment
-            # workarounds, not flags shipped into user desktops.
-            export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1
-            ./target/release/hivra-desktop >target/release/smoke/app.log 2>&1 &
-            app_pid=$!
-            window=""
-            for _ in $(seq 1 30); do
-              window=$(xdotool search --name "^Hivra$" 2>/dev/null | head -n 1 || true)
-              [ -n "$window" ] && break
-              if ! kill -0 "$app_pid" 2>/dev/null; then
-                echo "Hivra exited before creating its window" >&2
-                cat target/release/smoke/app.log >&2 || true
-                exit 1
-              fi
-              sleep 1
-            done
-            if [ -z "$window" ]; then
-              echo "No Hivra window appeared under Xvfb" >&2
-              cat target/release/smoke/app.log >&2 || true
-              exit 1
-            fi
-            # Let WebKitGTK finish its first paint before judging the pixels.
-            sleep 5
-            import -window "$window" target/release/smoke/screen.png
-            identify target/release/smoke/screen.png
-            deviation=$(identify -format "%[standard-deviation]" target/release/smoke/screen.png)
-            if awk -v value="$deviation" "BEGIN { exit !(value > 100) }"; then
-              echo "Hivra painted a non-empty native window (deviation $deviation)"
-            else
-              echo "Hivra window appears blank (deviation $deviation)" >&2
-              exit 1
-            fi
-            kill "$app_pid" 2>/dev/null || true
-          '
+          mkdir -p target/release/smoke/deb-inspect
+          cp target/release/bundle/deb/*.deb target/release/smoke/deb-inspect/hivra.deb
+          cd target/release/smoke/deb-inspect
+          ar x hivra.deb
+          tar -xzf control.tar.gz
+          tar -xzf data.tar.gz
+          cat control
+          cat usr/share/applications/Hivra.desktop
+          grep -q '^Depends:.*xdg-utils' control
+          grep -q '^Exec=hivra-desktop %U$' usr/share/applications/Hivra.desktop
+          grep -q '^MimeType=x-scheme-handler/hivra;$' usr/share/applications/Hivra.desktop
+      - name: Smoke-test the packaged native shells
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get install -y ./target/release/bundle/deb/Hivra_*_amd64.deb
+          chmod +x target/release/bundle/appimage/Hivra_*_amd64.AppImage
+          ../scripts/smoke-linux.sh /usr/bin/hivra-desktop target/release/smoke/deb
+          ../scripts/smoke-linux.sh target/release/bundle/appimage/Hivra_*_amd64.AppImage target/release/smoke/appimage
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -105,7 +88,7 @@ jobs:
           path: |
             apps/desktop/HivraDesktop/src-tauri/target/release/bundle/deb/*.deb
             apps/desktop/HivraDesktop/src-tauri/target/release/bundle/appimage/*.AppImage
-            apps/desktop/HivraDesktop/src-tauri/target/release/smoke/screen.png
-            apps/desktop/HivraDesktop/src-tauri/target/release/smoke/app.log
+            apps/desktop/HivraDesktop/src-tauri/target/release/smoke/**/screen.png
+            apps/desktop/HivraDesktop/src-tauri/target/release/smoke/**/app.log
           if-no-files-found: warn
           retention-days: 14

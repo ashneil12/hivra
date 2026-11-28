@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=Utility;
+Comment=Give your AI agent a computer of its own.
+Exec=hivra-desktop %U
+StartupWMClass=hivra-desktop
+Icon=hivra-desktop
+Name=Hivra
+Terminal=false
+Type=Application
+MimeType=x-scheme-handler/hivra;
