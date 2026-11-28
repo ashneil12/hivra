@@ -71,7 +71,7 @@ dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -
     exit 1
   fi
   if [ "$HIVRA_SMOKE_RUNTIME_HANDLER" = "runtime-handler" ]; then
-    entry="$HOME/.local/share/applications/hivra-desktop-handler.desktop"
+    entry="${XDG_DATA_HOME:-$HOME/.local/share}/applications/hivra-desktop-handler.desktop"
     mime_line=$(grep '^MimeType=' "$entry" 2>/dev/null | head -n 1 || true)
     if [ "$handler" != "hivra-desktop-handler.desktop" ]; then
       echo "The portable shell did not become the hivra:// handler (got \"$handler\")" >&2
