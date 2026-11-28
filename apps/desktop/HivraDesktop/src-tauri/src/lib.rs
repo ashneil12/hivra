@@ -71,7 +71,7 @@ fn can_use_unquoted_desktop_exec(exec: &str) -> bool {
     !exec.is_empty()
         && exec
             .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-' | b'+' | b'@' | b'%'))
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-' | b'+' | b'@'))
 }
 
 fn repair_desktop_exec(contents: &str, exec: &str) -> Option<String> {
@@ -454,7 +454,7 @@ mod tests {
 
     #[test]
     fn unusual_desktop_exec_paths_keep_spec_compliant_quoting() {
-        for exec in ["/tmp/Hivra with spaces.AppImage", "/tmp/Hivra\\path.AppImage", "/tmp/Hivra\"quoted\".AppImage"] {
+        for exec in ["/tmp/Hivra with spaces.AppImage", "/tmp/Hivra%100.AppImage", "/tmp/Hivra\\path.AppImage", "/tmp/Hivra\"quoted\".AppImage"] {
             let contents = format!("Exec=\"{exec}\" %u");
             assert_eq!(repair_desktop_exec(&contents, exec), None);
         }
