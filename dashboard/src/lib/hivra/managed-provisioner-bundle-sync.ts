@@ -1,3 +1,4 @@
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import "server-only";
 
 import { createHash } from "node:crypto";
@@ -254,6 +255,7 @@ done
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for the Hivra provisioner bundle lock" >&2; exit 1; }
+${allocationLockAcquired("bundle-sync")}
 HOST_VM_STATE_BEFORE="$(host_vm_state)"
 HOST_CADDY_BEFORE="$(host_caddy_state)"
 HOST_STORAGE_BEFORE="$(host_storage_state)"

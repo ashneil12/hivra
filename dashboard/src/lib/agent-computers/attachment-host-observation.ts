@@ -36,7 +36,7 @@ print(json.dumps(dict(version=1,target=target,bootId=boot),separators=(',',':'))
 // gets the lock on fd 9 and releases it itself (see attachmentHostStepBody).
 export const ATTACHMENT_HOST_LOCK_FD = 9;
 const ATTACHMENT_HOST_STDIN_FD = 8;
-export const ATTACHMENT_HOST_LOCK_PROGRAM = String.raw`import fcntl,os,stat,sys,time
+export const ATTACHMENT_HOST_LOCK_PROGRAM = String.raw`import fcntl,os,socket,stat,sys,time
 run=os.open('/run',os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
 info=os.fstat(run)
 if info.st_uid!=0 or info.st_mode&0o022: raise SystemExit('unsafe run directory')
@@ -57,6 +57,13 @@ while True:
  except BlockingIOError:
   if time.monotonic()>=deadline: raise SystemExit('allocation lock busy')
   time.sleep(0.1)
+try:
+ with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as log:
+  log.setblocking(False)
+  message=f"<14>hivra-allocation-lock: event=acquired mode=exclusive operation=attached-agent-host-step holder_pid={os.getpid()}"
+  log.sendto(message.encode("ascii"), "/dev/log")
+except OSError:
+ pass
 if lock!=9:
  os.dup2(lock,9)
  os.close(lock)

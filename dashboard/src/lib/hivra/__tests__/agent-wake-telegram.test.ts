@@ -39,8 +39,10 @@ jest.mock("../agent-lifecycle-host", () => ({
 }));
 
 const mockRunScript = jest.fn();
+const mockCreateSession = jest.fn();
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   runProxmoxHostScript: (...a: unknown[]) => mockRunScript(...a),
+  createManagedProxmoxHostScriptSession: (...a: unknown[]) => mockCreateSession(...a),
 }));
 
 const mockAcquire = jest.fn();
@@ -224,6 +226,44 @@ describe("ensureHivraAgentAwake with a Telegram wake webhook", () => {
     expect(mockDisarm).not.toHaveBeenCalled();
     expect(mockRunScript).not.toHaveBeenCalled();
     expect(mockRearm).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["canary", "managed", "ssh_session", true],
+    ["canary", "managed", "all", false],
+    ["main", "managed", "ssh_session", false],
+    ["canary", "self-managed", "ssh_session", false],
+  ])("reuses the session only for explicit canonical Canary managed restore (%s %s %s)", async (ref, kind, flag, reuse) => {
+    Object.assign(process.env, {
+      VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+      VERCEL_GIT_COMMIT_REF: ref, VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+      HIVRA_FAST_WAKE: flag,
+    });
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockResolveTarget.mockResolvedValue({ ok: true, target: {
+      ...target, executionContext: { ...target.executionContext, kind, provisionerChannel: "canary" },
+    } });
+    const run = jest.fn(async (script: string) => {
+      order.push(script === "slot" || script === "release" ? script : "restore");
+      return { ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" };
+    });
+    const close = jest.fn(() => order.push("close"));
+    mockCreateSession.mockReturnValue({ run, close });
+    mockAcquire.mockImplementation(async (_target, { runHostScript }) => {
+      await runHostScript("slot");
+      return { admitted: true, freeMb: 9000, activeWakes: 0 };
+    });
+    mockRelease.mockImplementation(async (_target, { runHostScript }) => { await runHostScript("release"); });
+    mockSsrfFetch.mockImplementation(async () => { order.push("health"); return { status: 200 }; });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "telegram", ...fast })).resolves.toMatchObject({ state: "awake" });
+    if (reuse) {
+      expect(mockCreateSession).toHaveBeenCalledTimes(1);
+      expect(mockRunScript).not.toHaveBeenCalled();
+      expect(order).toEqual(["slot", "disarm_done", "restore", "release", "health", "close"]);
+    } else {
+      expect(mockCreateSession).not.toHaveBeenCalled();
+      expect(mockRunScript).toHaveBeenCalledTimes(3);
+    }
   });
 
   it("keeps the bot armed when the host target cannot be resolved", async () => {

@@ -1,3 +1,4 @@
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import "server-only";
 
 import { z } from "zod";
@@ -368,6 +369,7 @@ EXPECTED_BINDING_TAG=${shellQuote(bindingTag)}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo 'timed out waiting for Hivra lifecycle lock' >&2; exit 62; }
+${allocationLockAcquired("buzz-runtime")}
 [ "$(qm status "$VMID" 2>/dev/null | awk '{print $2}')" = running ] \
   || { echo 'bound VM is not running' >&2; exit 63; }
 VM_CONFIG="$(qm config "$VMID")"
