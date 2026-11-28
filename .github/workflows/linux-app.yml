@@ -58,6 +58,21 @@ jobs:
         run: |
           if [ -z "$HIVRA_DESKTOP_CONNECTION" ]; then unset HIVRA_DESKTOP_CONNECTION; fi
           npx --yes @tauri-apps/cli@2.12.4 build --bundles deb,appimage
+      - name: Verify the Debian desktop integration
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p target/release/smoke/deb-inspect
+          cp target/release/bundle/deb/*.deb target/release/smoke/deb-inspect/hivra.deb
+          cd target/release/smoke/deb-inspect
+          ar x hivra.deb
+          tar -xzf control.tar.gz
+          tar -xzf data.tar.gz
+          cat control
+          cat usr/share/applications/Hivra.desktop
+          grep -q '^Depends:.*xdg-utils' control
+          grep -q '^Exec=hivra-desktop %U$' usr/share/applications/Hivra.desktop
+          grep -q '^MimeType=x-scheme-handler/hivra;$' usr/share/applications/Hivra.desktop
       - name: Smoke-test the native shell
         shell: bash
         run: |

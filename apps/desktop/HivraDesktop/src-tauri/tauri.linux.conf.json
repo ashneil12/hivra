@@ -3,7 +3,8 @@
     "targets": ["deb", "appimage"],
     "linux": {
       "deb": {
-        "depends": ["xdg-utils"]
+        "depends": ["xdg-utils"],
+        "desktopTemplate": "linux/Hivra.desktop"
       }
     }
   },
