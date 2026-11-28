@@ -136,7 +136,7 @@ export const claudeCodeHooks: BlogArticle = {
     {
       heading: "Where to put hooks: settings files and the /hooks menu",
       paragraphs: [
-        "Hooks live in the `hooks` key of a settings file. The [settings documentation](https://code.claude.com/docs/en/settings) describes four scopes, and the hooks guide adds the places plugins, skills and subagents can carry hooks.",
+        "Hooks live in the `hooks` key of a settings file. The [settings documentation](https://code.claude.com/docs/en/settings) describes four scopes, and the hooks guide adds the places plugins, skills and subagents can carry hooks (our [Claude Code subagents guide](/blog/claude-code-subagents) shows a subagent with its own hook).",
         SCOPE_TABLE,
         "Hook entries merge across levels, so a project hook and a user hook for the same event both run. Managed hooks cannot be turned off from outside managed settings. Settings precedence, highest first, runs managed settings, the command line (`--settings`), project local, shared project, then user, and the docs say that lists merge rather than override.",
         "Claude Code watches your settings files and reloads them when they change, so edits to `hooks` normally apply to the running session without a restart.",

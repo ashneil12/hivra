@@ -67,6 +67,7 @@ import { claudeCodeOnLinux } from "./blog/articles/claude-code-on-linux";
 import { claudeCodeMcp } from "./blog/articles/claude-code-mcp";
 import { codexMcp } from "./blog/articles/codex-mcp";
 import { claudeCodeHooks } from "./blog/articles/claude-code-hooks";
+import { claudeCodeSubagents } from "./blog/articles/claude-code-subagents";
 
 // SCRIPTURE_ANCHOR: blog-store | Psalm 78:4 | Verse: We will tell the generation to come the praises of Yahweh, his strength, and his wondrous works.
 export const BLOG_ARTICLES: Record<string, BlogArticle> = {
@@ -135,6 +136,7 @@ export const BLOG_ARTICLES: Record<string, BlogArticle> = {
   "claude-code-mcp": claudeCodeMcp,
   "codex-mcp": codexMcp,
   "claude-code-hooks": claudeCodeHooks,
+  "claude-code-subagents": claudeCodeSubagents,
 };
 
 export const BLOG_ARTICLES_LIST: BlogArticle[] = Object.values(BLOG_ARTICLES).sort(
