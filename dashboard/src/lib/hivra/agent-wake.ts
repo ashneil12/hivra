@@ -6,6 +6,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { resolveProxmoxHostCapacityPolicy } from "@/lib/infrastructure/host-capacity-policy";
+import canaryMemoryOvercommitRelease from "../../../provisioner-releases/2026.11.28.2.json";
+import { readCanaryMemoryOvercommit } from "./canary-memory-overcommit";
 import { acquireHostWakeSlot, normalizeWakeRamMb, releaseHostWakeSlot } from "@/lib/proxmox/wake-admission";
 import { resolveHivraLifecycleTarget, type HivraLifecycleTarget } from "./agent-lifecycle-host";
 import { sleepMemoryDropAfterDays, STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
@@ -274,10 +276,22 @@ export async function runWakeHostScript(
   const coldStart = options.restore && sleepMemoryDropAfterDays() !== null;
   let script: string;
   try {
+    const context = target.executionContext;
+    const grant = options.restore && target.vmid !== 9302 && target.bindingTag && context?.kind === "managed"
+      && (row.type === "hermes" || row.type === "claude-code")
+      && row.seat_funding === "paid" && row.computer_substrate === "proxmox-kvm" && row.deployment_target_id == null
+      ? await readCanaryMemoryOvercommit({ host: context.host, ownerId: String(row.user_id), channel: context.provisionerChannel })
+      : null;
+    const admission = buildWakeAdmissionFor(target);
+    if (grant) {
+      const helper = canaryMemoryOvercommitRelease.files.find((file) => file.path === "hivra-host-capacity-admission");
+      if (!helper) throw new Error("Canary admission helper is not sealed.");
+      admission.overcommit = { grant, helperSha256: helper.sha256 };
+    }
     script = buildWakeHostScript({
       vmid: target.vmid,
       bindingTag: target.bindingTag,
-      admission: buildWakeAdmissionFor(target),
+      admission,
       ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
       // A wake that took a Telegram wake row back also drops the guest's dead long polls, so the bot polls again at once.
       ...(options.killStaleSockets === true ? { killStaleSockets: true } : {}),
@@ -548,6 +562,9 @@ async function performWakeSteps(
       if (supabaseAdmin) await requestAgentUnstore(supabaseAdmin, agentId).catch(() => false);
       kickStorageReturn(agentId);
       return failed("stored");
+    }
+    if (!run.receipt.ok && (run.receipt.reason === "capacity_pilot" || run.receipt.reason === "pilot_start_unconfirmed")) {
+      return failed(run.receipt.reason);
     }
     if (run.receipt.to === "cold") {
       // Nothing saved and the computer is off. The normal start path owns that.

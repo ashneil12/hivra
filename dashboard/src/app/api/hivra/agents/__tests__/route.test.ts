@@ -1634,6 +1634,46 @@ describe("POST /api/hivra/agents", () => {
   });
 
   it.each([
+    ["canary", "pve11", PORTABLE_HIVRA_PROVISIONER_VERSION, true],
+    ["canary", "pve11", "2026.11.28.1", false],
+    ["canary", "pve19", PORTABLE_HIVRA_PROVISIONER_VERSION, false],
+    ["main", "pve11", PORTABLE_HIVRA_PROVISIONER_VERSION, false],
+  ] as const)("reads a fresh DB memory grant only for the qualified launch (%s / %s / %s)", async (branch, host, version, eligible) => {
+    enableManagedGvisorQaFixture({ VERCEL_TARGET_ENV: "canary", VERCEL_GIT_COMMIT_REF: branch });
+    mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 3,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    mockSelectAvailableProxmoxProvisionTarget.mockResolvedValue({
+      ok: true, targetId: host, provisionerVersion: version,
+      env: { PROXMOX_NODE: host, PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21", PROXMOX_PRIVATE_GATEWAY: "10.250.21.1" },
+    });
+    const guest = `1100:hivra-bind-${"a".repeat(32)}`;
+    const grant = {
+      ratio_milli: 1100, valid_until_epoch: Math.floor(Date.now() / 1000) + 60, measured_guests: [guest],
+      pressure_baseline: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:3344:0:32",
+    };
+    for (const data of [null, grant, null]) {
+      mockRunProxmoxHostScript.mockReset()
+        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+        .mockResolvedValue({ ok: true, stdout: "ok\n" });
+      mockSupabaseRpc.mockClear().mockImplementation((name, args) => name === "get_hivra_canary_memory_overcommit"
+        ? Promise.resolve({ data, error: null }) : mockDefaultRpc(name, args));
+      expect((await POST(makeRequest({ type: "hermes", name: "MEMORY_PILOT", cpu: 2, ram: 4 }) as never)).status).toBe(201);
+      const script = String(mockRunProxmoxHostScript.mock.calls[0][0]);
+      const calls = mockSupabaseRpc.mock.calls.filter(([name]) => name === "get_hivra_canary_memory_overcommit");
+      expect(calls).toEqual(eligible ? [[ "get_hivra_canary_memory_overcommit", { p_host_id: host, p_owner_id: "user_fixture1" } ]] : []);
+      if (eligible && data) {
+        expect(script).toContain(`HIVRA_CAPACITY_CANARY_MEASURED_GUESTS='${guest}'`);
+        expect(script.indexOf("flock -w")).toBeLessThan(script.indexOf("HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI="));
+      } else {
+        expect(script).not.toContain("HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI=");
+      }
+    }
+  });
+
+  it.each([
     ["claimed", 201],
     ["no_match", 409],
     ["claim_in_doubt", 502],

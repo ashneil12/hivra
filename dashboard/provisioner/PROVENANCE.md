@@ -84,3 +84,8 @@ Hermes upstream code, the guest image pins or native update behavior.
 Release `2026.11.28.1` adds elapsed-time markers to the baked Hermes guest
 installer and its final standby attestation. It does not change upstream
 Hermes, baked image pins, stock launch behavior or readiness checks.
+
+Release `2026.11.28.2` adds bounded memory overcommit to host admission for
+eligible Canary KVM launches and wakes. Ordinary admission remains unchanged;
+the new behavior requires explicit policy and this sealed host release.
+The same release seals the operator wrapper for exact allowlisted QA clones.

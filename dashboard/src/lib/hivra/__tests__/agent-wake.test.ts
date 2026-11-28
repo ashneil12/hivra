@@ -1,8 +1,10 @@
 /** @jest-environment node */
 
 const mockReadRow = jest.fn();
+const mockMemoryGrant = jest.fn();
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
+    rpc: (...args: unknown[]) => mockMemoryGrant(...args),
     from: () => {
       const q: Record<string, unknown> = {};
       for (const m of ["select", "eq"]) q[m] = () => q;
@@ -62,7 +64,8 @@ jest.mock("../after-response", () => ({ runAfterResponse: (...a: unknown[]) => m
 const mockRunStorage = jest.fn();
 jest.mock("../sleep-storage", () => ({ runSleepStorage: (...a: unknown[]) => mockRunStorage(...a) }));
 
-import { ensureHivraAgentAwake, isStuckTransient, MANAGED_WAKE_WORK_BUDGET_MS, pollPublicHealthz, resetStorageKicks, wakesAtOncePerHost, WAKE_TURN_WAIT_SECONDS } from "../agent-wake";
+import { ensureHivraAgentAwake, isStuckTransient, MANAGED_WAKE_WORK_BUDGET_MS, pollPublicHealthz, resetStorageKicks, runWakeHostScript, wakesAtOncePerHost, WAKE_TURN_WAIT_SECONDS } from "../agent-wake";
+import type { HivraLifecycleTarget } from "../agent-lifecycle-host";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const VMID = 1234;
@@ -124,6 +127,41 @@ describe("ensureHivraAgentAwake", () => {
     mockAcquire.mockResolvedValue({ admitted: true, freeMb: 9000, activeWakes: 0 });
     mockRelease.mockResolvedValue(undefined);
     mockSsrfFetch.mockResolvedValue({ status: 200 });
+  });
+
+  it("reads the grant afresh on restore, but never for a nap, another host or VM 9302", async () => {
+    const replace = jest.replaceProperty(process, "env", {
+      ...process.env,
+      VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+      VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+    });
+    const candidate = row({ user_id: "user_fixture", type: "hermes", computer_substrate: "proxmox-kvm", seat_funding: "paid" });
+    const managed = (host: string, vmid = VMID) => ({
+      ...target, vmid,
+      executionContext: { ...target.executionContext, kind: "managed", host, provisionerChannel: "canary" },
+    }) as HivraLifecycleTarget;
+    try {
+      const grant = {
+        ratio_milli: 1100, valid_until_epoch: Math.floor(Date.now() / 1000) + 60, measured_guests: [],
+        pressure_baseline: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:3344:0:32",
+      };
+      mockMemoryGrant.mockResolvedValueOnce({ data: grant, error: null })
+        .mockResolvedValueOnce({ data: grant, error: { code: "PGRST205" } });
+      for (const [host, vmid, restore] of [
+        ["pve11", VMID, true], ["pve11", VMID, true], ["pve11", VMID, false],
+        ["pve19", VMID, true], ["pve11", 9302, true],
+      ] as const) {
+        await runWakeHostScript(candidate, managed(host, vmid), { restore });
+      }
+      expect(mockMemoryGrant.mock.calls).toEqual(Array(2).fill([
+        "get_hivra_canary_memory_overcommit", { p_host_id: "pve11", p_owner_id: "user_fixture" },
+      ]));
+      const scripts = mockRunScript.mock.calls.map(([script]) => String(script));
+      expect(scripts[0]).toContain("HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI=1100");
+      expect(scripts.slice(1).every((script) => !script.includes("HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI="))).toBe(true);
+    } finally {
+      replace.restore();
+    }
   });
 
   it("returns at once for an awake agent, with no claim", async () => {
@@ -481,6 +519,16 @@ describe("ensureHivraAgentAwake", () => {
     const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
     expect(result).toEqual({ state: "failed", reason: "capacity" });
     expect(mockMakeRoom).not.toHaveBeenCalled();
+  });
+
+  it.each(["capacity_pilot", "pilot_start_unconfirmed"])("never turns %s into an ordinary cold start or makes room", async (reason) => {
+    mockRoomEnabled.mockReturnValue(true);
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ ok: false, from: "hibernated", to: "cold", reason }), stderr: "" });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast }))
+      .resolves.toEqual({ state: "failed", reason });
+    expect(mockMakeRoom).not.toHaveBeenCalled();
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
   });
 
   it("finishes as wake_failed when the receipt does not parse", async () => {

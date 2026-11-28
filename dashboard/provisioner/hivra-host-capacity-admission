@@ -6,6 +6,7 @@ set -euo pipefail
 # deduplicated only by exact VMID + operation tag + binding tag + IP evidence in
 # QEMU inventory; otherwise it is counted conservatively or fails closed.
 PENDING_RESOURCE_CONTRACT_V1=1
+CANARY_MEMORY_OVERCOMMIT_CONTRACT_V1=1
 
 # Run while /run/lock/hivra-allocation.lock is held. The caller supplies the
 # candidate active envelope; this script derives every other active guest from
@@ -78,6 +79,42 @@ if [ -n "$LAUNCH_STORAGE" ] || [ -n "$LAUNCH_DISK_GB" ] || [ -n "$LAUNCH_STORAGE
   LAUNCH_DISK_ACCOUNTING=1
 fi
 
+CANARY_OVERCOMMIT=0
+CANARY_OVERCOMMIT_MILLI="${HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI:-}"
+CANARY_OVERCOMMIT_UNTIL="${HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL:-}"
+CANARY_MEASURED_GUESTS="${HIVRA_CAPACITY_CANARY_MEASURED_GUESTS:-}"
+CANARY_PRESSURE_BASELINE="${HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE:-}"
+if [[ -v HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI || -v HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL \
+  || -v HIVRA_CAPACITY_CANARY_MEASURED_GUESTS || -v HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE ]]; then
+  [[ "$CANARY_OVERCOMMIT_MILLI" =~ ^1[0-9]{3}$ && "$CANARY_OVERCOMMIT_MILLI" -gt 1000 && "$CANARY_OVERCOMMIT_MILLI" -le 1250 \
+    && "$CANARY_OVERCOMMIT_UNTIL" =~ ^[1-9][0-9]{0,11}$ ]] \
+    || { echo "invalid Canary memory overcommit policy" >&2; exit 1; }
+  [ -n "$CANARY_PRESSURE_BASELINE" ] || { echo "Canary memory overcommit requires a pressure baseline" >&2; exit 1; }
+  now="$(date +%s)"
+  [ "$CANARY_OVERCOMMIT_UNTIL" -gt "$now" ] \
+    || { echo "expired Canary memory overcommit policy" >&2; exit 1; }
+  [ "$CANARY_OVERCOMMIT_UNTIL" -le "$((now + 90))" ] \
+    || { echo "invalid Canary memory overcommit grant lifetime" >&2; exit 1; }
+  [ "$EUID" = 0 ] && [ "$(cat /proc/sys/kernel/hostname)" = pve11 ] \
+    && [ "$(readlink -e -- "${BASH_SOURCE[0]}")" = /root/hivra-provisioner-canary/hivra-host-capacity-admission ] \
+    || { echo "Canary memory overcommit requires the installed Canary bundle on pve11" >&2; exit 1; }
+  [ "$ALLOW_REDUCTION" = 0 ] \
+    && [[ ! -v HIVRA_CAPACITY_MEMINFO_PATH && ! -v HIVRA_PROVISION_OPERATIONS_DIR ]] \
+    || { echo "Canary memory overcommit requires host-local launch or wake evidence" >&2; exit 1; }
+  [ /proc/self/fd/8 -ef /run/lock/hivra-allocation.lock ] && flock -nx 8 \
+    || { echo "Canary memory overcommit requires the host allocation lock on FD 8" >&2; exit 1; }
+  CANARY_OVERCOMMIT=1
+  if [ "$HOST_RESERVE_MB" -lt 8192 ]; then HOST_RESERVE_MB=8192; fi
+fi
+
+INTENT_DIR="${HIVRA_PROVISION_OPERATIONS_DIR:-/var/lib/hivra/provision-operations}"
+for wake_intent in "$INTENT_DIR"/wake-*.selected; do
+  if [ -e "$wake_intent" ] || [ -L "$wake_intent" ]; then
+    echo "cannot admit capacity while a VM wake is unconfirmed" >&2
+    exit 1
+  fi
+done
+
 MEMINFO_PATH="${HIVRA_CAPACITY_MEMINFO_PATH:-/proc/meminfo}"
 HOST_TOTAL_MB="$(awk '$1=="MemTotal:" {print int($2/1024)}' "$MEMINFO_PATH")"
 HOST_CPU="$(nproc)"
@@ -103,11 +140,17 @@ PENDING_LAUNCH_STORAGE_DISK_GB=0
 OLD_ACTIVE_FLOOR_MB=0
 OLD_ACTIVE_MAX_MB=0
 OLD_ACTIVE_MAX_CPU_MILLI=0
+CANARY_QEMU=()
+CANARY_CONTAINER_MAX_MB=0
+CANARY_ACTIVE_PENDING=()
+CANARY_WAKE_TARGET_PROVEN=0
+declare -A CANARY_ACTIVE_MAX_BY_VMID CANARY_ACTIVE_CPU_BY_VMID
 
 QEMU_BATCH="${HIVRA_CAPACITY_BATCH_QEMU:-0}"
 case "$QEMU_BATCH" in 0|1) ;; *) echo "invalid QEMU inventory mode" >&2; exit 1 ;; esac
+if [ "$CANARY_OVERCOMMIT" = 1 ]; then QEMU_BATCH=1; fi
 if [ "$QEMU_BATCH" = 1 ]; then
-  QEMU_CANDIDATES="$(perl 2>/dev/null <<'PERL'
+  QEMU_CANDIDATES="$(HIVRA_INTERNAL_CANARY_ADMISSION="$CANARY_OVERCOMMIT" HIVRA_INTERNAL_CANARY_TARGET="$TARGET_VMID" perl 2>/dev/null <<'PERL'
 use strict;
 use warnings;
 use MIME::Base64 qw(encode_base64);
@@ -122,18 +165,31 @@ my %expected = map { /\A([1-9][0-9]*)\.conf\z/ ? ($1 => 1) : () } readdir($confi
 closedir($configs) or die "cannot close local VM config inventory";
 my $inventory = PVE::QemuServer::vmstatus(undef, 1);
 die "invalid VM inventory" if ref($inventory) ne 'HASH' || keys(%$inventory) != keys(%expected);
+my $canary = $ENV{HIVRA_INTERNAL_CANARY_ADMISSION} eq '1';
 for my $vmid (sort { $a <=> $b } keys %expected) {
     my $state = $inventory->{$vmid};
     die "missing VM status" unless ref($state) eq 'HASH' && ($state->{vmid} // '') eq "$vmid";
     my $status = $state->{qmpstatus} || 'unknown';
     die "invalid QMP status" unless $status =~ /\A[a-z-]+\z/;
-    my $config = PVE::QemuConfig->load_current_config($vmid, 0);
+    my $config = PVE::QemuConfig->load_current_config($vmid, $canary && $status ne 'stopped' ? 1 : 0);
     die "invalid VM config" unless ref($config) eq 'HASH';
     my $facts = "\n";
     for my $key (qw(template tags ipconfig0 scsi0 balloon memory cpulimit cores sockets)) {
         next unless defined(my $value = $config->{$key});
         die "invalid VM config field" if ref($value) || $value =~ /[\x00-\x1f\x7f]/;
         $facts .= "$key: $value\n";
+    }
+    if ($canary) {
+        my $pid = $state->{pid};
+        die "invalid runtime PID in inventory"
+            if $status eq 'stopped' ? defined($pid) && $pid ne '0' : !defined($pid) || $pid !~ /\A[1-9][0-9]*\z/;
+        $facts .= "capacity_runtime_pid: $pid\n" if $status ne 'stopped';
+    }
+    if ($canary && $status eq 'stopped' && $vmid eq $ENV{HIVRA_INTERNAL_CANARY_TARGET}) {
+        my $current = PVE::QemuConfig->load_current_config($vmid, 1);
+        my $memory = $current->{memory};
+        die "invalid restored VM memory" unless defined($memory) && !ref($memory) && $memory =~ /\A[1-9][0-9]*\z/;
+        $facts .= "wake_memory: $memory\n";
     }
     print "$vmid\t$status\t", encode_base64($facts, ''), "\n";
 }
@@ -217,10 +273,26 @@ while IFS=$'\t' read -r candidate status encoded extra; do
       done < <(printf '%s\n' "$ipconfig" | tr ',' '\n' | awk -F= '$1=="ip" {split($2, parts, "/"); print parts[1]}')
     done < <(printf '%s\n' "$tags" | tr ';' '\n')
   done < <(printf '%s\n' "$tags" | tr ';' '\n')
+  if [ "$CANARY_OVERCOMMIT" = 1 ] && [ "$candidate" = "$TARGET_VMID" ]; then
+    [ "$status" = stopped ] || { echo "Canary wake target is not stopped" >&2; exit 1; }
+    maximum="$(qemu_max_mb "$config")" || { echo "invalid Canary wake memory maximum" >&2; exit 1; }
+    wake_memory="$(printf '%s\n' "$config" | awk '$1=="wake_memory:" {print $2; exit}')"
+    integer "$wake_memory" && [ "$REQUEST_MAX_MB" -ge "$maximum" ] && [ "$REQUEST_MAX_MB" -ge "$wake_memory" ] \
+      || { echo "Canary wake does not cover the full VM memory maximum" >&2; exit 1; }
+    CANARY_WAKE_TARGET_PROVEN=1
+  fi
   [ "$status" != "stopped" ] || continue
   floor="$(qemu_floor_mb "$config")" || { echo "invalid QEMU memory floor" >&2; exit 1; }
   maximum="$(qemu_max_mb "$config")" || { echo "invalid QEMU memory maximum" >&2; exit 1; }
   cpu="$(qemu_max_cpu_milli "$config")" || { echo "invalid QEMU CPU maximum" >&2; exit 1; }
+  if [ "$CANARY_OVERCOMMIT" = 1 ]; then
+    [[ "$maximum" =~ ^[1-9][0-9]*$ ]] && [ "$maximum" -le "$HOST_TOTAL_MB" ] \
+      || { echo "invalid Canary QEMU memory maximum" >&2; exit 1; }
+    capacity_pid="$(printf '%s\n' "$config" | awk '$1=="capacity_runtime_pid:" {print $2; exit}')"
+    CANARY_QEMU+=("$candidate:$status:$maximum:$capacity_pid:$tags")
+    CANARY_ACTIVE_MAX_BY_VMID[$candidate]="$maximum"
+    CANARY_ACTIVE_CPU_BY_VMID[$candidate]="$cpu"
+  fi
   if [ "$TARGET_VMID" != "-" ] && [ "$candidate" = "$TARGET_VMID" ]; then
     OLD_ACTIVE_FLOOR_MB="$floor"
     OLD_ACTIVE_MAX_MB="$maximum"
@@ -233,6 +305,10 @@ while IFS=$'\t' read -r candidate status encoded extra; do
 done <<EOF
 $QEMU_CANDIDATES
 EOF
+if [ "$CANARY_OVERCOMMIT" = 1 ] && [ "$TARGET_VMID" != - ] && [ "$CANARY_WAKE_TARGET_PROVEN" = 0 ]; then
+  echo "could not prove the stopped Canary wake target" >&2
+  exit 1
+fi
 
 if command -v pct >/dev/null 2>&1; then
   PCT_INVENTORY="$(pct list 2>/dev/null)" || { echo "could not read container inventory" >&2; exit 1; }
@@ -249,18 +325,25 @@ if command -v pct >/dev/null 2>&1; then
     config="$(pct config "$candidate" 2>/dev/null)" || { echo "could not inspect container capacity" >&2; exit 1; }
     memory="$(printf '%s\n' "$config" | awk '$1=="memory:" {print $2; exit}')"
     integer "${memory:-}" && [ "$memory" -gt 0 ] || { echo "invalid container memory" >&2; exit 1; }
+    if [ "$CANARY_OVERCOMMIT" = 1 ]; then
+      [[ "$memory" =~ ^[1-9][0-9]*$ ]] && [ "$memory" -le "$HOST_TOTAL_MB" ] \
+        || { echo "invalid Canary container memory maximum" >&2; exit 1; }
+    fi
     cpu_value="$(printf '%s\n' "$config" | awk '$1=="cpulimit:" {print $2; exit}')"
     if ! positive_decimal "${cpu_value:-}"; then cpu_value="$(printf '%s\n' "$config" | awk '$1=="cores:" {print $2; exit}')"; fi
     positive_decimal "${cpu_value:-}" || { echo "invalid container CPU maximum" >&2; exit 1; }
     ACTIVE_FLOOR_MB=$((ACTIVE_FLOOR_MB + memory))
     ACTIVE_MAX_MB=$((ACTIVE_MAX_MB + memory))
     ACTIVE_MAX_CPU_MILLI=$((ACTIVE_MAX_CPU_MILLI + $(cpu_milli "$cpu_value")))
+    CANARY_CONTAINER_MAX_MB=$((CANARY_CONTAINER_MAX_MB + memory))
   done <<EOF
 $PCT_CANDIDATES
 EOF
+elif [ "$CANARY_OVERCOMMIT" = 1 ]; then
+  echo "could not read Canary container inventory" >&2
+  exit 1
 fi
 
-INTENT_DIR="${HIVRA_PROVISION_OPERATIONS_DIR:-/var/lib/hivra/provision-operations}"
 intent_field() {
   local file="$1" key="$2" count
   count="$(awk -F= -v key="$key" '$1==key {n++} END {print n+0}' "$file" 2>/dev/null)" || return 1
@@ -295,7 +378,15 @@ valid_intent_keys() {
 }
 INTENT_VMIDS_SEEN=""
 INTENT_IPS_SEEN=""
+if [ "$CANARY_OVERCOMMIT" = 1 ] && { [ ! -d "$INTENT_DIR" ] || [ -L "$INTENT_DIR" ] || [ ! -r "$INTENT_DIR" ] || [ ! -x "$INTENT_DIR" ]; }; then
+  echo "could not read Canary pending allocation intents" >&2
+  exit 1
+fi
 for intent in "$INTENT_DIR"/operation-*.selected; do
+  if [ "$CANARY_OVERCOMMIT" = 1 ] && [ -L "$intent" ]; then
+    echo "invalid pending allocation intent file type" >&2
+    exit 1
+  fi
   [ -e "$intent" ] || continue
   if [ -L "$intent" ] || [ ! -f "$intent" ]; then
     echo "invalid pending allocation intent file type" >&2
@@ -324,7 +415,7 @@ for intent in "$INTENT_DIR"/operation-*.selected; do
   INTENT_IPS_SEEN="${INTENT_IPS_SEEN}${intent_ip}"$'\n'
   op_hex="$(printf '%s' "$operation_id" | tr -d '-')"
   exact_key="${intent_vmid}|${op_hex}|${binding_tag}|${intent_ip}"
-  if printf '%s\n' "$ACTIVE_COUNTED_INTENT_KEYS" | grep -Fxq "$exact_key"; then
+  if [ "$CANARY_OVERCOMMIT" = 0 ] && printf '%s\n' "$ACTIVE_COUNTED_INTENT_KEYS" | grep -Fxq "$exact_key"; then
     continue
   fi
   schema_count="$(awk -F= '$1=="schema_version" {n++} END {print n+0}' "$intent" 2>/dev/null)"
@@ -339,6 +430,10 @@ for intent in "$INTENT_DIR"/operation-*.selected; do
   maximum="$(intent_field "$intent" maximum_memory_mb)" \
     && integer "$maximum" && [ "$maximum" -ge "$floor" ] \
     || { echo "invalid pending allocation memory maximum" >&2; exit 1; }
+  if [ "$CANARY_OVERCOMMIT" = 1 ]; then
+    [[ "$maximum" =~ ^[1-9][0-9]*$ ]] && [ "$maximum" -le "$HOST_TOTAL_MB" ] \
+      || { echo "invalid Canary pending allocation memory maximum" >&2; exit 1; }
+  fi
   cpu="$(intent_field "$intent" maximum_cpu_milli)" \
     && integer "$cpu" && [ "$cpu" -gt 0 ] \
     || { echo "invalid pending allocation CPU maximum" >&2; exit 1; }
@@ -349,6 +444,13 @@ for intent in "$INTENT_DIR"/operation-*.selected; do
   if [ -n "$intent_storage" ]; then
     [[ "$intent_storage" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]] \
       || { echo "invalid pending allocation storage identity" >&2; exit 1; }
+  fi
+  if [ "$CANARY_OVERCOMMIT" = 1 ] && printf '%s\n' "$ACTIVE_COUNTED_INTENT_KEYS" | grep -Fxq "$exact_key"; then
+    CANARY_ACTIVE_PENDING+=("$intent_vmid")
+    if [ "${CANARY_ACTIVE_MAX_BY_VMID[$intent_vmid]:-0}" -ge "$maximum" ] \
+      && [ "${CANARY_ACTIVE_CPU_BY_VMID[$intent_vmid]:-0}" -ge "$cpu" ]; then
+      continue
+    fi
   fi
   if [ "$TARGET_VMID" != "-" ] && [ "$intent_vmid" = "$TARGET_VMID" ] \
     && printf '%s\n' "$EXACT_INTENT_KEYS" | grep -Fxq "$exact_key" \
@@ -412,16 +514,243 @@ if [ "$LAUNCH_DISK_ACCOUNTING" = 1 ]; then
     || { echo "insufficient live storage headroom for this launch" >&2; exit 1; }
 fi
 
-NEXT_FLOOR_MB=$((ACTIVE_FLOOR_MB + REQUEST_PHYSICAL_MB + HOST_RESERVE_MB))
-if [ "$NEXT_FLOOR_MB" -gt "$HOST_TOTAL_MB" ]; then
-  [ "$ALLOW_REDUCTION" = "1" ] && [ "$OLD_ACTIVE_FLOOR_MB" -gt "$REQUEST_FLOOR_MB" ] \
-    || { echo "active memory floors plus host reserve exceed physical memory" >&2; exit 1; }
+if [ "$CANARY_OVERCOMMIT" = 1 ]; then
+  if [ $(((ACTIVE_MAX_MB + REQUEST_MAX_MB) * 1000)) -gt $((HOST_TOTAL_MB * CANARY_OVERCOMMIT_MILLI)) ]; then
+    echo "active memory ceilings exceed the Canary hard density" >&2
+    exit 1
+  fi
+  CANARY_HEADROOM_MB="$(python3 -I -B - "$CANARY_MEASURED_GUESTS" "$CANARY_OVERCOMMIT_UNTIL" "$CANARY_PRESSURE_BASELINE" \
+    "$HOST_TOTAL_MB" "$HOST_RESERVE_MB" "$REQUEST_MAX_MB" "$PENDING_MAX_MB" "$CANARY_CONTAINER_MAX_MB" "$INTENT_DIR" \
+    "${#CANARY_ACTIVE_PENDING[@]}" "${CANARY_ACTIVE_PENDING[@]}" "${CANARY_QEMU[@]}" <<'PY'
+import json
+import os
+import re
+import socket
+import stat
+import struct
+import sys
+import time
+from pathlib import Path
+
+proc = Path("/proc")
+runtime = Path("/run/qemu-server")
+boot_pattern = r"[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}"
+
+
+def require(condition, reason):
+    if not condition:
+        raise ValueError(reason)
+
+
+def number(text):
+    require(re.fullmatch(r"[0-9]{1,16}", text), "invalid numeric observation")
+    return int(text)
+
+
+def field(lines, key, *suffix):
+    matches = [line.split()[1:] for line in lines if line.split()[:1] == [key]]
+    require(len(matches) == 1 and matches[0][1:] == list(suffix), "missing or invalid " + key)
+    return number(matches[0][0])
+
+
+def host_boot_id():
+    boot_id = (proc / "sys/kernel/random/boot_id").read_text().rstrip("\n")
+    require(re.fullmatch(boot_pattern, boot_id), "invalid host boot identifier")
+    return boot_id
+
+
+def host_health(expected_total, baseline):
+    boot_id, counters, swap_limit = baseline
+    require(host_boot_id() == boot_id, "host boot differs from the pressure baseline")
+    meminfo = (proc / "meminfo").read_text().splitlines()
+    total = field(meminfo, "MemTotal:", "kB")
+    available = field(meminfo, "MemAvailable:", "kB")
+    require(total // 1024 == expected_total and 0 < available <= total, "invalid host memory observation")
+    swap_used = field(meminfo, "SwapTotal:", "kB") - field(meminfo, "SwapFree:", "kB")
+    require(0 <= swap_used <= swap_limit, "swap is in use above the pressure baseline or measurement is invalid")
+    vmstat = (proc / "vmstat").read_text().splitlines()
+    require(tuple(field(vmstat, key) for key in ("pswpin", "pswpout", "oom_kill")) == counters,
+            "swap activity or OOM kill counters differ from the pressure baseline")
+    psi = {}
+    for line in (proc / "pressure/memory").read_text().splitlines():
+        match = re.fullmatch(r"(some|full) avg10=([0-9]+\.[0-9]+) avg60=([0-9]+\.[0-9]+) avg300=([0-9]+\.[0-9]+) total=([0-9]+)", line)
+        require(match and match[1] not in psi, "invalid memory PSI observation")
+        require(all(float(match[i]) == 0 for i in (2, 3, 4)), "memory PSI pressure observed")
+        psi[match[1]] = number(match[5])
+    require(set(psi) == {"some", "full"}, "incomplete memory PSI observation")
+    return total, available, psi, swap_used
+
+
+def running_pids():
+    pids = {}
+    for path in runtime.iterdir():
+        if not re.fullmatch(r"[1-9][0-9]*\.pid", path.name):
+            continue
+        info = path.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid(), "invalid QEMU pidfile")
+        pid = number(path.read_text().strip())
+        require(pid > 0 and pid not in pids.values(), "invalid or duplicate QEMU process ID")
+        pids[path.stem] = pid
+    return pids
+
+
+def process_start(vm, pid):
+    path = proc / str(pid)
+    info = (path / "stat").read_text()
+    fields = info.rsplit(") ", 1)[-1].split()
+    require(info.startswith(f"{pid} (") and len(fields) >= 20 and fields[0] not in ("X", "Z"), "invalid QEMU process stat")
+    require(os.readlink(path / "exe") in ("/usr/bin/kvm", "/usr/bin/qemu-system-x86_64"), "unexpected QEMU executable")
+    raw = (path / "cmdline").read_bytes()
+    args = raw[:-1].split(b"\0")
+    require(raw.endswith(b"\0") and args.count(b"-id") == 1 and args[args.index(b"-id") + 1] == vm.encode(),
+            "QEMU process is not bound to its VMID")
+    return number(fields[19])
+
+
+def qmp_running(vm, pid):
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(1)
+        client.connect(str(runtime / (vm + ".qmp")))
+        creds = client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+        require(struct.unpack("3i", creds)[0] == pid, "QMP peer does not match QEMU process")
+        with client.makefile("rb") as reader:
+            def receive():
+                line = reader.readline(65537)
+                require(0 < len(line) <= 65536 and line.endswith(b"\n"), "invalid QMP response")
+                value = json.loads(line)
+                require(isinstance(value, dict), "invalid QMP response")
+                return value
+
+            require("QMP" in receive(), "invalid QMP greeting")
+            for command in ("qmp_capabilities", "query-status"):
+                client.sendall(json.dumps({"execute": command, "id": command}).encode() + b"\r\n")
+                for _ in range(16):
+                    reply = receive()
+                    if reply.get("id") == command:
+                        break
+                require(reply.get("id") == command and isinstance(reply.get("return"), dict), "could not verify live QMP status")
+            value = reply["return"]
+            require(isinstance(value.get("status"), str) and isinstance(value.get("running"), bool), "invalid QMP status")
+            return value["running"] and value["status"] == "running"
+
+
+def qa_receipt_matches(intent_dir, vm, tag, pid, start):
+    try:
+        boot_id = host_boot_id()
+        receipt = intent_dir / f"qa-memory-{vm}.enrolled"
+        with os.fdopen(os.open(receipt, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as f:
+            info = os.fstat(f.fileno())
+            return (
+                stat.S_ISREG(info.st_mode) and info.st_uid == os.geteuid()
+                and stat.S_IMODE(info.st_mode) == 0o600 and info.st_nlink == 1
+                and f.read(256) == f"v1 {vm} {tag} {boot_id} {pid} {start}\n".encode()
+            )
+    except (OSError, ValueError):
+        return False
+
+
+def admit():
+    allowlist, expires, pressure_baseline, total_mb, reserve_mb, request_mb, pending_mb, containers_mb, intent_path, pending_count, *records = sys.argv[1:]
+    match = re.fullmatch(f"({boot_pattern})" + r":(0|[1-9][0-9]{0,15})" * 4, pressure_baseline)
+    require(match and int(match[5]) <= 64, "invalid pressure baseline")
+    baseline = (match[1], tuple(int(match[i]) for i in (2, 3, 4)), int(match[5]))
+    intent_dir = Path(intent_path)
+    authorized = {}
+    for entry in allowlist.split("|") if allowlist else ():
+        match = re.fullmatch(r"([1-9][0-9]{2,8}):(hivra-(bind|qa-mem)-[0-9a-f]{32})", entry)
+        require(match and match[1] not in authorized and match[1] != "9302" and len(authorized) < 64,
+                "invalid measured guest authorization")
+        vm, tag, kind = match.groups()
+        require(kind == "bind" or 9300 <= int(vm) <= 9399, "invalid QA measured guest VMID")
+        authorized[vm] = (tag, kind)
+    pending_count = int(pending_count)
+    pending_active = set(records[:pending_count])
+    guests = [record.split(":", 4) for record in records[pending_count:]]
+    total, _, psi_before, swap_before = host_health(int(total_mb), baseline)
+    pids = running_pids()
+    require(pids == {entry[0]: number(entry[3]) for entry in guests}, "QEMU runtime and config inventories disagree")
+    uptime = float((proc / "uptime").read_text().split()[0])
+    hz = os.sysconf("SC_CLK_TCK")
+    require(0 < uptime < 10**10 and hz > 0, "invalid host uptime observation")
+    reserve = int(reserve_mb) * 1024
+    measured = uncovered = (int(request_mb) + int(pending_mb) + int(containers_mb)) * 1024
+    starts = {}
+    qa_credited = []
+    for vm, status, maximum_mb, _, tags in guests:
+        maximum = int(maximum_mb) * 1024
+        pid = pids[vm]
+        starts[vm] = start = process_start(vm, pid)
+        require(0 < start <= uptime * hz, "invalid QEMU process age")
+        active_tags = tags.split(";")
+        tenant_tags = [tag for tag in active_tags if tag.startswith("hivra-bind-")]
+        qa_tags = [tag for tag in active_tags if tag.startswith("hivra-qa-mem-")]
+        tag, kind = authorized.get(vm, (None, None))
+        eligible = False
+        if (
+            status == "running" and uptime - start / hz >= 120
+            and vm not in pending_active and tag
+        ):
+            if kind == "bind":
+                eligible = tenant_tags == [tag] and not qa_tags
+            else:
+                eligible = (
+                    qa_tags == [tag] and not tenant_tags and not any(t.startswith("hivra-op-") for t in active_tags)
+                    and qa_receipt_matches(intent_dir, vm, tag, pid, start)
+                )
+        try:
+            smaps = (proc / str(pid) / "smaps_rollup").read_text().splitlines()
+            pss = field(smaps, "Pss:", "kB")
+            anonymous = field(smaps, "Pss_Anon:", "kB")
+            require(0 < pss <= total and anonymous <= pss, "invalid QEMU PSS observation")
+        except (OSError, ValueError, IndexError):
+            require(not eligible, "could not prove authorized QEMU PSS")
+            pss = anonymous = 0
+        else:
+            require(all(field(smaps, key, "kB") == 0 for key in ("Swap:", "SwapPss:")), "QEMU swap is in use")
+            if any(field(smaps, key, "kB") != 0 for key in ("Shared_Hugetlb:", "Private_Hugetlb:")):
+                require(not eligible, "authorized QEMU uses unmeasured huge pages")
+                pss = anonymous = 0
+        if eligible and qmp_running(vm, pid):
+            measured += pss
+            if kind == "qa-mem":
+                qa_credited.append((vm, tag, pid, start))
+        else:
+            measured += max(maximum, pss)
+            uncovered += max(0, maximum - anonymous)
+    require(running_pids() == pids and all(process_start(vm, pid) == starts[vm] for vm, pid in pids.items()),
+            "QEMU runtime changed during measurement")
+    require(all(qa_receipt_matches(intent_dir, *receipt) for receipt in qa_credited),
+            "QA memory enrollment changed during measurement")
+    _, available, psi_after, swap_after = host_health(int(total_mb), baseline)
+    require(psi_before == psi_after, "memory PSI increased during measurement")
+    require(swap_after <= swap_before, "swap use grew during measurement")
+    require(int(expires) > time.time(), "expired Canary memory overcommit policy")
+    require(measured + reserve <= total, "measured memory plus host reserve exceeds physical memory")
+    require(available > reserve + uncovered, "insufficient live memory headroom for this launch")
+    print((available - reserve - uncovered) // 1024)
+
+
+try:
+    admit()
+except (OSError, ValueError, IndexError) as exc:
+    reason = str(exc) if type(exc) is ValueError else "incomplete host or QEMU memory evidence"
+    sys.exit("Canary memory overcommit denied: " + reason)
+PY
+)" || exit 1
+  FLOOR_HEADROOM_MB="$CANARY_HEADROOM_MB"
+else
+  NEXT_FLOOR_MB=$((ACTIVE_FLOOR_MB + REQUEST_PHYSICAL_MB + HOST_RESERVE_MB))
+  if [ "$NEXT_FLOOR_MB" -gt "$HOST_TOTAL_MB" ]; then
+    [ "$ALLOW_REDUCTION" = "1" ] && [ "$OLD_ACTIVE_FLOOR_MB" -gt "$REQUEST_FLOOR_MB" ] \
+      || { echo "active memory floors plus host reserve exceed physical memory" >&2; exit 1; }
+  fi
+  FLOOR_HEADROOM_MB="$((HOST_TOTAL_MB - NEXT_FLOOR_MB))"
 fi
 
 if [ "$ENFORCE_CEILINGS" = "1" ]; then
   MEMORY_LIMIT_MB=$((HOST_TOTAL_MB * MEMORY_DENSITY_MILLI / 1000))
   CPU_LIMIT_MILLI=$((HOST_CPU * CPU_DENSITY_MILLI))
-  if [ $((ACTIVE_MAX_MB + REQUEST_MAX_MB)) -gt "$MEMORY_LIMIT_MB" ]; then
+  if [ "$CANARY_OVERCOMMIT" = 0 ] && [ $((ACTIVE_MAX_MB + REQUEST_MAX_MB)) -gt "$MEMORY_LIMIT_MB" ]; then
     [ "$ALLOW_REDUCTION" = "1" ] && [ "$OLD_ACTIVE_MAX_MB" -gt "$REQUEST_MAX_MB" ] \
       || { echo "active memory ceilings exceed the configured density" >&2; exit 1; }
   fi
@@ -432,5 +761,5 @@ if [ "$ENFORCE_CEILINGS" = "1" ]; then
 fi
 
 printf 'HIVRA_CAPACITY_ADMITTED floor_headroom_mb=%s active_floor_mb=%s active_max_mb=%s active_max_cpu_milli=%s pending_floor_mb=%s pending_max_mb=%s pending_cpu_milli=%s pending_disk_gb=%s\n' \
-  "$((HOST_TOTAL_MB - NEXT_FLOOR_MB))" "$ACTIVE_FLOOR_MB" "$ACTIVE_MAX_MB" "$ACTIVE_MAX_CPU_MILLI" \
+  "$FLOOR_HEADROOM_MB" "$ACTIVE_FLOOR_MB" "$ACTIVE_MAX_MB" "$ACTIVE_MAX_CPU_MILLI" \
   "$PENDING_FLOOR_MB" "$PENDING_MAX_MB" "$PENDING_CPU_MILLI" "$PENDING_DISK_GB"

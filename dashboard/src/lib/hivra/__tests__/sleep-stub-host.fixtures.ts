@@ -110,9 +110,17 @@ elif a[0] == "resume":
     if s.get("resumeFail"): sys.exit(1)
     s["qmp"] = "running"; save()
 elif a[0] == "start":
+    if os.environ.get("STUB_WAKE_INTENT"):
+        intent = os.path.join(d, "provision-operations", "wake-" + a[1] + ".selected")
+        if not os.path.isfile(intent): sys.exit(9)
+        with open(os.path.join(d, "calls.log"), "a") as log:
+            log.write("wake intent present at start\n")
     if s.get("startFail"): sys.exit(1)
     if s["vmstate"] and "savedData" in s: s["volatileData"] = s.pop("savedData")
     if not s.get("startNoop"): s.update(status="running", qmp="running", lock="", vmstate=False)
+    if os.environ.get("STUB_WAKE_INTENT") and s["status"] == "running":
+        pid = open(os.path.join(d, "qemu.pid")).read()
+        open(os.path.join(d, "run", "qemu-server", a[1] + ".pid"), "w").write(pid)
     save()
 elif a[0] == "set":
     if s.get("setFail"): sys.exit(1)
@@ -361,16 +369,18 @@ if [ "$1" = -c ]; then wc -c < "$3"; else exec /usr/bin/stat "$@"; fi
         .replaceAll("/var/run/qemu-server", "@@QEMU@@")
         .replaceAll("/run/lock", "@@LOCK@@")
         .replaceAll("/var/lib/hivra-sleep", "@@MARK@@")
+        .replaceAll("/var/lib/hivra/provision-operations", "@@INTENTS@@")
         .replaceAll("/etc/pve/qemu-server", "@@PVECONF@@")
         .replaceAll("/run/", `${runDir}/`)
         .replaceAll("@@QEMU@@", qemuDir)
         .replaceAll("@@LOCK@@", path.join(runDir, "lock"))
         .replaceAll("@@MARK@@", path.join(dir, "var-lib-hivra-sleep"))
+        .replaceAll("@@INTENTS@@", path.join(dir, "provision-operations"))
         .replaceAll("@@PVECONF@@", path.join(dir, "pve-qemu-server"));
       const pidFile = path.join(dir, "qemu.pid");
       rmSync(pidFile, { force: true });
       if (!options.socketless) {
-        const started = spawnSync("python3", [qemu, dir, qemuDir, String(VMID)], { stdio: "ignore", timeout: 15_000 });
+        const started = spawnSync("python3", [qemu, dir, qemuDir, String(VMID), "-id", String(VMID)], { stdio: "ignore", timeout: 15_000 });
         if (started.status !== 0) throw new Error("the fake QEMU did not start");
       }
       let result;

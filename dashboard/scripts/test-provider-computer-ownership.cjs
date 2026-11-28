@@ -1066,9 +1066,16 @@ async function main() {
       .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
     const elapsedPhasesDigest = createHash("sha256").update(JSON.stringify(elapsedPhasesRows)).digest("hex");
     await db.exec(elapsedPhases);
+    const memoryOvercommit = migration("20261128162500_provider_release_admission_2026_11_28_2.sql");
+    const memoryOvercommitRelease = require("../provisioner-releases/2026.11.28.2.json");
+    const memoryOvercommitRows = memoryOvercommitRelease.files.map(({ path, sha256, bytes }) => [path, sha256, bytes,
+      path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(path) ? 0o700 : 0o600])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const memoryOvercommitDigest = createHash("sha256").update(JSON.stringify(memoryOvercommitRows)).digest("hex");
+    await db.exec(memoryOvercommit);
     const admittedPreparedRuntime = await admissionDefinitions();
     admittedPreparedRuntime.forEach((definition, index) => {
-      for (const [version, digest] of [[guestBootRelease.version, guestBootDigest], [hermesStandbyRelease.version, hermesStandbyDigest], [preparedRuntimeRelease.version, preparedRuntimeDigest], [standbyDescriptionRelease.version, standbyDescriptionDigest], [elapsedPhasesRelease.version, elapsedPhasesDigest]]) {
+      for (const [version, digest] of [[guestBootRelease.version, guestBootDigest], [hermesStandbyRelease.version, hermesStandbyDigest], [preparedRuntimeRelease.version, preparedRuntimeDigest], [standbyDescriptionRelease.version, standbyDescriptionDigest], [elapsedPhasesRelease.version, elapsedPhasesDigest], [memoryOvercommitRelease.version, memoryOvercommitDigest]]) {
         assert.equal(occurrences(definition, `'${version}'`), 1);
         if (admissionFunctions[index].includes("identity_valid")) {
           assert.equal(occurrences(definition, `'bundleSha256'='${digest}' and p_identity->'bundle'->>'provisionerVersion'='${version}'`), 1);
@@ -1083,6 +1090,8 @@ async function main() {
     assert.deepEqual(await admissionDefinitions(), admittedPreparedRuntime, "re-applying the standby description admission changes nothing");
     await db.exec(elapsedPhases);
     assert.deepEqual(await admissionDefinitions(), admittedPreparedRuntime, "re-applying the elapsed-phase admission changes nothing");
+    await db.exec(memoryOvercommit);
+    assert.deepEqual(await admissionDefinitions(), admittedPreparedRuntime, "re-applying the memory-overcommit admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
@@ -1418,10 +1427,15 @@ async function main() {
     const historicalNativeIdentity = { ...nativeIdentity, bundle: { ...nativeIdentity.bundle,
       provisionerVersion: "2026.08.31.3",
       bundleSha256: "8f74ff4ce921d21c84784fdff6885f2ff60b1e83b9c1f3609a95422982bc16ec" } };
+    const predecessorNativeIdentity = { ...nativeIdentity, bundle: { ...nativeIdentity.bundle,
+      provisionerVersion: elapsedPhasesRelease.version, bundleSha256: elapsedPhasesDigest } };
     const nativeIdentityValid = identity => value(
       "select public.hivra_provider_native_identity_valid($1,$2,$3) as result", [identity, agent, op]);
     assert.equal(await nativeIdentityValid(nativeIdentity), true);
     assert.equal(await nativeIdentityValid(historicalNativeIdentity), true);
+    assert.equal(await nativeIdentityValid(predecessorNativeIdentity), true);
+    assert.equal(await nativeIdentityValid({ ...nativeIdentity, bundle: { ...nativeIdentity.bundle,
+      bundleSha256: elapsedPhasesDigest } }), false);
     assert.equal(await nativeIdentityValid({ ...historicalNativeIdentity, bundle: { ...historicalNativeIdentity.bundle,
       bundleSha256: nativeIdentity.bundle.bundleSha256 } }), false);
     assert.equal(await nativeIdentityValid({ ...nativeIdentity, bundle: { ...nativeIdentity.bundle,
