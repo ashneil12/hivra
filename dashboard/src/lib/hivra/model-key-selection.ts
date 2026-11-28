@@ -27,6 +27,7 @@ export const MANAGED_CLAUDE_CODE_DEFAULT_MODEL = "claude-sonnet-4-6";
 export const DEEPSEEK_HARNESS_DEFAULT_MODEL = "deepseek-v4-1-flash";
 /** The model a Hermes computer starts on (Hermes itself lets the owner change it). */
 export const HERMES_DEFAULT_MODEL = "deepseek-v4-1-flash";
+export const HERMES_COMPUTER_MODEL = /^[A-Za-z0-9._:/-]{1,64}$/;
 /**
  * The model a managed OpenClaw starts on. OpenClaw sends a ~70 KB prompt with
  * its tools, and Venice's deepseek-v4-pro took 75 s to a first token (or never

@@ -11,6 +11,14 @@ import {
 } from "@/lib/hivra/agent-llm";
 
 describe("validateLlmInput", () => {
+  it("preserves an explicit Hermes model ID and keeps bracketed IDs valid for Codex", () => {
+    const input = { provider: "venice", mode: "byok", apiKey: "vk_test_123", model: "vendor/model:v2" };
+    expect(validateLlmInput(input, "hermes")).toMatchObject({ ok: true, input: { model: input.model } });
+    expect(validateLlmInput({ ...input, model: "model[variant]" }, "codex")).toMatchObject({
+      ok: true, input: { model: "model[variant]" },
+    });
+  });
+
   it("treats null/empty selector as no-op (native auth)", () => {
     expect(validateLlmInput(null, "codex")).toEqual({ ok: true });
     expect(validateLlmInput(undefined, "codex")).toEqual({ ok: true });
