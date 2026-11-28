@@ -39,9 +39,23 @@ test('leaves a different consent screen untouched', async ({ page }) => {
 const openHands: SweepTarget = { profileId: 'openhands', tile: 'OpenHands', kind: 'agent', proof: 'agent-ui-chat' };
 const question = { prompt: 'What is 517 plus 312? Reply with just the number.', answer: '829' };
 
-for (const needsProvider of [false, true]) {
-  test(`opens the native OpenHands composer without changing provider settings (provider required: ${needsProvider})`, async ({ page }) => {
-    await page.setContent('<iframe title="OpenHands · dashboard" style="width:750px;height:520px"></iframe>');
+for (const scenario of ['ready', 'provider-required', 'submit-rejected']) {
+  test(`uses the native OpenHands composer without changing provider settings (${scenario})`, async ({ page }) => {
+    const needsProvider = scenario === 'provider-required';
+    const rejectSubmit = scenario === 'submit-rejected';
+    const requests: unknown[] = [];
+    await page.route('https://openhands-fixture.test/**', async (route) => {
+      if (new URL(route.request().url()).pathname === '/api/conversations' && route.request().method() === 'POST') {
+        requests.push(route.request().postDataJSON());
+        await route.fulfill(rejectSubmit ? { status: 422, json: { error: 'synthetic rejection' } } : { json: { answer: '829' } });
+        return;
+      }
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: '<iframe title="OpenHands · dashboard" style="width:750px;height:520px"></iframe>',
+      });
+    });
+    await page.goto('https://openhands-fixture.test/');
     await page.locator('iframe').evaluate((iframe, blocked) => {
       (iframe as HTMLIFrameElement).srcdoc = `
         <style>html, body { overflow: clip; }</style>
@@ -53,13 +67,22 @@ for (const needsProvider of [false, true]) {
         </section>
         <main hidden>
           ${blocked ? '<h2>Connect a provider</h2><input type="password" aria-label="API key">' : `
-            <div data-testid="chat-input" contenteditable="true"></div><output></output>
-            <script>document.querySelector('[data-testid=chat-input]').addEventListener('keydown', function (event) {
-              if (event.key !== 'Enter' || !this.textContent.includes('517 plus 312')) return;
-              event.preventDefault();
-              this.textContent = '';
-              document.querySelector('output').textContent = '829';
-            })</script>
+            <div data-testid="chat-input" contenteditable="true">Stale draft</div>
+            <button data-testid="submit-button" aria-label="Send message" disabled>↑</button><output></output>
+            <script>
+              const editor = document.querySelector('[data-testid=chat-input]');
+              const send = document.querySelector('[data-testid=submit-button]');
+              editor.addEventListener('keydown', event => {
+                if (event.key === 'Enter') document.body.dataset.enter = 'pressed';
+              });
+              editor.addEventListener('input', () => { send.disabled = !editor.innerText; });
+              send.addEventListener('click', async () => {
+                const response = await fetch('/api/conversations', {method:'POST',body:JSON.stringify({prompt:editor.innerText})});
+                if (!response.ok) return;
+                editor.textContent = '';
+                document.querySelector('output').textContent = (await response.json()).answer;
+              });
+            </script>
           `}
         </main>`;
     }, needsProvider);
@@ -69,9 +92,17 @@ for (const needsProvider of [false, true]) {
     if (needsProvider) {
       await expect(proof).rejects.toThrow(/requires external sign-in or provider setup/);
       await expect(frame.getByLabel('API key')).toHaveValue('');
+      expect(requests).toEqual([]);
     } else {
-      await expect(proof).resolves.toMatchObject({ surface: 'OpenHands web UI' });
-      await expect(frame.locator('output')).toHaveText('829');
+      if (rejectSubmit) {
+        await expect(proof).rejects.toThrow(/after one native Send click/);
+        await expect(frame.getByTestId('chat-input')).toHaveText(question.prompt);
+      } else {
+        await expect(proof).resolves.toMatchObject({ surface: 'OpenHands web UI' });
+        await expect(frame.locator('output')).toHaveText('829');
+      }
+      expect(requests).toEqual([{ prompt: question.prompt }]);
+      await expect(frame.locator('body')).not.toHaveAttribute('data-enter', 'pressed');
     }
     await expect(frame.getByTestId('onboarding-modal')).toHaveCount(0);
     await expect(frame.locator('body')).not.toHaveAttribute('data-next', 'clicked');
@@ -95,6 +126,22 @@ test('does not launch OpenHands without a verified Hivra credits option', async 
   await expect(launchFromTile(page, openHands, 'abcd1234', () => { requested = true; }))
     .rejects.toThrow(/requires the Hivra credits launch option/);
   expect(requested).toBe(false);
+});
+
+test('stops before typing when native Canvas reports no usable LLM profile', async ({ page }) => {
+  await page.setContent('<iframe title="OpenHands · dashboard"></iframe>');
+  await page.locator('iframe').evaluate((iframe) => {
+    (iframe as HTMLIFrameElement).srcdoc = `
+      <p>Your LLM isn't set up yet, so conversations won't run.</p>
+      <div data-testid="chat-input" contenteditable="true">Untouched draft</div>
+      <button data-testid="submit-button" disabled>Send message</button>`;
+  });
+  const frame = page.frameLocator('iframe');
+  await expect(frame.getByTestId('chat-input')).toBeVisible();
+  await expect(proveChat(page, openHands, { composerTimeoutMs: 2_000, replyTimeoutMs: 10_000, question }))
+    .rejects.toThrow(/no usable LLM profile/);
+  await expect(frame.getByTestId('chat-input')).toHaveText('Untouched draft');
+  await expect(frame.getByTestId('submit-button')).toBeDisabled();
 });
 
 test('does not treat the offscreen agent choice as an active onboarding step', async ({ page }) => {

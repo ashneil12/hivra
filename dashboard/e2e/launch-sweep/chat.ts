@@ -342,10 +342,12 @@ export async function proveChat(
   // question never appear sends it again; so does the sweep, up to 3 times.
   const asked = question.prompt.slice(0, 24);
   const askedBefore = occurrences(await bodyText(frame), asked);
+  const isOpenHands = target.profileId === 'openhands';
+  const maxAttempts = isOpenHands ? 1 : 3;
   let sentAt = Date.now();
   let shown = false;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    sentAt = await sendQuestion(page, frame, composer, question);
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    sentAt = isOpenHands ? await sendOpenHandsQuestion(frame, composer, question) : await sendQuestion(page, frame, composer, question);
     const shownBy = Date.now() + 20_000;
     while (Date.now() < shownBy) {
       const text = await bodyText(frame);
@@ -359,7 +361,7 @@ export async function proveChat(
       await sleep(2_000);
     }
     if (shown) break;
-    if (attempt < 3) await sleep(15_000);
+    if (attempt < maxAttempts) await sleep(15_000);
   }
 
   const end = sentAt + options.replyTimeoutMs;
@@ -379,9 +381,26 @@ export async function proveChat(
     'product',
     `${surface}: no answer within ${Math.round(options.replyTimeoutMs / 60_000)} min` +
       (blocked ? ' (it is asking for a sign-in or key)' : '') +
-      (shown ? '' : ' (the question never appeared in the chat after 3 tries)') +
+      (shown ? '' : ` (the question never appeared in chat after ${isOpenHands ? 'one native Send click' : '3 tries'})`) +
       `. End of screen: "${tail}"`,
   );
+}
+
+async function sendOpenHandsQuestion(frame: Frame, composer: Locator, question: SweepQuestion): Promise<number> {
+  if (await frame.getByText(/your llm isn.t set up yet/i).first().isVisible()) {
+    throw new SweepFailure('chat', 'product', 'OpenHands Canvas has no usable LLM profile. No credentials were entered and no prompt was sent.');
+  }
+  await composer.fill(question.prompt);
+  if (await composer.innerText() !== question.prompt) {
+    throw new SweepFailure('chat', 'harness_bug', 'OpenHands Canvas did not retain the exact prompt.');
+  }
+  const send = frame.getByTestId('submit-button').and(frame.locator('button:enabled')).filter({ visible: true }).first();
+  await send.waitFor({ timeout: 5_000 }).catch(() => {
+    throw new SweepFailure('chat', 'product', 'OpenHands Canvas native Send did not become enabled. No prompt was sent.');
+  });
+  const sentAt = Date.now();
+  await send.click({ timeout: 5_000 });
+  return sentAt;
 }
 
 /** Type the question into the composer and send it, the way a customer would. */
