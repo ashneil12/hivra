@@ -113,7 +113,7 @@ export async function launchFromTile(page: Page, target: SweepTarget, runId: str
   }
 
   await page.getByRole('textbox', { name: target.kind === 'computer' ? 'Computer name' : 'Agent name' }).fill(auditAgentName(runId));
-  await chooseHivraCredits(page);
+  await chooseHivraCredits(page, target.profileId === 'openhands');
 
   const launch = page.getByTestId('launch-primary-action');
   const deadline = Date.now() + 90_000;
@@ -155,12 +155,14 @@ export async function launchFromTile(page: Page, target: SweepTarget, runId: str
 }
 
 /** Pick "Hivra credits" for model access when Review offers it. */
-async function chooseHivraCredits(page: Page): Promise<void> {
+async function chooseHivraCredits(page: Page, requireManaged: boolean): Promise<void> {
   const group = page.getByRole('group', { name: 'Model access' });
-  if (!(await group.isVisible().catch(() => false))) return;
   // The choice card itself, by its title; "Add credit" sits beside it.
   const credits = group.locator('button').filter({ has: page.locator('strong', { hasText: /^Hivra credits$/ }) }).first();
-  if ((await credits.count()) === 0) return;
+  if (!(await group.isVisible().catch(() => false)) || (await credits.count()) === 0) {
+    if (requireManaged) throw new SweepFailure('review', 'harness_environment', 'OpenHands requires the Hivra credits launch option; no fallback was selected.');
+    return;
+  }
   // The balance loads after Review opens; the button stays disabled until then.
   await page
     .getByText('Checking your Hivra credits…')
@@ -173,6 +175,11 @@ async function chooseHivraCredits(page: Page): Promise<void> {
     throw new SweepFailure('review', 'harness_environment', `Hivra credits can't be picked: ${why}`);
   }
   await credits.click();
+  if (requireManaged) {
+    await credits.and(group.locator('[aria-pressed="true"]')).waitFor({ timeout: 5_000 }).catch(() => {
+      throw new SweepFailure('review', 'harness_environment', 'Could not verify Hivra credits were selected for OpenHands.');
+    });
+  }
 }
 
 export interface ReadyOutcome {
