@@ -123,6 +123,12 @@ agent that is asleep.
 | `HIVRA_FAST_WAKE` | server env | comma list of `timing`, `fast_healthz`, `fast_qm`, `early_finish`, `deferred_log`, or `all` |
 | `NEXT_PUBLIC_HIVRA_FAST_WAKE` | build env | `early_wake`: the page sends its wake beside its first read |
 
+On canonical Git Canary only, naming `ssh_session` in `HIVRA_FAST_WAKE`
+lets a managed disk restore reuse one host-key-pinned SSH connection for
+slot admission, restore and slot release. `all` does not enable it. Hosts
+without a configured fingerprint and self-managed hosts keep the one-shot
+transport.
+
 `timing` adds `host_ms` and `ssh_ready_ms` to each wake's `detail`, which
 splits host time from connection time.
 
