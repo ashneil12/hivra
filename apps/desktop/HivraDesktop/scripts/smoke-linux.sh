@@ -84,5 +84,20 @@ dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -
     fi
   fi
   echo "Hivra is the stored default hivra:// handler through $handler"
+  timeout 10 xdg-open 'hivra://auth/callback?code=smoke&state=out-of-date' >/dev/null 2>&1 || true
+  delivered=""
+  for _ in $(seq 1 10); do
+    if grep -q 'hivra: ignored an out-of-date browser sign-in callback' "$HIVRA_SMOKE_OUT/app.log" 2>/dev/null; then
+      delivered=yes
+      break
+    fi
+    sleep 1
+  done
+  if [ -z "$delivered" ]; then
+    echo "The hivra:// callback did not reach the running app" >&2
+    cat "$HIVRA_SMOKE_OUT/app.log" >&2 || true
+    exit 1
+  fi
+  echo "The hivra:// callback reached the running app"
   kill "$app_pid" 2>/dev/null || true
 '

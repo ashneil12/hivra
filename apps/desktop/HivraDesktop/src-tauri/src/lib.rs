@@ -255,6 +255,8 @@ fn handle_link(app: &AppHandle, url: &Url) {
     let shell = app.state::<Shell>();
     let pending = take_matching_pending(&mut shell.pending.lock().unwrap(), &callback.state);
     let Some((request, _)) = pending else {
+        // Never log the callback itself: its code is a sign-in credential.
+        eprintln!("hivra: ignored an out-of-date browser sign-in callback");
         fail(app, "That sign-in link is out of date. Please try again.");
         return;
     };
