@@ -554,4 +554,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261128165200", name: "canary_deep_hibernate_scope" },
   { version: "20261128171500", name: "canary_qa_holder_settings" },
   { version: "20261128172100", name: "canary_qa_holder_host" },
+  { version: "20261128172900", name: "canary_bundle_sync_holds" },
 ];

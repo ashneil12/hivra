@@ -36,6 +36,8 @@ const PROBE_CONCURRENCY = 4;
  *   host — minus hosts the operator decommissioned (maintenance +
  *   decommissioned_at). Nothing else, and only hosts with their own
  *   configuration (the sync library refuses the rest before any SSH).
+ *   On Canary, the launch fallback does not admit a maintenance host on its
+ *   own, but a maintenance host still holding computers is considered.
  * - It only upgrades a provisioner directory that already exists. Preparing a
  *   host for the first time stays an operator step (proxmox-host-standup).
  * - It never replaces a bundle that claims a newer version than this
@@ -43,6 +45,8 @@ const PROBE_CONCURRENCY = 4;
  *   shared host.
  * - At most one successful sync per run, two attempts at most, so one broken
  *   host costs one attempt per run and cannot starve the others.
+ * - Automatic Canary apply skips an active hold for the installed version
+ *   and refuses to run if the hold check fails.
  * - The sync itself is the operator route's syncManagedProvisionerBundle: host
  *   identity proof, allocation lock, checksum-verified atomic swap, rollback,
  *   readiness check and the VM/Caddy/storage preservation receipt.
@@ -60,6 +64,7 @@ export type ManagedBundleHostStatus =
   | "current"
   | "synced"
   | "stale"
+  | "held"
   | "sync_failed"
   | "newer_on_host"
   | "not_prepared"
@@ -84,7 +89,7 @@ export type ManagedBundleConvergenceSummary = {
   hosts: ManagedBundleHostReport[];
   retiredHostReferences: Array<{ targetId: string; computerRecords: number }>;
   synced: string[];
-  /** Behind, but left for a later run by the per-run bound (or by dry run). */
+  /** Behind, but left for a later run by a hold, the per-run bound, or dry run. */
   pending: string[];
 };
 
@@ -166,6 +171,7 @@ async function loadLiveComputersByHost(
 
 async function loadPlacementHosts(
   supabase: Supabase,
+  channel: ManagedHivraProvisionerChannel,
   env: Record<string, string | undefined>,
 ): Promise<{ placement: Set<string>; decommissioned: Set<string> }> {
   const { data, error } = await supabase
@@ -175,6 +181,7 @@ async function loadPlacementHosts(
   if (!Array.isArray(data)) throw new Error("proxmox_hosts read returned no inventory");
   const placement = new Set<string>();
   const decommissioned = new Set<string>();
+  const maintenance = new Set<string>();
   for (const row of data as Array<{
     id: string;
     status: string;
@@ -189,10 +196,13 @@ async function loadPlacementHosts(
       decommissioned.add(id);
       continue;
     }
+    if (row.status === "maintenance") maintenance.add(id);
     if (row.status === "active") placement.add(id);
   }
   const claudeHost = normalizeHostId(resolveHivraClaudeCodeProxmoxHost(env));
-  if (claudeHost && !decommissioned.has(claudeHost)) placement.add(claudeHost);
+  if (claudeHost && !decommissioned.has(claudeHost) && (channel !== "canary" || !maintenance.has(claudeHost))) {
+    placement.add(claudeHost);
+  }
   return { placement, decommissioned };
 }
 
@@ -256,7 +266,7 @@ export async function runManagedProvisionerBundleConvergence(params: {
 
   const [liveComputers, hostRegistry, assets] = await Promise.all([
     loadLiveComputersByHost(params.supabase, params.channel, params.env),
-    loadPlacementHosts(params.supabase, params.env),
+    loadPlacementHosts(params.supabase, params.channel, params.env),
     deps.loadBundle(),
   ]);
   const expectedManifestDigest = createHash("sha256")
@@ -296,6 +306,19 @@ export async function runManagedProvisionerBundleConvergence(params: {
     if (dryRun || summary.synced.length >= MAX_BUNDLE_SYNCS_PER_RUN || attempts >= MAX_BUNDLE_SYNC_ATTEMPTS_PER_RUN) {
       summary.pending.push(host.targetId);
       continue;
+    }
+    if (params.channel === "canary") {
+      const observedVersion = host.observedVersion;
+      const { data, error } = await params.supabase.rpc("get_hivra_canary_bundle_sync_held", {
+        p_host_id: host.targetId,
+        p_installed_version: observedVersion && /^\d{1,10}(\.\d{1,10}){3}$/.test(observedVersion) ? observedVersion : null,
+      });
+      if (error || typeof data !== "boolean") throw new Error("Could not verify Canary automatic bundle sync hold");
+      if (data) {
+        host.status = "held";
+        summary.pending.push(host.targetId);
+        continue;
+      }
     }
     attempts += 1;
     const result = await deps.sync(params.channel, host.targetId);

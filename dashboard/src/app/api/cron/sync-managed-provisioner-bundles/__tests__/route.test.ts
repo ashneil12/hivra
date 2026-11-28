@@ -4,6 +4,7 @@ const mockProbe = jest.fn();
 const mockSync = jest.fn();
 const mockLoadBundle = jest.fn();
 const mockFrom = jest.fn();
+const mockRpc = jest.fn();
 const mockHeartbeat = jest.fn();
 
 jest.mock("@/lib/hivra/managed-provisioner-bundle-sync", () => ({
@@ -14,7 +15,9 @@ jest.mock("@/lib/hivra/managed-provisioner-bundle-sync", () => ({
 jest.mock("@/lib/infrastructure/connection-preparation", () => ({
   loadPortableProvisionerBundle: (...args: unknown[]) => mockLoadBundle(...args),
 }));
-jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args) } }));
+jest.mock("@/lib/supabase", () => ({
+  supabaseAdmin: { from: (...args: unknown[]) => mockFrom(...args), rpc: (...args: unknown[]) => mockRpc(...args) },
+}));
 jest.mock("@/lib/ops-events", () => ({ reportOpsEvent: jest.fn() }));
 jest.mock("@/lib/cron-heartbeat", () => ({
   recordCronHeartbeat: (...args: unknown[]) => mockHeartbeat(...args),
@@ -69,6 +72,7 @@ describe("GET /api/cron/sync-managed-provisioner-bundles", () => {
       HIVRA_MANAGED_BUNDLE_SYNC_ENABLED: "true",
     };
     delete process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL;
+    mockRpc.mockResolvedValue({ data: false, error: null });
     mockLoadBundle.mockResolvedValue(PORTABLE_HIVRA_PROVISIONER_BUNDLE_FILES.map((relativePath) => ({
       relativePath, content: Buffer.from(relativePath),
     })));
@@ -124,6 +128,7 @@ describe("GET /api/cron/sync-managed-provisioner-bundles", () => {
 
     expect(response.status).toBe(200);
     expect(mockSync).toHaveBeenCalledWith("default", "fixturenode21");
+    expect(mockRpc).not.toHaveBeenCalled();
     expect(payload.data).toMatchObject({ enabled: true, channel: "default", synced: ["fixturenode21"] });
     expect(mockedReport).toHaveBeenCalledWith(expect.objectContaining({
       severity: "info",
@@ -138,6 +143,14 @@ describe("GET /api/cron/sync-managed-provisioner-bundles", () => {
     expect((await GET(request())).status).toBe(200);
     expect(mockProbe).toHaveBeenCalledWith("canary", "fixturenode11", expect.any(String));
     expect(mockSync).toHaveBeenCalledWith("canary", "fixturenode11");
+  });
+
+  it("fails the Canary run before apply when the database cannot confirm the hold", async () => {
+    process.env.HIVRA_MANAGED_PROVISIONER_CHANNEL = "canary";
+    tables([{ id: "a1", proxmox_host: "fixturenode11", managed_provisioner_channel: "canary" }]);
+    mockRpc.mockResolvedValue({ data: null, error: { message: "unavailable" } });
+    expect((await GET(request())).status).toBe(500);
+    expect(mockSync).not.toHaveBeenCalled();
   });
 
   it("fails closed for an unfamiliar deployment before any host is touched", async () => {
