@@ -478,6 +478,8 @@ async function main() {
 
     assert.equal(await enroll(), false);
     await addAgent(ordinaryAgent, ordinaryOwner, ordinaryA);
+    const originalAllocation = id(86);
+    await db.query("update public.hivra_agents set allocation_operation_id=$1 where id=$2", [originalAllocation, ordinaryAgent]);
     const ordinaryForward = { owner: ordinaryOwner, agent: ordinaryAgent, source: ordinaryA, destination: ordinaryB,
       operation: id(81) };
     await db.exec("set role service_role");
@@ -521,6 +523,8 @@ async function main() {
     assert.equal((await advance("claim_restore", null, ordinaryLease)).phase, "restore_claimed");
     assert.equal((await advance("verify_destination", { ...restored, destination: ordinaryB }, ordinaryLease)).phase, "destination_verified");
     assert.equal((await advance("commit_placement", { ...commit, source: ordinaryA, destination: ordinaryB }, ordinaryLease)).phase, "placement_committed");
+    assert.deepEqual(await row("select allocation_operation_id from public.hivra_agents where id=$1", [ordinaryAgent]),
+      { allocation_operation_id: originalAllocation });
     assert.equal((await advance("confirm_connector", { ...connector, destination: ordinaryB }, ordinaryLease)).phase, "connector_verified");
     assert.equal((await advance("finish_wake", { ...ready, destination: ordinaryB }, ordinaryLease)).phase, "finished");
     assert.ok((await retire({ ...retirement, source: ordinaryA, destination: ordinaryB }, ordinaryLease)).retired_at);
@@ -537,6 +541,8 @@ async function main() {
     assert.equal((await begin(ordinaryReverse)).phase, "checkpointing");
     assert.equal((await abort({ ...abortProof, source: ordinaryB, destination: ordinaryA },
       { ...ordinaryReverse, generation: 13 })).phase, "aborted");
+    assert.deepEqual(await row("select allocation_operation_id from public.hivra_agents where id=$1", [ordinaryAgent]),
+      { allocation_operation_id: originalAllocation });
     assert.equal(await rpc("managed_launch_bridge_epoch"), epoch);
     await assert.rejects(db.query("update public.hivra_agents set proxmox_host=$1 where id=$2",
       [destination.hostId, fencedAgent]), { code: "P0060" });

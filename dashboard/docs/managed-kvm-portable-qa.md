@@ -58,7 +58,12 @@ also pins each host's
 bridge and storage profile (`storageId`, `volumeGroup`, `thinPool`). Root
 preparation independently checks the driver's exact lease and disk manifest,
 qualifies the destination, and issues the per-operation prepare permit and
-separate boot permit. The app cannot create or substitute those permits. Do
+separate boot permit. Use the original allocation operation ID from the same
+owner-bound agent row, not the portable handoff ID or guest metadata. Source
+qualification and destination verification require its allocation tag and the
+binding tag; destination preparation writes both, so ordinary signed Delete
+can still check the committed guest's ownership. The app cannot create or
+substitute those permits. Do
 not replay a captured Proxmox configuration, copy cloud-init credentials, or
 use source vendor snippets. The destination regenerates its seed with one
 operation-owned metadata line preserving the source instance ID.

@@ -60,15 +60,22 @@ it("refuses the ordinary launch CPU profile and unverified NIC settings", () => 
 });
 
 it("accepts the ordinary serial console and generated seed only with their qualified settings", () => {
-  const ordinary = approved.replace("cpu: x86-64-v2-AES", "cpu: host").replace(",firewall=1", "") +
+  const allocationOperationId = "33333333-3333-4333-8333-333333333333";
+  const allocationTag = "hivra-op-" + allocationOperationId.replaceAll("-", "");
+  const ordinary = approved.replace("cpu: x86-64-v2-AES", "cpu: host").replace(",firewall=1", "")
+    .replace(placement.bindingTag, placement.bindingTag + ";" + allocationTag) +
     "cpulimit: 2\nserial0: socket\nvga: serial0\n" +
     "ide2: local-lvm:vm-9343-cloudinit,media=cdrom\nciuser: ubuntu\nciupgrade: 0\n" +
     "ipconfig0: ip=192.0.2.43/24,gw=192.0.2.1\nnameserver: 192.0.2.53\n";
   const measured: Parameters<typeof buildPortableKvmSourceProfileCheck>[1] = { ...profile, managed: {
+    allocationOperationId,
     cpu: { vendor: "GenuineIntel", requiredFlags: ["aes", "cx16", "pni", "popcnt", "sse4_1", "sse4_2", "ssse3"] },
     cpuLimit: 2, cloudInit: { instanceId: "1".repeat(40), gateway: "192.0.2.1", nameservers: ["192.0.2.53"] },
   } };
   expect(eligible(ordinary, "stopped", measured)).toBe(true);
+  expect(eligible(ordinary.replace(";" + allocationTag, ""), "stopped", measured)).toBe(false);
+  expect(eligible(ordinary.replace(allocationTag, "hivra-op-" + "9".repeat(32)), "stopped", measured)).toBe(false);
+  expect(eligible(ordinary.replace(placement.bindingTag, "hivra-bind-" + "9".repeat(32)), "stopped", measured)).toBe(false);
   expect(eligible(ordinary + "cicustom: user=local:snippets/arbitrary.yaml\n", "stopped", measured)).toBe(false);
   expect(eligible(ordinary.replace("serial0: socket", "serial0: /dev/ttyS0"), "stopped", measured)).toBe(false);
   expect(eligible(ordinary.replace("ip=192.0.2.43", "ip=192.0.2.44"), "stopped", measured)).toBe(false);

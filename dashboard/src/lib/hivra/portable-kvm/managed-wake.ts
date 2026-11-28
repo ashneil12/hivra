@@ -18,7 +18,7 @@ import { serializePortableKvmDestinationReservation } from "./destination-disk";
 import { dispatchPortableKvmDestinationJob, pollPortableKvmDestinationJob } from "./destination-job";
 import {
   buildPortableKvmDestinationPrepareScript, buildPortableKvmHostCpuCompatibilityProbeScript, parsePortableKvmDestinationPrepareReceipt,
-  portableKvmManagedDestinationProfileSchema, portableKvmUnicastMacAddress, type PortableKvmDestinationPrepareInput,
+  portableKvmAllocationOperationId, portableKvmManagedDestinationProfileSchema, portableKvmUnicastMacAddress, type PortableKvmDestinationPrepareInput,
 } from "./destination-prepare";
 import { advancePortableKvmIdleHandoff, requestPortableKvmOwnerWake, type PortableKvmCheckpointReceipt, type PortableKvmHandoff } from "./handoff";
 import { isPortableKvmReadyToCheckpoint, isPortableKvmWakeClaimed, readPortableKvmPilot, type PortableKvmPilot, type PortableKvmPlacement } from "./pilot";
@@ -44,11 +44,13 @@ function pilotProfile(pilot: PortableKvmPilot, agent: Record<string, unknown>, p
   const host = config.hosts[placement.hostId];
   const cores = z.number().int().min(1).max(8).parse(agent.cpu);
   const memoryMb = z.number().int().min(1024).max(16384).parse(Number(agent.ram) * 1024);
+  const allocationOperationId = portableKvmAllocationOperationId.parse(agent.allocation_operation_id);
   if (!Object.hasOwn(config.hosts, placement.hostId) || !host) throw new Error("Portable KVM host profile is missing");
   const { bridge, ...storage } = host;
   return { storage, machineId: config.machineId, profile: {
     machine: config.machine, cores, memoryMb,
-    attachment: config.attachment, network: { bridge, macAddress: config.macAddress }, managed: config.managed,
+    attachment: config.attachment, network: { bridge, macAddress: config.macAddress },
+    managed: { ...config.managed, allocationOperationId },
   } };
 }
 
