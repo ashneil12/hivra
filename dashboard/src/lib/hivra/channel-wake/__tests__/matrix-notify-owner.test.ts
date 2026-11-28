@@ -1,6 +1,12 @@
 /** @jest-environment node */
 
+import { NextRequest } from "next/server";
+import { POST } from "@/app/api/webhooks/channel-wake/matrix/route";
+import { setTestEnv } from "@/test-utils/env";
+
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
+const mockAfter = jest.fn();
+jest.mock("next/server", () => ({ ...jest.requireActual("next/server"), after: (task: () => unknown) => mockAfter(task) }));
 
 const mockRows: Array<Record<string, unknown>> = [];
 const mockUpdates: Array<{ agentId: string; channel: string; from: string[]; patch: Record<string, unknown> }> = [];
@@ -30,9 +36,11 @@ const mockHost = jest.fn();
 jest.mock("../../agent-sleep", () => ({ readSleepHostRow: (...a: unknown[]) => mockHost(...a) }));
 const mockTarget = jest.fn();
 const mockReadAgent = jest.fn();
+const mockEnsureAwake = jest.fn();
 jest.mock("../../agent-wake", () => ({
   resolveSleepTarget: (...a: unknown[]) => mockTarget(...a),
   readHivraAgentRow: (...a: unknown[]) => mockReadAgent(...a),
+  ensureHivraAgentAwake: (...a: unknown[]) => mockEnsureAwake(...a),
 }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({ runProxmoxHostScriptWithStdin: jest.fn() }));
 
@@ -79,6 +87,44 @@ beforeEach(() => {
 
 describe("Matrix push gateway", () => {
   const key = matrixPushkey(SEED, AGENT, ARM);
+
+  it("retries a signed HTTP notification during sleep, then schedules one wake", async () => {
+    const restoreEnv = setTestEnv(ENV);
+    try {
+      mockRows.push(matrixRow());
+      mockReadAgent.mockResolvedValueOnce({ id: AGENT, status: "running", sleep_state: "draining" })
+        .mockResolvedValueOnce({ id: AGENT, status: "running", sleep_state: "hibernated" });
+      mockEnsureAwake.mockResolvedValueOnce({ state: "awake" });
+      const send = (pushkey = key) => POST(new NextRequest("https://wake.example.test/_matrix/push/v1/notify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(push(pushkey)),
+      }));
+
+      expect((await send(matrixPushkey("z".repeat(40), AGENT, ARM))).status).toBe(401);
+      expect(mockReadAgent).not.toHaveBeenCalled();
+      const retry = await send();
+      expect(retry.status).toBe(503);
+      expect(await retry.json()).toEqual({ errcode: "M_UNKNOWN", error: "Try again" });
+      expect(mockUpdates).toHaveLength(0);
+      expect(mockAfter).not.toHaveBeenCalled();
+
+      const accepted = await send();
+      expect(accepted.status).toBe(200);
+      expect(await accepted.json()).toEqual({ rejected: [] });
+      expect(mockUpdates).toEqual([{
+        agentId: AGENT, channel: "matrix", from: ["idle"],
+        patch: { wake_count_window: [expect.any(String)] },
+      }]);
+      expect(mockEnsureAwake).not.toHaveBeenCalled();
+      expect(mockAfter).toHaveBeenCalledTimes(1);
+      await mockAfter.mock.calls[0][0]();
+      expect(mockEnsureAwake).toHaveBeenCalledTimes(1);
+      expect(mockEnsureAwake).toHaveBeenCalledWith(AGENT, { trigger: "channel", waitMs: 120_000 });
+    } finally {
+      restoreEnv();
+    }
+  });
 
   it("is dark without the secret", async () => {
     const wake = jest.fn();
