@@ -543,6 +543,67 @@ async function main() {
     assert.deepEqual(await row("delete from public.hivra_agents where id=$1 returning id", [ordinaryAgent]), { id: ordinaryAgent });
     await db.exec("reset role");
     assert.equal((await row("select count(*)::int as count from hivra_kvm_portable_private.pilot_enrollment")).count, 0);
+
+    const scopedAgent = id(90), scopedOwner = "user_MaintenanceFixture";
+    const scopedA = { ...source, vmid: 1118, ip: "192.0.2.118" };
+    const scopedB = { ...destination, vmid: 9368, ip: scopedA.ip };
+    const scoped = { owner: scopedOwner, agent: scopedAgent, operation: id(91), source: scopedA, destination: scopedB };
+    const scopeEnroll = { owner: scopedOwner, agent: scopedAgent, a: scopedA, b: scopedB };
+    await addAgent(scopedAgent, scopedOwner, scopedA);
+    await db.query("update public.proxmox_hosts set status='maintenance' where id=$1", [scopedB.hostId]);
+    assert.equal(await enroll(scopeEnroll), false);
+    assert.equal(await begin(scoped), null);
+    const checkHost = (customer = scopedOwner, machine = scopedAgent, placement = scopedB) =>
+      rpc("check_hivra_kvm_portable_host", customer, machine, placement);
+    assert.equal(await checkHost(), false);
+    await db.query(`insert into hivra_kvm_portable_private.maintenance_pilot
+      (owner_id,agent_id,placement,expires_at,customer_health_checked_at)
+      values ($1,$2,$3,now()+interval '2 hours',now())`, [scopedOwner, scopedAgent, scopedB]);
+    assert.equal(await checkHost(), true);
+    assert.equal(await checkHost(otherOwner), false);
+    assert.equal(await checkHost(scopedOwner, otherAgent), false);
+    assert.equal(await checkHost(scopedOwner, scopedAgent, { ...scopedB, vmid: scopedB.vmid + 1 }), false);
+    assert.equal(await begin(scoped), null);
+    assert.equal(await enroll(scopeEnroll), true);
+
+    await db.exec("set role service_role");
+    await assert.rejects(db.query("select * from hivra_kvm_portable_private.maintenance_pilot"), { code: "42501" });
+    for (const customer of [scopedOwner, otherOwner]) {
+      await assert.rejects(rpc("insert_hivra_managed_agent", {
+        user_id: customer, deployment_mode: "hivra-managed", seat_funding: "paid",
+        proxmox_host: scopedB.hostId, cpu: 4, ram: 8,
+      }, 20, null, false), { code: "P0058" });
+    }
+    assert.equal(await available(scopedB.hostId), undefined);
+    await db.exec("reset role");
+    await db.query("insert into public.hermes_instances (user_id,name,status,lifecycle_state,proxmox_node,cpu_limit,ram_limit) values ($1,'Other existing guest','running','active',$2,2,61440)",
+      [otherOwner, scopedB.hostId]);
+    await assert.rejects(begin(scoped), { code: "P0058" });
+    await db.query("delete from public.hermes_instances where user_id=$1 and name='Other existing guest'", [otherOwner]);
+
+    await db.exec("update hivra_kvm_portable_private.maintenance_pilot set customer_health_checked_at=now()-interval '11 minutes'");
+    assert.equal(await checkHost(), false);
+    assert.equal(await begin(scoped), null);
+    await db.exec("update hivra_kvm_portable_private.maintenance_pilot set customer_health_checked_at=now()");
+    assert.equal((await begin(scoped)).phase, "checkpointing");
+    const scopedLease = { ...scoped, generation: 9 };
+    assert.equal((await advance("verify_storage", { ...storage, source: scopedA }, scopedLease)).phase, "storage_verified");
+    assert.equal(await advance("claim_restore", null, scopedLease), null);
+    await db.exec("update hivra_kvm_portable_private.maintenance_pilot set expires_at=now()-interval '1 second'");
+    assert.equal(await requestWake(scopedLease), null);
+    await db.exec("update hivra_kvm_portable_private.maintenance_pilot set expires_at=now()+interval '2 hours'");
+    assert.ok((await requestWake(scopedLease)).wake_requested_at);
+    assert.equal((await advance("claim_restore", null, scopedLease)).phase, "restore_claimed");
+    assert.equal((await advance("verify_destination", { ...restored, destination: scopedB }, scopedLease)).phase, "destination_verified");
+    const scopedCommit = { ...commit, source: scopedA, destination: scopedB };
+    await db.exec("update hivra_kvm_portable_private.maintenance_pilot set customer_health_checked_at=now()-interval '11 minutes'");
+    assert.equal(await advance("commit_placement", scopedCommit, scopedLease), null);
+    await db.exec("update hivra_kvm_portable_private.maintenance_pilot set customer_health_checked_at=now()");
+    assert.equal((await advance("commit_placement", scopedCommit, scopedLease)).phase, "placement_committed");
+    assert.equal((await advance("confirm_connector", { ...connector, destination: scopedB }, scopedLease)).phase, "connector_verified");
+    assert.equal((await advance("finish_wake", { ...ready, destination: scopedB }, scopedLease)).phase, "finished");
+    assert.ok((await retire({ ...retirement, source: scopedA, destination: scopedB }, scopedLease)).retired_at);
+    assert.equal((await row("select status from public.proxmox_hosts where id=$1", [scopedB.hostId])).status, "maintenance");
     console.log("Managed KVM portable handoff SQL passed");
   } finally {
     await db.close();

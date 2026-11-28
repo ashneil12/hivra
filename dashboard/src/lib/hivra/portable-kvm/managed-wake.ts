@@ -98,6 +98,12 @@ async function rpc(name: string, params: Record<string, unknown>) {
   return data as unknown;
 }
 
+async function requirePortableHost(ownerId: string, agentId: unknown, placement: PortableKvmPlacement) {
+  if (await rpc("check_hivra_kvm_portable_host", {
+    p_owner_id: ownerId, p_agent_id: z.string().uuid().parse(agentId), p_placement: placement,
+  }) !== true) throw new Error("Portable KVM host is not authorized");
+}
+
 export function requestManagedPortableKvmOwnerWake(ownerId: string, agent: Record<string, unknown>) {
   return requestPortableKvmOwnerWake(ownerId, agent, rpc);
 }
@@ -128,6 +134,12 @@ function advanceManagedPortableKvmHandoff(ownerId: string, agent: Record<string,
 
   async function destination(lease: PortableKvmHandoff, prepare: boolean) {
     if (!lease.storage_evidence) throw new Error("Portable KVM storage evidence is missing");
+    if (prepare) {
+      await Promise.all([
+        requirePortableHost(ownerId, lease.agent_id, lease.source),
+        requirePortableHost(ownerId, lease.agent_id, lease.destination),
+      ]);
+    }
     const plan = destinationPlan(agent, lease, lease.storage_evidence.disk);
     const target = await pinnedTarget(ownerId, agent, lease.destination);
     let reservation = await readReservation(plan, target.env);
@@ -170,6 +182,10 @@ function advanceManagedPortableKvmHandoff(ownerId: string, agent: Record<string,
     async preflight(row, placement) {
       if (placement.current.ip !== placement.alternate.ip || !getTunnelConfig()) return false;
       pilotProfile(row, placement.alternate);
+      await Promise.all([
+        requirePortableHost(ownerId, row.id, placement.current),
+        requirePortableHost(ownerId, row.id, placement.alternate),
+      ]);
       const [source, target] = await Promise.all([
         pinnedTarget(ownerId, row, placement.current, true), pinnedTarget(ownerId, row, placement.alternate, true),
       ]);
@@ -189,7 +205,11 @@ function advanceManagedPortableKvmHandoff(ownerId: string, agent: Record<string,
           && profile.managed.cpu.requiredFlags.every(flag => observed.data.requiredFlags.includes(flag));
       });
     },
-    async checkpoint(row) {
+    async checkpoint(row, lease) {
+      await Promise.all([
+        requirePortableHost(ownerId, lease.agent_id, lease.source),
+        requirePortableHost(ownerId, lease.agent_id, lease.destination),
+      ]);
       const result = await advancePortableKvmSourceCheckpoint(ownerId, row);
       return result?.state === "checkpoint_verified" && result.disk.key === "scsi0"
         ? { checkpointSha256: result.checkpointSha256, configuration: result.configuration,
@@ -226,6 +246,7 @@ function advanceManagedPortableKvmHandoff(ownerId: string, agent: Record<string,
       return true;
     },
     async enableDestinationConnector(_row, lease) {
+      await requirePortableHost(ownerId, lease.agent_id, lease.destination);
       const target = await destination(lease, false);
       const result = await enablePortableKvmDestinationNetwork({ ownerId, profile: target.profile,
         bootReceipt: bootReceipt(lease, target) }, target.adapter);

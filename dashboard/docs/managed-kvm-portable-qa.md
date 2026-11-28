@@ -30,6 +30,19 @@ it cannot remove the restored guest. Outside the QA pool, the database must
 also have an operator-enrolled pair for that exact owner, agent, placements,
 and existing binding. VMID 9302 is excluded.
 
+A maintenance host remains unavailable to ordinary launches. For a single
+reviewed Canary window an operator can create one
+`hivra_kvm_portable_private.maintenance_pilot` row for the exact standing QA
+owner, computer, placement and binding tag. Do not change the host registry
+status. Before granting or refreshing this permission, independently check
+the destination's current customer VM and public gateway health, memory
+admission, and storage headroom. The grant expires within four hours and its
+customer health evidence must be less than ten minutes old before any new
+staging, restore, placement commit or connector activation. Monitor customer
+health during the window. If a customer probe or host guard fails, invalidate
+the health timestamp immediately and reconcile the in-progress handoff without
+legacy fallback. Retain the exact grant for retirement/cleanup, then remove it.
+
 The fixture must have Linux on explicit x86-64 SeaBIOS/i440fx with the common
 CPU features on both independently qualified hosts, one LVM-thin `scsi0`
 (1–40 whole GiB), a generated seed, one NIC, QGA, and the existing guest-mode
