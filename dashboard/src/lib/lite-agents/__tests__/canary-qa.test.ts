@@ -1,5 +1,5 @@
 import { encryptSecret } from "@/lib/crypto";
-import { GET } from "@/app/api/lite-agents/[...path]/route";
+import { GET, POST } from "@/app/api/lite-agents/[...path]/route";
 
 const mockAuth = jest.fn();
 const mockSettings = jest.fn();
@@ -115,4 +115,32 @@ it("preserves the existing opt-in deployment-env route outside canonical Canary"
   });
   expect((await request()).status).toBe(200);
   expect(mockFrom).not.toHaveBeenCalled();
+});
+
+it("requires an explicit inference route in managed QA and preserves the legacy preview elsewhere", async () => {
+  const agent = "00000000-0000-4000-8000-000000000004";
+  const session = "00000000-0000-4000-8000-000000000005";
+  const send = (path: string) => POST(new Request("https://canary.hermesos.cloud/api/lite-agents", {
+    method: "POST", body: JSON.stringify({ content: "hello" }),
+  }), { params: Promise.resolve({ path: ["agents", agent, "sessions", session, path] }) });
+
+  expect((await send("managed-messages")).status).toBe(404);
+  expect((await send("own-key-messages")).status).toBe(404);
+  expect(upstream).not.toHaveBeenCalled();
+  mockSettings.mockResolvedValue(settings({
+    managed_enabled: true, managed_model: "venice-uncensored-1-2", managed_proxy_key_id: agent,
+    managed_proxy_key_enc: encryptSecret("hven_live_" + "a".repeat(43)),
+  }));
+  expect((await send("messages")).status).toBe(400);
+  expect(upstream).not.toHaveBeenCalled();
+  expect((await send("managed-messages")).status).toBe(200);
+  expect((await send("own-key-messages")).status).toBe(200);
+
+  Object.assign(process.env, {
+    VERCEL_GIT_COMMIT_REF: "main", NEXT_PUBLIC_HIVRA_FREE_CLOUD_AGENT: "1",
+    HIVRA_LITE_AGENT_URL: worker, HIVRA_LITE_AGENT_SECRET: secret,
+  });
+  expect((await send("managed-messages")).status).toBe(404);
+  expect((await send("own-key-messages")).status).toBe(404);
+  expect((await send("messages")).status).toBe(200);
 });

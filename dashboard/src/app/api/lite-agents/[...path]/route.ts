@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 
 import { enforceAuthenticatedRouteRateLimit, RATE_LIMIT_PRESETS } from "@/lib/authenticated-rate-limit";
 import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
-import { readCanaryLiteQaConfig } from "@/lib/lite-agents/canary-qa";
+import { readCanaryLiteManagedQaConfig, readCanaryLiteQaConfig } from "@/lib/lite-agents/canary-qa";
 import { callLiteWorker, liteWorkerConfig } from "@/lib/lite-agents/client";
 import { isFreeCloudAgentEnabled } from "@/lib/lite-agents/flag";
 import { log } from "@/lib/logger";
@@ -31,12 +31,19 @@ async function handle(request: Request, context: Context, method: "GET" | "POST"
   const { userId } = await auth();
   if (!userId) return enabled ? NextResponse.json({ error: "unauthorized" }, { status: 401 }) : hidden();
 
-  const config = canary ? await readCanaryLiteQaConfig(userId) : liteWorkerConfig();
-  if (!config) return enabled ? NextResponse.json({ error: "not_configured" }, { status: 503 }) : hidden();
-
   const { path = [] } = await context.params;
   const workerPath = `/v1/${path.map((part) => encodeURIComponent(part)).join("/")}`;
-  const isMessage = method === "POST" && workerPath.endsWith("/messages");
+  const managed = method === "POST" && workerPath.endsWith("/managed-messages");
+  const ownKey = method === "POST" && workerPath.endsWith("/own-key-messages");
+  const legacyMessage = method === "POST" && workerPath.endsWith("/messages");
+  if ((managed || ownKey) && !canary) return hidden();
+  const qa = canary ? await (managed ? readCanaryLiteManagedQaConfig(userId) : readCanaryLiteQaConfig(userId)) : null;
+  if (ownKey && !qa?.explicitInference) return hidden();
+  if (legacyMessage && qa?.explicitInference) return NextResponse.json({ error: "inference_selection_required" }, { status: 400 });
+  const config = canary ? qa : liteWorkerConfig();
+  if (!config) return enabled ? NextResponse.json({ error: "not_configured" }, { status: 503 }) : hidden();
+
+  const isMessage = managed || ownKey || legacyMessage;
 
   const limited = enforceAuthenticatedRouteRateLimit(request, {
     routeKey: isMessage ? "lite_agent_message" : method === "GET" ? "lite_agent_read" : "lite_agent_write",

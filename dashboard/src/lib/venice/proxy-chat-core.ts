@@ -4,6 +4,7 @@ import { VENICE_RESPONSES_ENDPOINT, VENICE_RESPONSES_URL } from "./responses-pro
 import { apiError } from "@/lib/api-response";
 import { log } from "@/lib/logger";
 import {
+  getManagedVeniceWalletSummary,
   ManagedVeniceBalanceHeldError,
   ManagedVeniceInsufficientBalanceError,
   type ManagedVeniceWalletType,
@@ -157,6 +158,7 @@ export async function authorizeManagedVeniceChat(params: {
    * response never reaches it. Omitted, a reference is generated here.
    */
   referenceId?: string;
+  liteCanaryQa?: { ownerId: string; proxyKeyId: string };
   /** The caller the inference Worker saw, for the key-to-computer binding. Omitted for direct requests. */
   caller?: import("./key-binding").KeyBindingCaller;
 }): Promise<AuthorizeManagedVeniceChatResult> {
@@ -180,6 +182,15 @@ export async function authorizeManagedVeniceChat(params: {
     return { ok: false, response: apiError("Unauthorized", 401) };
   }
 
+  if (params.liteCanaryQa && (
+    verifiedKey.userId !== params.liteCanaryQa.ownerId ||
+    verifiedKey.id !== params.liteCanaryQa.proxyKeyId ||
+    verifiedKey.defaultWalletType !== "card" ||
+    body.stream !== false ||
+    protocol !== "chat"
+  )) {
+    return { ok: false, response: apiError("Unauthorized", 401) };
+  }
   if (typeof body.model !== "string" || !body.model.trim()) {
     return { ok: false, response: apiError("Model is required.", 400) };
   }
@@ -242,6 +253,13 @@ export async function authorizeManagedVeniceChat(params: {
           `from tokens. Remove it or use your own Venice key.`,
       }),
     };
+  }
+
+  if (params.liteCanaryQa && (await getManagedVeniceWalletSummary(verifiedKey.userId)).card.availableMicroUsd <= 0) {
+    return { ok: false, response: openAiCompatibleError({
+      status: 402, code: "managed_venice_insufficient_balance", type: "billing_error",
+      message: "Top up LLM credits before sending a managed reply.",
+    }) };
   }
 
   // Live Venice pricing — fetched + cached at module level for 5 minutes.
@@ -348,7 +366,7 @@ export async function authorizeManagedVeniceChat(params: {
 
   // A card-wallet user who redeemed the Venice code before their key was minted
   // gets the launch credit on their first request (flag-gated, best-effort).
-  if (walletType === "card") {
+  if (walletType === "card" && !params.liteCanaryQa) {
     await tryGrantLaunchCredit({ userId: verifiedKey.userId });
   }
 

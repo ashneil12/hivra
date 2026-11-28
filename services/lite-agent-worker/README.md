@@ -76,3 +76,31 @@ npm ci
 npm run typecheck
 npm test        # builds, then runs the Miniflare tests with a fake model
 ```
+
+### Managed credits smoke lane (Canary only)
+
+The dashboard-only Canary QA settings can additionally allow one enrolled owner
+to choose an own-key request or a Hivra credits request explicitly. This lane
+is off by default and expires with the existing QA row. It is not a product
+launch or a change to the older sponsored preview. With the lane active,
+implicit sends are refused.
+
+A managed send verifies agent/session ownership, then makes one signed callback
+to the canonical Canary dashboard. The dashboard verifies a separately scoped
+HMAC and claims the owner/request UUID once in Postgres before dispatch. It
+uses an operator-pinned active, owner-matching card-credit proxy key and model,
+with no implicit grants, wallet switching, or sponsored fallback. The provider
+key is never sent to the Worker. The smoke reply uses only the current prompt,
+without tools, stored memory, or previous conversation, and the Worker saves the
+exchange in the chat. Closing the tab doesn't turn an accepted request into a
+free request: a duplicate ID is rejected and a transport outcome with uncertain
+usage is reconciled rather than treated as definitely unbilled.
+
+Before any authorized test, deploy compatible Worker and dashboard revisions,
+apply the additive settings migration, and verify the flag stays off. Only an
+operator may set the managed fields on the existing exact-owner expiring
+Canary QA row. Use a dedicated card-credit proxy key for that owner, stored as a
+sealed dashboard secret, an approved model, and an already funded wallet.
+Never put the key into a browser, the Worker config, an output log, or a
+migration. Disable the managed flag to restore the prior lane; disable the
+existing QA gate too if that owner should no longer be enrolled.

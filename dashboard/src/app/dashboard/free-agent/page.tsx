@@ -10,9 +10,12 @@ import { isFreeCloudAgentEnabled } from "@/lib/lite-agents/flag";
 export const dynamic = "force-dynamic";
 
 export default async function FreeAgentPage() {
+  let explicitInference = false;
   if (isCanonicalGitCanaryDeployment()) {
     const { userId } = await auth();
-    if (!userId || !await readCanaryLiteQaConfig(userId)) notFound();
+    const config = userId ? await readCanaryLiteQaConfig(userId) : null;
+    if (!config) notFound();
+    explicitInference = config.explicitInference;
   } else {
     if (!isFreeCloudAgentEnabled()) notFound();
     await auth.protect();
@@ -26,7 +29,7 @@ export default async function FreeAgentPage() {
       topPadding="1rem"
       style={{ position: "relative", zIndex: 1 }}
     >
-      <LiteAgentApp />
+      <LiteAgentApp explicitInference={explicitInference} />
     </DashboardPageShell>
   );
 }

@@ -59,10 +59,19 @@ async function worker(t, { script, bindings = {} } = {}) {
     },
     outboundService: async (request) => {
       const url = new URL(request.url);
-      const body = await request.json();
+      const raw = await request.text();
+      const body = JSON.parse(raw);
       calls.push({ host: url.host, auth: request.headers.get('authorization'), body });
+      if (url.hostname === 'canary.hermesos.cloud') {
+        const owner = request.headers.get('x-hivra-account');
+        const timestamp = request.headers.get('x-hivra-timestamp');
+        const expected = createHmac('sha256', SECRET)
+          .update(`lite-managed-qa|v1|POST|${url.pathname}|${owner}|${timestamp}|${sha(raw)}`).digest('hex');
+        assert.equal(owner, 'user_alice');
+        assert.equal(request.headers.get('x-hivra-signature'), expected);
+      }
       const result = script ? script(url.host, body, calls) : reply('Hello!');
-      return new Response(JSON.stringify(result.body), { status: result.status ?? 200, headers: { 'content-type': 'application/json' } });
+      return new Response(JSON.stringify(result.body), { status: result.status ?? 200, headers: { 'content-type': 'application/json', ...result.headers } });
     },
     log: new Log(LogLevel.NONE),
   });
@@ -247,4 +256,44 @@ test('validates input', async (t) => {
   const long = await call('user_alice', 'POST', `/v1/agents/${agentId}/sessions/${sessionId}/messages`, { content: 'x'.repeat(8001) });
   assert.equal(long.body.error, 'content_too_long');
   assert.equal((await call('user_alice', 'GET', '/v1/agents/not-an-id')).status, 404);
+});
+
+test("explicit managed and own-key sends never silently use sponsored models", async (t) => {
+  let managedStatus = 200;
+  const { call, calls } = await worker(t, {
+    script: (host) => host === 'canary.hermesos.cloud'
+      ? { status: managedStatus, body: { text: 'paid reply' }, headers: { location: 'https://redirect.example.test/' } }
+      : reply('must not call legacy providers'),
+  });
+  const { agentId, sessionId } = await agentWithSession(call);
+  const endpoint = `/v1/agents/${agentId}/sessions/${sessionId}`;
+  const send = (requestId) => call('user_alice', 'POST', `${endpoint}/managed-messages`, { content: 'only this prompt', requestId });
+  const blocked = await call('user_alice', 'POST', `${endpoint}/own-key-messages`, { content: 'no key configured' });
+  assert.equal(blocked.body.error, 'own_key_required');
+  const other = await call('user_bob', 'POST', `${endpoint}/managed-messages`, { content: 'wrong owner', requestId: crypto.randomUUID() });
+  assert.equal(other.status, 404);
+  assert.deepEqual(calls, []);
+
+  const requestId = crypto.randomUUID();
+  const answer = await send(requestId);
+  assert.equal(answer.status, 200);
+  assert.equal(answer.body.reply.content, 'paid reply');
+  assert.equal(answer.body.allowance, null);
+  managedStatus = 402;
+  const empty = await send(crypto.randomUUID());
+  assert.equal(empty.status, 402);
+  assert.equal(empty.body.error, 'managed_credits_required');
+  managedStatus = 502;
+  const failed = await send(crypto.randomUUID());
+  assert.equal(failed.body.error, 'managed_reply_failed');
+  managedStatus = 302;
+  assert.equal((await send(crypto.randomUUID())).status, 502);
+
+  assert.deepEqual(calls.map(({ host }) => host), Array(4).fill('canary.hermesos.cloud'));
+  assert.deepEqual(calls[0].body, { content: 'only this prompt', requestId });
+  assert.equal(calls[0].auth, null, 'the Worker has no managed-provider bearer key');
+  const me = await call('user_alice', 'GET', '/v1/me');
+  assert.equal(me.body.allowance.used, 0);
+  const history = await call('user_alice', 'GET', endpoint);
+  assert.deepEqual(history.body.messages.map(({ content }) => content), ['only this prompt', 'paid reply']);
 });

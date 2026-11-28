@@ -5,6 +5,9 @@
 import crypto from "node:crypto";
 
 export const LITE_SIGNATURE_VERSION = "lite|v1";
+export const LITE_MANAGED_QA_SIGNATURE_VERSION = "lite-managed-qa|v1";
+export const LITE_MANAGED_QA_CALLBACK_PATH = "/api/internal/lite-managed-qa";
+export const LITE_MANAGED_QA_MAX_PROMPT = 1_000;
 
 export function liteSignedMessage(
   method: string,
@@ -12,9 +15,10 @@ export function liteSignedMessage(
   account: string,
   timestamp: string,
   body: string,
+  version = LITE_SIGNATURE_VERSION,
 ): string {
   const bodySha256 = crypto.createHash("sha256").update(body, "utf8").digest("hex");
-  return `${LITE_SIGNATURE_VERSION}|${method.toUpperCase()}|${path}|${account}|${timestamp}|${bodySha256}`;
+  return `${version}|${method.toUpperCase()}|${path}|${account}|${timestamp}|${bodySha256}`;
 }
 
 export function liteSignatureHeaders(
@@ -24,11 +28,12 @@ export function liteSignatureHeaders(
   account: string,
   body: string,
   nowMs: number = Date.now(),
+  version = LITE_SIGNATURE_VERSION,
 ): Record<string, string> {
   const timestamp = String(Math.floor(nowMs / 1000));
   const signature = crypto
     .createHmac("sha256", secret)
-    .update(liteSignedMessage(method, path, account, timestamp, body))
+    .update(liteSignedMessage(method, path, account, timestamp, body, version))
     .digest("hex");
   return {
     "x-hivra-account": account,
@@ -52,7 +57,7 @@ const ALLOWED: Array<[method: string, pattern: RegExp]> = [
   ["POST", new RegExp(`^/v1/agents/${ID}/sessions$`)],
   ["GET", new RegExp(`^/v1/agents/${ID}/sessions/${ID}$`)],
   ["DELETE", new RegExp(`^/v1/agents/${ID}/sessions/${ID}$`)],
-  ["POST", new RegExp(`^/v1/agents/${ID}/sessions/${ID}/messages$`)],
+  ["POST", new RegExp(`^/v1/agents/${ID}/sessions/${ID}/(?:(?:managed|own-key)-)?messages$`)],
 ];
 
 export function isAllowedLiteRoute(method: string, path: string): boolean {
