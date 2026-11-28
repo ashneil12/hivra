@@ -251,7 +251,7 @@ async function runHostScriptForWake(
     const remaining = deadline === undefined ? undefined : Math.max(1, Math.floor(deadline - performance.now()));
     const budget = remaining === undefined ? options : typeof options === "object" ? { ...options, timeoutMs: remaining } : remaining;
     const result = budget === undefined ? await runProxmoxHostScript(script, env) : await runProxmoxHostScript(script, env, budget);
-    const refused = !!result && !result.ok && !result.stdout && /^SSH connect/.test(result.error ?? "");
+    const refused = !!result && !result.ok && result.stage === "connect" && !result.stdout && /^SSH connect/.test(result.error ?? "");
     if (!refused || attempt >= HOST_CONNECT_RETRIES) return result;
     const retryDelay = HOST_CONNECT_RETRY_MS * (attempt + 1) + Math.floor(Math.random() * HOST_CONNECT_RETRY_MS);
     if (deadline !== undefined && performance.now() + retryDelay >= deadline) return result;
