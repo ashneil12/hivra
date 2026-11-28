@@ -36,6 +36,7 @@ export const BLOG_TOPICS: readonly BlogTopic[] = [
       "claude-code-mcp",
       "codex-mcp",
       "claude-code-hooks",
+      "claude-code-subagents",
     ],
   },
   {
