@@ -118,7 +118,7 @@ describe("hosted computer eligibility and pricing copy", () => {
     const openclaw = BLOG_ARTICLES["is-openclaw-free-what-it-costs-to-run"];
     const free = openclaw.faqs.find(({ q }) => /free hosted plan/i.test(q));
     expect(free?.a).toBe(
-      `A free Hivra account does not include managed compute. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`
+      `Signing up alone does not include managed compute. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`
     );
     // The price in that answer is the interpolated entry price with its size, not a hand-typed "$9.99".
     expect(free?.a).toContain(`${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}`);

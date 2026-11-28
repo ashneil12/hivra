@@ -70,7 +70,7 @@ export const article: BlogArticle = {
           "| Raspberry Pi | $35 to $80 once, no monthly fee (OpenClaw's own figure) | You power it, update it and keep the SD card alive |",
           "| Rented VPS | A small monthly server bill, yours to pick | You install OpenClaw, patch it and watch it |",
           "| A managed host | Whatever that host charges | The host runs the computer; you still bring the model |",
-          `| Hivra | ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} | Managed compute is not included in a free account; model usage is separate |`,
+          `| Hivra | ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} | Signing up alone does not include managed compute; model usage is separate |`,
         ].join("\n"),
         "On every row except a local model, the model bill sits on top and goes to your provider, not to the host.",
         "A rented server is the cheapest ongoing route if you like running Linux. It is the wrong pick if you don't want a second machine to babysit, because updates and odd failures land on you. The [OpenClaw self-hosting guide](/blog/how-to-self-host-openclaw) covers the install itself, and the [OpenClaw alternative page](/features/openclaw-alternative) puts the hosted route next to switching the agent.",
@@ -131,7 +131,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is there a free hosted plan for OpenClaw?",
-      a: `A free Hivra account does not include managed compute. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`,
+      a: `Signing up alone does not include managed compute. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`,
     },
   ],
   relatedArticles: [

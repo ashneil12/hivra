@@ -116,7 +116,7 @@ export const doc: DocPage = {
     {
       heading: "What Hivra does and does not do",
       paragraphs: [
-        "- A paid plan covers the computer. It does not cover model usage.\n- A free account alone does not include Hivra Cloud compute. You can use your own server if your account is eligible to connect it.\n- Hivra does not guarantee backups of what is on a computer. Keep your own copies of anything you cannot lose.\n- Bigger machines are shown as planned, and you cannot buy them yet.\n- Your own server is your hardware and your bill. The paid plan is for computers Hivra Cloud runs.",
+        "- A paid plan covers the computer. It does not cover model usage.\n- Signing up alone does not include Hivra Cloud compute. You can use your own server if your account is eligible to connect it.\n- Hivra does not guarantee backups of what is on a computer. Keep your own copies of anything you cannot lose.\n- Bigger machines are shown as planned, and you cannot buy them yet.\n- Your own server is your hardware and your bill. The paid plan is for computers Hivra Cloud runs.",
         "For the raw price comparison against self-hosting, see the [pricing page](/pricing).",
       ],
     },
@@ -124,7 +124,7 @@ export const doc: DocPage = {
   faqs: [
     {
       q: "What can I choose if Free is closed to new accounts?",
-      a: `When Free is closed, existing Free accounts keep their access. New accounts can check Pricing for paid plans and trial availability. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Connecting a server requires account eligibility.`,
+      a: `When Free is closed, existing Free accounts keep their access. New accounts need a plan or an eligible trial to connect and launch on their own server. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} See Pricing for plan and trial availability.`,
     },
     {
       q: "How does the Pro trial work if I am offered one?",

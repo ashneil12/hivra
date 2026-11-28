@@ -5,8 +5,7 @@
  * the same stage for the same product.
  *
  * Copy source: Ash's website pack, 05-ecosystem.md (20 October 2026), word for
- * word, except the paid-plan sentence in Agent Computers, which follows the
- * 21 October 2026 rule that every Hivra Cloud computer is paid (plan-facts.ts).
+ * word, except the shared plan wording in Agent Computers (plan-facts.ts).
  * `**bold**` runs are kept in the strings and drawn by the page.
  *
  * The statuses mirror LITEPAPER.md ("What we're building around it"). Never
@@ -18,7 +17,7 @@
  * Client-safe: no server imports.
  */
 
-import { FREE_ACCOUNT_SENTENCE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
+import { FREE_ACCOUNT_SENTENCE, HOSTED_COMPUTE_PAID_PLANS_DEFAULT } from "@/lib/blog/plan-facts";
 
 export type EcosystemStageId = "available-now" | "next" | "then" | "research";
 
@@ -54,7 +53,7 @@ export const ECOSYSTEM_STAGES: readonly EcosystemStage[] = [
         tagline: "A separate place for agents, and people, to work.",
         paragraphs: [
           "Launch supported AI agents on computers away from your personal laptop, or start a computer for yourself. Work through the browser, choose which files and services to connect, and decide whether Hivra hosts the environment or you operate it.",
-          `Supported workflows include coding agents, general-purpose agents, browser-accessible environments and ordinary computers. Which desktops, operating systems and agents are available depends on the deployment option. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${FREE_ACCOUNT_SENTENCE}`,
+          `Supported workflows include coding agents, general-purpose agents, browser-accessible environments and ordinary computers. Which desktops, operating systems and agents are available depends on the deployment option. ${HOSTED_COMPUTE_PAID_PLANS_DEFAULT} ${FREE_ACCOUNT_SENTENCE}`,
           "Agent Computers are the foundation. They give a task somewhere to happen without assuming that the agent should have access to everything you own.",
         ],
       },
