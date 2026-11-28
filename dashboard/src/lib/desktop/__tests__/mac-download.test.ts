@@ -1,9 +1,9 @@
 import { getDesktopDownloads } from "@/lib/public-project-links";
 
-describe("Mac download link", () => {
+describe("desktop download availability", () => {
   it.each([{}, { HIVRA_DESKTOP_BROWSER_SIGNIN: "0" }, {
     HIVRA_DESKTOP_BROWSER_SIGNIN: "on", HIVRA_AUTH_MODE: "local",
-  }])("hides the download where browser sign-in is unavailable: %j", (env) => {
+  }])("hides the Mac download where browser sign-in is unavailable: %j", (env) => {
     expect(getDesktopDownloads(env).macos).toEqual({ status: "pending", href: null });
   });
 
@@ -13,5 +13,11 @@ describe("Mac download link", () => {
       href: "https://github.com/ashneil12/hivra/releases/download/mac-v0.3.0/Hivra.dmg",
       label: "For Apple silicon and Intel Macs, macOS 14 or newer.",
     });
+  });
+
+  it("represents Windows and Linux as pending rather than absent", () => {
+    const downloads = getDesktopDownloads({ HIVRA_DESKTOP_BROWSER_SIGNIN: "1" });
+    expect(downloads.windows).toEqual({ status: "pending", href: null });
+    expect(downloads.linux).toEqual({ status: "pending", href: null });
   });
 });

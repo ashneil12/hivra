@@ -26,6 +26,8 @@ const DASH = new RegExp(`${String.fromCharCode(0x2013)}|${String.fromCharCode(0x
 
 const PUBLISHED: DesktopDownloads = {
   macos: { status: "published", href: "https://releases.example.test/Hivra-macOS.dmg", label: "1.0.0 · Apple silicon" },
+  windows: { status: "pending", href: null },
+  linux: { status: "pending", href: null },
 };
 
 describe("/download", () => {
@@ -35,9 +37,10 @@ describe("/download", () => {
 
     const macos = screen.getByRole("region", { name: "macOS" });
     expect(within(macos).queryByRole("link", { name: "Download for Mac" })).not.toBeInTheDocument();
-    expect(macos).not.toHaveTextContent(/coming soon/i);
-    expect(macos).toHaveTextContent("You can also use Hivra in your browser.");
-    expect(within(macos).getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
+    expect(macos).toHaveTextContent("Public download coming soon.");
+    const browser = screen.getByRole("region", { name: "Browser" });
+    expect(browser).toHaveTextContent("You can also use Hivra in your browser.");
+    expect(within(browser).getByRole("link", { name: "Open Hivra" })).toHaveAttribute("href", "/dashboard");
   });
 
   it("links a real release, with its label and the install caution, only when one is published", () => {
@@ -63,7 +66,7 @@ describe("/download", () => {
     expect(screen.getByRole("heading", { level: 1, name: "Hivra on your computer." })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Some work is easier when you can reach your agents without keeping another browser tab open. Use Hivra in your browser or install the Mac app where available.",
+        "Some work is easier when you can reach your agents without keeping another browser tab open. Use Hivra in your browser or install an app where available.",
       ),
     ).toBeInTheDocument();
 
@@ -80,7 +83,7 @@ describe("/download", () => {
   it("invents no installer, version, platform or waitlist, and writes no dash", () => {
     const { container } = render(<DownloadPage />);
     const text = container.textContent ?? "";
-    expect(text).not.toMatch(/windows|linux|waitlist|join the list|notify me|version \d|\bv\d+\.\d/i);
+    expect(text).not.toMatch(/waitlist|join the list|notify me|version \d|\bv\d+\.\d/i);
     expect(text).not.toMatch(DASH);
     expect(container.querySelector('a[href^="http"]')).toBeNull();
     expect(container.querySelector("a[download]")).toBeNull();
@@ -100,8 +103,7 @@ describe("/download", () => {
 
   it("publishes the finished title from the copy as an absolute title, with the pinned description", () => {
     expect(metadata.title).toEqual({ absolute: "Download Hivra | Desktop Availability" });
-    expect(metadata.description).toBe("Find the Hivra Mac download, system requirements, and browser access.");
-    expect(String(metadata.description)).not.toMatch(/Windows/);
+    expect(metadata.description).toBe("Find Hivra desktop downloads, system requirements, and browser access.");
   });
 
   it("renders inside the public frame", async () => {

@@ -70,8 +70,7 @@ describe('route Open Graph metadata', () => {
     expect(downloadMetadata.title).toEqual({ absolute: 'Download Hivra | Desktop Availability' });
     expect(getOpenGraphValue(downloadMetadata.openGraph, 'title')).toBe('Download Hivra | Desktop Availability');
     expect(getTwitterValue(downloadMetadata.twitter, 'title')).toBe('Download Hivra | Desktop Availability');
-    expect(downloadMetadata.description).toBe('Find the Hivra Mac download, system requirements, and browser access.');
-    expect(String(downloadMetadata.description)).not.toMatch(/Windows/);
+    expect(downloadMetadata.description).toBe('Find Hivra desktop downloads, system requirements, and browser access.');
   });
 
   it('keeps the shared website Open Graph defaults on every static route that overrides openGraph metadata', () => {
