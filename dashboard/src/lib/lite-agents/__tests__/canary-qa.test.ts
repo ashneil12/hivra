@@ -27,7 +27,7 @@ const request = () => GET(new Request("https://canary.hermesos.cloud/api/lite-ag
 });
 const settings = (overrides: Record<string, unknown> = {}) => ({
   data: {
-    enabled: true, owner_id: owner, expires_at: "2026-01-01T10:00:00Z",
+    enabled: true, credential_mode: "encrypted", owner_id: owner, expires_at: "2026-01-01T10:00:00Z",
     worker_origin: worker, signing_secret_enc: encryptSecret(secret), ...overrides,
   },
   error: null,

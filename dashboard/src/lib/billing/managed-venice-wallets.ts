@@ -273,12 +273,34 @@ export async function ensureManagedVeniceWalletAccount(
 
 export async function getManagedVeniceWalletSummary(
   userId: string,
-  db: SupabaseLike | null | undefined = supabaseAdmin
+  db: SupabaseLike | null | undefined = supabaseAdmin,
+  existingWalletAccountId?: string,
 ) {
   requireUserId(userId);
   const client = requireDb(db);
-  await ensureManagedVeniceWalletAccount(userId, client);
+  if (existingWalletAccountId) {
+    if ((await loadWalletAccountRow(client, userId))?.id !== existingWalletAccountId) {
+      throw new ManagedVeniceInsufficientBalanceError();
+    }
+  } else {
+    await ensureManagedVeniceWalletAccount(userId, client);
+  }
+  return readManagedVeniceWalletSummary(userId, client);
+}
 
+export async function getExistingFundedManagedVeniceCardWallet(
+  userId: string,
+  db: SupabaseLike | null | undefined = supabaseAdmin,
+): Promise<string | null> {
+  requireUserId(userId);
+  const client = requireDb(db);
+  const account = await loadWalletAccountRow(client, userId);
+  if (!account) return null;
+  const { card } = await readManagedVeniceWalletSummary(userId, client);
+  return card.availableMicroUsd > 0 ? account.id : null;
+}
+
+async function readManagedVeniceWalletSummary(userId: string, client: SupabaseLike) {
   const [lots, cardEntries, reservations] = await Promise.all([
     // Only active lots/reservations feed the balance math below; the card
     // ledger is a running sum so it must NOT be status-filtered.
@@ -341,6 +363,7 @@ export async function createManagedVeniceReservation(
   params: {
     userId: string;
     walletType: ManagedVeniceWalletType;
+    existingWalletAccountId?: string;
     amountMicroUsd: number;
     referenceId: string;
     estimatedCostMicroUsd?: number;
@@ -380,7 +403,7 @@ export async function createManagedVeniceReservation(
     };
   }
 
-  const summary = await getManagedVeniceWalletSummary(params.userId, client);
+  const summary = await getManagedVeniceWalletSummary(params.userId, client, params.existingWalletAccountId);
   const wallet = params.walletType === "hermesos" ? summary.hermesos : summary.card;
   const balance: ManagedVeniceWalletBalance = {
     totalValueMicroUsd: wallet.totalValueMicroUsd,
@@ -395,14 +418,14 @@ export async function createManagedVeniceReservation(
     throw new ManagedVeniceInsufficientBalanceError(undefined, balance);
   }
 
-  const account = await ensureManagedVeniceWalletAccount(params.userId, client);
+  const accountId = params.existingWalletAccountId ?? (await ensureManagedVeniceWalletAccount(params.userId, client)).id;
   // A plain insert, so the balance guard trigger always runs and a reference
   // already in use (by anyone) fails instead of overwriting that hold. An
   // upsert on reference_id updated the existing row, skipping the guard
   // (security review 2026-09, #167 second review).
   const { data, error } = await table(client, "managed_venice_reservations")
     .insert({
-      account_id: account.id,
+      account_id: accountId,
       user_id: params.userId,
       wallet_type: params.walletType,
       status: "active",
@@ -524,6 +547,7 @@ export async function debitManagedVeniceWallet(
   params: {
     userId: string;
     walletType: ManagedVeniceWalletType;
+    existingWalletAccountId?: string;
     amountMicroUsd: number;
     referenceId: string;
   },
@@ -535,6 +559,9 @@ export async function debitManagedVeniceWallet(
     throw new Error("Managed Venice debit reference ID is required");
   }
   const client = requireDb(db);
+  if (params.existingWalletAccountId && (await loadWalletAccountRow(client, params.userId))?.id !== params.existingWalletAccountId) {
+    throw new ManagedVeniceInsufficientBalanceError();
+  }
   // A debit with no hold behind it (chat overage, multimodal backlog). A card
   // debit still leaves every active card hold covered.
   await callWalletFunction(client, "debit_managed_venice_wallet", {
@@ -543,7 +570,7 @@ export async function debitManagedVeniceWallet(
     p_amount_micro_usd: params.amountMicroUsd,
     p_reference_id: params.referenceId,
   });
-  return getManagedVeniceWalletSummary(params.userId, client);
+  return getManagedVeniceWalletSummary(params.userId, client, params.existingWalletAccountId);
 }
 
 export async function grantManagedVeniceCardTopUpCredit(

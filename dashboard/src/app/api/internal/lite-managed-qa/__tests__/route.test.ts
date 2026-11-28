@@ -1,9 +1,12 @@
+import { createHash } from "node:crypto";
 import { POST } from "../route";
 import { encryptSecret } from "@/lib/crypto";
 import { liteSignatureHeaders, LITE_MANAGED_QA_CALLBACK_PATH, LITE_MANAGED_QA_SIGNATURE_VERSION } from "@/lib/lite-agents/signing";
 
 const mockVerify = jest.fn();
 const mockSummary = jest.fn();
+const mockFunded = jest.fn();
+const mockMaterialize = jest.fn();
 const mockPricing = jest.fn();
 const mockGrant = jest.fn();
 const mockReserve = jest.fn();
@@ -17,6 +20,8 @@ const KEY_ID = "00000000-0000-4000-8000-000000000001";
 const REQUEST = "00000000-0000-4000-8000-000000000002";
 const SECRET = "cd".repeat(32);
 const PROXY_KEY = "hven_live_" + "a".repeat(43);
+const SHA = "f".repeat(40);
+const ACCOUNT = "wallet-account-fixture";
 const MODEL = "venice-uncensored-1-2";
 const NOW = Date.parse("2026-01-01T09:00:00Z");
 
@@ -28,10 +33,14 @@ jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from(table: string) {
   throw new Error("Unexpected table");
 } } }));
 jest.mock("@/lib/logger", () => ({ log: { info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
-jest.mock("@/lib/venice/proxy-keys", () => ({ verifyManagedVeniceProxyKey: () => mockVerify() }));
+jest.mock("@/lib/venice/proxy-keys", () => ({
+  verifyManagedVeniceProxyKey: () => mockVerify(),
+  materializeLiteCanaryManagedQaKey: (...args: unknown[]) => mockMaterialize(...args),
+}));
 jest.mock("@/lib/billing/managed-venice-wallets", () => ({
   ...jest.requireActual("@/lib/billing/managed-venice-wallets"),
   getManagedVeniceWalletSummary: () => mockSummary(),
+  getExistingFundedManagedVeniceCardWallet: (...args: unknown[]) => mockFunded(...args),
 }));
 jest.mock("@/lib/venice/cost-estimator", () => ({
   ...jest.requireActual("@/lib/venice/cost-estimator"),
@@ -67,7 +76,7 @@ beforeEach(() => {
     ENCRYPTION_KEY: "ab".repeat(32), VENICE_API_KEY: "fixture-provider-only",
   });
   mockSettings.mockResolvedValue({ error: null, data: {
-    enabled: true, owner_id: OWNER, expires_at: "2026-01-01T10:00:00Z", managed_enabled: true,
+    enabled: true, credential_mode: "encrypted", owner_id: OWNER, expires_at: "2026-01-01T10:00:00Z", managed_enabled: true,
     worker_origin: "https://lite-agent-canary.fixture.workers.dev", signing_secret_enc: encryptSecret(SECRET),
     managed_model: MODEL, managed_proxy_key_id: KEY_ID, managed_proxy_key_enc: encryptSecret(PROXY_KEY),
   } });
@@ -78,6 +87,8 @@ beforeEach(() => {
     return { error: null };
   });
   mockVerify.mockResolvedValue({ userId: OWNER, id: KEY_ID, defaultWalletType: "card" });
+  mockFunded.mockResolvedValue(ACCOUNT);
+  mockMaterialize.mockResolvedValue({ userId: OWNER, id: KEY_ID, accountId: ACCOUNT, defaultWalletType: "card" });
   mockSummary.mockResolvedValue({ card: { availableMicroUsd: 1000 } });
   mockPricing.mockResolvedValue({ map: new Map(), source: "fallback", liveModelCount: 0 });
   mockReserve.mockResolvedValue({ reservationId: "fixture-reservation", reservedMicroUsd: 11 });
@@ -160,4 +171,103 @@ it("doesn't release ambiguous transport outcomes as free replies", async () => {
   expect(mockReconcile).toHaveBeenCalledTimes(1);
   expect(mockRelease).not.toHaveBeenCalled();
   expect(mockCapture).not.toHaveBeenCalled();
+});
+
+function trustedPermit(overrides: Record<string, unknown> = {}) {
+  Object.assign(process.env, {
+    VERCEL_GIT_COMMIT_SHA: SHA, HIVRA_CANARY_LITE_QA_WORKER_SIGNER: SECRET,
+  });
+  mockSettings.mockResolvedValue({ error: null, data: {
+    enabled: true, credential_mode: "trusted_permit", owner_id: OWNER, expires_at: "2026-01-01T09:30:00Z",
+    managed_enabled: true, worker_origin: "https://lite-agent-canary.fixture.workers.dev",
+    signing_secret_enc: null, managed_model: MODEL, managed_proxy_key_id: KEY_ID, managed_proxy_key_enc: null,
+    permit_git_sha: SHA, permit_signer_sha256: createHash("sha256").update(SECRET).digest("hex"), ...overrides,
+  } });
+}
+
+it.each([
+  { VERCEL_ENV: "preview" },
+  { VERCEL_GIT_COMMIT_REF: "main" },
+  { VERCEL_PROJECT_PRODUCTION_URL: "other.example.test" },
+  { VERCEL_GIT_COMMIT_SHA: "e".repeat(40) },
+  { VERCEL_GIT_COMMIT_SHA: undefined },
+  { HIVRA_CANARY_LITE_QA_WORKER_SIGNER: undefined },
+  { HIVRA_CANARY_LITE_QA_WORKER_SIGNER: "ee".repeat(32) },
+])("hides trusted permit on the wrong deployment or signer: %j", async (env) => {
+  trustedPermit();
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined) delete process.env[name]; else process.env[name] = value;
+  }
+  expect((await POST(request())).status).toBe(404);
+  expect(mockClaim).not.toHaveBeenCalled();
+  expect(mockMaterialize).not.toHaveBeenCalled();
+  expect(fetchFixture).not.toHaveBeenCalled();
+});
+
+it.each([
+  { owner_id: "user_outside" },
+  { expires_at: "2026-01-01T09:00:00Z" },
+  { expires_at: "2026-01-01T10:00:01Z" },
+  { managed_proxy_key_enc: "must-not-fall-back" },
+  { managed_enabled: false },
+  { managed_model: "https://unapproved.test" },
+])("hides invalid permits before a claim: %j", async (overrides) => {
+  trustedPermit(overrides);
+  expect((await POST(request())).status).toBe(404);
+  expect(mockClaim).not.toHaveBeenCalled();
+  expect(mockMaterialize).not.toHaveBeenCalled();
+  expect(fetchFixture).not.toHaveBeenCalled();
+});
+
+it("only materializes on a valid signed callback for a funded wallet, once despite replay", async () => {
+  trustedPermit();
+  expect((await POST(request({ mutate: true }))).status).toBe(404);
+  expect(mockFunded).not.toHaveBeenCalled();
+  const responses = await Promise.all([POST(request()), POST(request())]);
+  expect(responses.map(({ status }) => status).sort()).toEqual([200, 409]);
+  expect(mockFunded).toHaveBeenCalledWith(OWNER);
+  expect(mockMaterialize).toHaveBeenCalledTimes(1);
+  expect(mockMaterialize).toHaveBeenCalledWith(expect.objectContaining({
+    ownerId: OWNER, gitSha: SHA, proxyKeyId: KEY_ID, model: MODEL,
+  }), ACCOUNT);
+  expect(mockReserve).toHaveBeenCalledWith(expect.objectContaining({ existingWalletAccountId: ACCOUNT, proxyKeyId: KEY_ID }));
+  expect(mockCapture).toHaveBeenCalledWith(expect.objectContaining({ existingWalletAccountId: ACCOUNT, proxyKeyId: KEY_ID }));
+  expect(mockSummary).not.toHaveBeenCalled();
+  expect(mockVerify).not.toHaveBeenCalled();
+  expect(mockGrant).not.toHaveBeenCalled();
+  expect(fetchFixture).toHaveBeenCalledTimes(1);
+});
+
+it("empty existing card wallet refuses before any key, hold, pricing or inference", async () => {
+  trustedPermit();
+  mockFunded.mockResolvedValue(null);
+  expect((await POST(request())).status).toBe(402);
+  expect(mockMaterialize).not.toHaveBeenCalled();
+  expect(mockPricing).not.toHaveBeenCalled();
+  expect(mockReserve).not.toHaveBeenCalled();
+  expect(mockGrant).not.toHaveBeenCalled();
+  expect(fetchFixture).not.toHaveBeenCalled();
+});
+
+it("invalid dedicated key or removed exact permit cannot dispatch or fall back", async () => {
+  trustedPermit();
+  mockMaterialize.mockResolvedValue(null);
+  expect((await POST(request())).status).toBe(404);
+  mockSettings.mockResolvedValue({ data: null, error: null });
+  expect((await POST(request())).status).toBe(404);
+  expect(mockVerify).not.toHaveBeenCalled();
+  expect(mockReserve).not.toHaveBeenCalled();
+  expect(fetchFixture).not.toHaveBeenCalled();
+});
+
+it("doesn't mint from an admission snapshot removed during the funding lookup", async () => {
+  trustedPermit();
+  mockFunded.mockImplementationOnce(async () => {
+    mockSettings.mockResolvedValue({ data: null, error: null });
+    return ACCOUNT;
+  });
+  expect((await POST(request())).status).toBe(404);
+  expect(mockMaterialize).not.toHaveBeenCalled();
+  expect(mockReserve).not.toHaveBeenCalled();
+  expect(fetchFixture).not.toHaveBeenCalled();
 });

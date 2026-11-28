@@ -1,5 +1,6 @@
 import { randomUUID, timingSafeEqual } from "node:crypto";
 
+import { getExistingFundedManagedVeniceCardWallet } from "@/lib/billing/managed-venice-wallets";
 import { readCanaryLiteManagedQaConfig } from "@/lib/lite-agents/canary-qa";
 import {
   liteSignatureHeaders,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/lite-agents/signing";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
+import { materializeLiteCanaryManagedQaKey } from "@/lib/venice/proxy-keys";
 import { handleManagedVeniceChat } from "@/lib/venice/proxy-chat-route";
 
 export const runtime = "nodejs";
@@ -68,15 +70,31 @@ export async function POST(request: Request) {
     return respond(400, { error: "invalid_managed_request" });
   }
 
+  if (config.mode === "trusted_permit" && config.expiresAt <= Date.now()) return hidden();
   try {
     const referenceId = randomUUID();
     const { error } = await supabaseAdmin.from("hivra_canary_lite_managed_qa_requests")
       .insert({ owner_id: ownerId, request_id: requestId, reference_id: referenceId });
     if (error?.code === "23505") return respond(409, { error: "managed_request_already_used" });
     if (error) throw new Error("lite_managed_qa_claim_failed");
+    const liteCanaryQa = { ownerId, proxyKeyId: config.proxyKeyId };
+    let credentials: Pick<Parameters<typeof handleManagedVeniceChat>[0], "plaintextKey" | "liteCanaryQa">;
+    if (config.mode === "trusted_permit") {
+      const accountId = await getExistingFundedManagedVeniceCardWallet(ownerId);
+      if (!accountId) return respond(402, { error: "managed_credits_required" });
+      const current = await readCanaryLiteManagedQaConfig(ownerId);
+      if (current?.mode !== "trusted_permit" || current.gitSha !== config.gitSha ||
+          current.proxyKeyId !== config.proxyKeyId || current.signerSha256 !== config.signerSha256 ||
+          current.expiresAt !== config.expiresAt || current.workerOrigin !== config.workerOrigin ||
+          current.model !== config.model) return hidden();
+      const permitKey = await materializeLiteCanaryManagedQaKey(current, accountId);
+      if (!permitKey) return hidden();
+      credentials = { plaintextKey: null, liteCanaryQa: { ...liteCanaryQa, permitKey } };
+    } else {
+      credentials = { plaintextKey: config.proxyKey, liteCanaryQa };
+    }
     const managed = await handleManagedVeniceChat({
-      plaintextKey: config.proxyKey,
-      liteCanaryQa: { ownerId, proxyKeyId: config.proxyKeyId },
+      ...credentials,
       referenceId,
       body: { model: config.model, stream: false, max_tokens: 128, messages: [{ role: "user", content }] },
     });

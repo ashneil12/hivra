@@ -1,8 +1,10 @@
+import { getExistingFundedManagedVeniceCardWallet } from "@/lib/billing/managed-venice-wallets";
 import {
   AgentModelKeyInUseError,
   createManagedVeniceProxyKey,
   hashManagedVeniceProxyKey,
   listManagedVeniceProxyKeys,
+  materializeLiteCanaryManagedQaKey,
   ManagedVeniceProxyKeyNotFoundError,
   revokeManagedVeniceProxyKey,
   verifyManagedVeniceProxyKey,
@@ -18,7 +20,7 @@ it("turns an agent-key custody guard rejection into safe clear/replace guidance"
   expect(query.eq).toHaveBeenCalledWith("user_id", "owner");
 });
 
-jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
+jest.mock("@/lib/logger", () => jest.requireActual("@/test-utils").createLoggerMock());
 
 type Row = Record<string, unknown>;
 
@@ -612,5 +614,84 @@ describe("managed Venice proxy key wallet binding", () => {
 
     expect(tables.managed_venice_card_ledger_entries).toHaveLength(0);
     expect(created.defaultWalletType).toBe("hermesos");
+  });
+});
+
+describe("trusted Lite Canary permit key", () => {
+  const permit = {
+    mode: "trusted_permit" as const,
+    ownerId: "user_fixture", proxyKeyId: "00000000-0000-4000-8000-000000000006",
+    expiresAt: Date.parse("2026-12-01T10:20:00Z"),
+    gitSha: "a".repeat(40), signerSha256: "b".repeat(64), model: "fixture-model",
+    workerOrigin: "https://lite-agent-canary.fixture.workers.dev",
+  };
+  const accountId = "fixture-wallet";
+
+  beforeEach(() => {
+    jest.useFakeTimers().setSystemTime(new Date("2026-12-01T10:00:00Z"));
+    jest.replaceProperty(process, "env", {
+      NODE_ENV: "test", ENCRYPTION_KEY: "ab".repeat(32), MANAGED_VENICE_PROXY_KEY_PEPPER: "test-fixture-pepper",
+    });
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+
+  it("inserts only the pinned key under an existing funded wallet and reuses it without grants", async () => {
+    const { db, seed, tables } = createMemoryDb();
+    expect(await getExistingFundedManagedVeniceCardWallet(permit.ownerId, db)).toBeNull();
+    expect(tables.managed_venice_wallet_accounts).toHaveLength(0);
+    seed("managed_venice_wallet_accounts", { id: accountId, user_id: permit.ownerId });
+    expect(await getExistingFundedManagedVeniceCardWallet(permit.ownerId, db)).toBeNull();
+    seed("managed_venice_card_ledger_entries", { user_id: permit.ownerId, amount_micro_usd: 2 });
+    seed("managed_venice_reservations", { user_id: permit.ownerId, status: "active", wallet_type: "card", reserved_micro_usd: 2 });
+    expect(await getExistingFundedManagedVeniceCardWallet(permit.ownerId, db)).toBeNull();
+    tables.managed_venice_reservations.length = 0;
+    expect(await getExistingFundedManagedVeniceCardWallet(permit.ownerId, db)).toBe(accountId);
+    await expect(materializeLiteCanaryManagedQaKey(permit, accountId, db)).resolves.toMatchObject({
+      id: permit.proxyKeyId, userId: permit.ownerId, defaultWalletType: "card", accountId,
+    });
+    const first = tables.managed_venice_proxy_keys[0];
+    await expect(materializeLiteCanaryManagedQaKey(permit, accountId, db)).resolves.toMatchObject({ keyHash: first.key_hash });
+    expect(tables.managed_venice_proxy_keys).toHaveLength(1);
+    expect(tables.managed_venice_card_ledger_entries).toHaveLength(1);
+    expect(tables.managed_venice_wallet_accounts).toHaveLength(1);
+    expect(first.metadata).toEqual({ purpose: "lite-canary-managed-qa", defaultWalletType: "card" });
+    expect(first.key_prefix).toBe("hven_lite_qa_");
+  });
+
+  it("fails closed on rotation, purpose mismatch and revocation without a re-mint", async () => {
+    const { db, tables } = createMemoryDb();
+    await materializeLiteCanaryManagedQaKey(permit, accountId, db);
+    const key = tables.managed_venice_proxy_keys[0];
+    expect(await materializeLiteCanaryManagedQaKey({ ...permit, expiresAt: permit.expiresAt + 1000 }, accountId, db)).toBeNull();
+    process.env.ENCRYPTION_KEY = "cd".repeat(32);
+    expect(await materializeLiteCanaryManagedQaKey(permit, accountId, db)).toBeNull();
+    process.env.ENCRYPTION_KEY = "ab".repeat(32);
+    const before = { ...key };
+    for (const mismatch of [
+      { user_id: "another-owner" },
+      { account_id: "another-wallet" }, { key_hash: "wrong" },
+      { metadata: { purpose: "ordinary", defaultWalletType: "card" } },
+      { metadata: { purpose: "lite-canary-managed-qa", defaultWalletType: "hermesos" } },
+      { status: "revoked", revoked_at: new Date().toISOString() },
+    ]) {
+      Object.assign(key, before, mismatch);
+      expect(await materializeLiteCanaryManagedQaKey(permit, accountId, db)).toBeNull();
+    }
+    expect(tables.managed_venice_proxy_keys).toEqual([key]);
+    expect(key.status).toBe("revoked");
+  });
+
+  it("rejects dedicated prefixes and marked keys in the generic verifier", async () => {
+    const { db, seed } = createMemoryDb();
+    const presented = "hven_live_fixture";
+    seed("managed_venice_proxy_keys", {
+      status: "active", key_hash: hashManagedVeniceProxyKey(presented),
+      metadata: { purpose: "lite-canary-managed-qa", defaultWalletType: "card" },
+    });
+    expect(await verifyManagedVeniceProxyKey({ plaintextKey: presented }, db)).toBeNull();
+    expect(await verifyManagedVeniceProxyKey({ plaintextKey: "hven_lite_qa_fixture" }, db)).toBeNull();
   });
 });
