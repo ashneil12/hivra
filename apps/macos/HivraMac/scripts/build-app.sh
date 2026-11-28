@@ -40,11 +40,13 @@ if [[ "${channel}" == "release" ]]; then
     exit 1
   fi
   arch_flags=(--arch arm64 --arch x86_64)
+  channel_flags=(-Xswiftc -D -Xswiftc HIVRA_PUBLIC_BUILD)
 else
   arch_flags=()
+  channel_flags=()
 fi
 
-swift_args=(--package-path "${app_root}" --scratch-path "${scratch_root}/swift" -c release ${arch_flags[@]})
+swift_args=(--package-path "${app_root}" --scratch-path "${scratch_root}/swift" -c release ${arch_flags[@]} ${channel_flags[@]})
 env CLANG_MODULE_CACHE_PATH="${scratch_root}/module-cache" swift build ${swift_args[@]}
 bin_path="$(swift build ${swift_args[@]} --show-bin-path)"
 
@@ -63,6 +65,8 @@ if source_revision="$(git -C "${app_root}" rev-parse HEAD 2>/dev/null)"; then
 fi
 if [[ "${channel}" == "release" ]]; then
   /usr/libexec/PlistBuddy -c "Add :HivraDeveloperConnections bool false" "${plist}"
+else
+  /usr/libexec/PlistBuddy -c "Add :HivraDeveloperConnections bool true" "${plist}"
 fi
 if [[ -n "${sparkle_key}" ]]; then
   /usr/libexec/PlistBuddy -c "Add :SUPublicEDKey string ${sparkle_key}" "${plist}"

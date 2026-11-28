@@ -176,7 +176,7 @@ struct HivraBrowserPane: View {
                 }
 
                 if let onUseHivraCanary {
-                    Button("Use Hivra Canary", action: onUseHivraCanary)
+                    Button("Use hosted workspace", action: onUseHivraCanary)
                         .buttonStyle(HivraButtonStyle())
                 }
             }

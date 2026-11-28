@@ -8,6 +8,7 @@ ONCE="$SCRIPT_DIR/run-once.sh"
 NEXT_SLEEP="${CERT_LOOP_NEXT_SLEEP:-10}"
 IDLE_SLEEP="${CERT_LOOP_IDLE_SLEEP:-300}"
 ERROR_SLEEP="${CERT_LOOP_ERROR_SLEEP:-300}"
+ACCOUNT_SLEEP="${CERT_LOOP_ACCOUNT_SLEEP:-3600}"
 
 echo "[certify-loop] starting continuous catalog certification"
 while true; do
@@ -21,6 +22,10 @@ while true; do
     75)
       echo "[certify-loop] no catalog certification due; sleeping ${IDLE_SLEEP}s"
       sleep "$IDLE_SLEEP"
+      ;;
+    76|77)
+      echo "[certify-loop] standing tenant unavailable or held for cleanup review; checking again in ${ACCOUNT_SLEEP}s"
+      sleep "$ACCOUNT_SLEEP"
       ;;
     *)
       echo "[certify-loop] run exited $status; backing off ${ERROR_SLEEP}s"

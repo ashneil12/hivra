@@ -220,7 +220,7 @@ export function chooseCertificationTarget({
   if (!Number.isFinite(nowMs)) throw planError("invalid current time");
   if (!/^[0-9a-f]{40}$/.test(currentCanarySha ?? "")) throw planError("currentCanarySha must be a full lowercase SHA");
   if (!currentProvisionerVersion) throw planError("currentProvisionerVersion is required");
-  const latest = latestRowsByProfile(ledgerRows);
+  const latest = latestRowsByProfile(ledgerRows.filter((row) => row.failure?.stage !== "account"));
   const candidates = catalog.map((entry) => ({
     entry,
     row: latest.get(entry.id) ?? null,
@@ -248,10 +248,10 @@ export function chooseCertificationTarget({
     const aRank = rank(a);
     const bRank = rank(b);
     if (aRank !== bRank) return aRank - bRank;
+    const aAgent = a.entry.category === "agent" ? 0 : 1;
+    const bAgent = b.entry.category === "agent" ? 0 : 1;
+    if (aAgent !== bAgent) return aAgent - bAgent;
     if (!a.row && !b.row) {
-      const aAgent = a.entry.category === "agent" ? 0 : 1;
-      const bAgent = b.entry.category === "agent" ? 0 : 1;
-      if (aAgent !== bAgent) return aAgent - bAgent;
       return compareEntries(a, b);
     }
     if ((a.state.dueAtMs ?? 0) !== (b.state.dueAtMs ?? 0)) return (a.state.dueAtMs ?? 0) - (b.state.dueAtMs ?? 0);

@@ -83,7 +83,7 @@ struct HivraAddConnectionView: View {
     private var connectionHint: String {
         switch kind {
         case .local: "Connect to a running local workspace. To create one, open Local Hivra in the app’s Settings."
-        case .hivraCloud: "The suggested address opens Hivra Canary. Use the address for your hosted workspace."
+        case .hivraCloud: "Use the address for your hosted workspace."
         case .custom: "Enter your Hivra server address. The connection is saved on this Mac."
         }
     }
@@ -91,7 +91,7 @@ struct HivraAddConnectionView: View {
     private func defaultAddress(for kind: HivraConnectionKind) -> String {
         switch kind {
         case .local: "http://127.0.0.1:3000"
-        case .hivraCloud: "https://canary.hermesos.cloud"
+        case .hivraCloud: HivraConnectionProfile.hivra.url.absoluteString
         case .custom: ""
         }
     }
