@@ -1,4 +1,4 @@
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import type { ComparePage } from "../types";
 import { formatCheckedMonth } from "../competitor-facts";
 import {
@@ -51,7 +51,7 @@ export const page: ComparePage = {
         `Hivra is for a person who wants an agent to have a computer of its own and would rather open it than assemble it. You choose a supported agent, Hivra creates the computer and runs the agent's own installer, and you work through a browser view for that agent. Hivra starts at ${ENTRY_PRICE_PROSE}, and ${STAYS_ON}`,
         "Where Hivra differs from KiloClaw is in what the money buys. Hivra hosts several agents, including Hermes, OpenClaw, Agent Zero, Claude Code and Codex, so you can change agent without moving to a different product. The plan price is stated with its size, and AI usage is paid with your own account or key where the agent supports it, or with Hivra credits. Hivra's platform is open source, and you can also connect a server you run yourself, which is a way out that does not depend on the vendor continuing to sell one product.",
         "The trade-offs are real. Hivra is a flat fee even in a month when the agent does little. It has no gateway of 500+ models under one bill. We do not claim a mobile app or a Slack integration of our own for managing agents. And a Hivra computer is a more general thing than you may want if all you need is OpenClaw with the least setup.",
-        "Hivra is independent and is not affiliated with Kilo, Anaconda, OpenClaw, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A Hivra account costs nothing, but every Hivra Cloud computer is a paid plan. A free account works with a server you connect yourself.",
+        "Hivra is independent and is not affiliated with Kilo, Anaconda, OpenClaw, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A free Hivra account does not include managed compute. A free account works with a server you connect yourself.",
       ),
     },
     {
@@ -84,7 +84,7 @@ export const page: ComparePage = {
             { criterion: "Who maintains it", hivra: "Hivra provisions the computer; you keep the agent's own settings", alternative: "Kilo runs the platform and, per VentureBeat, applies OpenClaw updates automatically" },
             { criterion: "Data and security", hivra: "Your own computer on Hivra Cloud, with files and sessions kept on it", alternative: "Multi-tenant virtual machines, with two proxies outside the VM and sandboxing handled by Kilo, per VentureBeat; compliance status not confirmed" },
             { criterion: "Limits", hivra: "Set by the size of the computer", alternative: "Not stated for the instance; model limits follow the models you choose" },
-            { criterion: "Trial", hivra: "No trial; a Hivra account costs nothing, but every Hivra Cloud computer is paid", alternative: "A week of free compute at launch in 2026; whether it is still offered is not confirmed" },
+            { criterion: "Trial", hivra: `No trial; a free account does not include managed compute. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`, alternative: "A week of free compute at launch in 2026; whether it is still offered is not confirmed" },
             { criterion: "Refund", hivra: REFUND_LINKED, alternative: "Not stated on the pages we read; the notice page says month-to-month, cancel anytime" },
             { criterion: "Exit and portability", hivra: "Open source platform; you can also connect your own server", alternative: "OpenClaw is open source; whether you can export a KiloClaw instance is not stated" },
             { criterion: "Availability", hivra: "Sold at Hivra's pricing page", alternative: "KiloClaw's product and pricing pages redirected to Kilo's home page when we checked; availability not confirmed" },

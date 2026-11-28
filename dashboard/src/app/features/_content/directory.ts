@@ -1,6 +1,6 @@
 import type { ActionLink } from "@/components/public-editorial/ActionLinks";
 import type { FeatureFaqItem } from "./types";
-import { FREE_ACCOUNT_SENTENCE } from "@/lib/blog/plan-facts";
+import { FREE_ACCOUNT_SENTENCE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
 import { AI_USAGE_NOT_INCLUDED, ENTRY_SIZE_PROSE, GUARANTEE_SENTENCE, LARGER_SIZE_PROSE, OWN_ACCOUNT_TERMS } from "./shared";
 
 // /features. The copy is 01-features-directory.md (20 October 2026); deviations are in the lane ledger.
@@ -81,7 +81,7 @@ export const DIRECTORY_ITEMS: readonly DirectoryItem[] = [
     number: "06.",
     title: "Keep OpenClaw or try Hermes",
     paragraphs: [
-      "Already use OpenClaw? You don't have to abandon it to use Hivra. Compare OpenClaw with Hermes if its approach to memory, skills and workflows suits you better. Check your configurations and integrations before switching.",
+      "Already use OpenClaw? Hivra can launch a fresh OpenClaw agent, but it does not take over your existing installation. Compare OpenClaw with Hermes if its approach to memory, skills and workflows suits you better. Check your configurations and integrations before switching.",
     ],
     link: { label: "Explore the OpenClaw option", href: "/features/openclaw-alternative" },
   },
@@ -91,7 +91,7 @@ export const DIRECTORY_PRICE = {
   heading: "What is included in the hosting price?",
   paragraphs: [
     `Paid agent hosting starts at **${ENTRY_SIZE_PROSE}**. A larger option is **${LARGER_SIZE_PROSE}**. Either size covers the managed computer resources. ${AI_USAGE_NOT_INCLUDED} ${OWN_ACCOUNT_TERMS}`,
-    FREE_ACCOUNT_SENTENCE,
+    `${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${FREE_ACCOUNT_SENTENCE}`,
     `Available agent counts, capacity and framework restrictions depend on the plan. See the live [pricing page](/pricing) before choosing. ${GUARANTEE_SENTENCE}`,
   ],
   actions: [

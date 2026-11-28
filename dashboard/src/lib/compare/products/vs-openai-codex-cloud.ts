@@ -13,7 +13,7 @@ import {
 } from "../shared-copy";
 import { formatCheckedMonth } from "../competitor-facts";
 import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
-import { formatPlanSize } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, formatPlanSize } from "@/lib/blog/plan-facts";
 import { PRODUCT_FACTS_CHECKED } from "./checked";
 
 /*
@@ -56,7 +56,7 @@ export const page: ComparePage = {
       heading: "What you are actually paying for",
       blocks: paragraphs(
         `With Codex cloud you are paying for a ChatGPT plan, and Codex is one of the things in it. As of ${AS_OF}, OpenAI's pricing page lists Codex as included across its plans, from Free and Go through Plus at $20 a month, Pro from $100 a month ($100, $200 or $500, with the fastest mode on the $500 tier), and Business at $20 per user per month on annual billing for two or more users, or $25 monthly. Enterprise and Edu are by contact. Plus users get the smaller cloud VM, 2 vCPU, 8 GiB of memory and 8 GiB of disk, while ChatGPT Pro, from $100 a month, is where the 4 vCPU size and higher usage begin. The cards for Free and Go mention the desktop app, and the page says availability is subject to rollout, so check whether cloud tasks are open to you before you plan around them. The plan includes a usage allowance rather than a fixed number of cloud tasks, and OpenAI says cloud tasks may use more of it than local messages do, with weekly limits possible as well.`,
-        `With Hivra you are paying for a computer. ${ENTRY_PRICE_PROSE}, and every Hivra Cloud computer is paid. A Hivra account itself costs nothing, and it works with a server you connect yourself, but the computers Hivra runs are the paid part. ${AI_USAGE} For Codex that means you can sign in with ChatGPT or an OpenAI API key inside the CLI and let OpenAI bill that usage, which keeps the two bills separate and easy to read.`,
+        `With Hivra you are paying for a computer. ${ENTRY_PRICE_PROSE}. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} A Hivra account itself costs nothing, and it works with a server you connect yourself. ${AI_USAGE} For Codex that means you can sign in with ChatGPT or an OpenAI API key inside the CLI and let OpenAI bill that usage, which keeps the two bills separate and easy to read.`,
         "That separation matters when you compare. A ChatGPT plan is a single price that covers the model allowance, the cloud task environment and the apps around it, so if you already pay for one, Codex cloud adds no new line to your bill. A Hivra computer is a second, smaller bill for somewhere persistent to run things, and the model usage comes from wherever you point Codex. Neither number tells you much until you know whether your work is a stream of short tasks or a long-running environment.",
       ),
     },

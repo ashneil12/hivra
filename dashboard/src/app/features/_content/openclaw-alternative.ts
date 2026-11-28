@@ -156,7 +156,7 @@ export const OPENCLAW_ALTERNATIVE: FeaturePageContent = {
     },
     {
       q: "Can I use OpenClaw for free on Hivra?",
-      a: `Not on a computer that Hivra Cloud runs for you. ${HOSTED_COMPUTE_NEEDS_PLAN} The OpenClaw software is free. The computer that runs it is what you pay for.`,
+      a: `A free Hivra account does not include managed compute. ${HOSTED_COMPUTE_NEEDS_PLAN} The OpenClaw software is free. Hosting and model usage are separate.`,
     },
     {
       q: "Is managed hosting more private than local hosting?",

@@ -1,4 +1,4 @@
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
 import type { ComparePage } from "../types";
 import { formatCheckedMonth } from "../competitor-facts";
 import {
@@ -48,7 +48,7 @@ export const page: ComparePage = {
       blocks: paragraphs(
         `Hivra is for a person who wants an agent to have a computer of its own and would rather open it than assemble it. You choose a supported agent, Hivra creates the computer and runs the agent's own installer, and you work through a browser view with chat, a terminal and files. Hivra starts at ${ENTRY_PRICE_PROSE}, and ${STAYS_ON}`,
         "That has a price: it is a flat fee even in a week when the agent does little, and Hivra is not a place to create hundreds of throwaway environments from code. There is no per-minute meter, so the plan price does not change with how hard the agent works. AI usage is paid separately and does change with it.",
-        "Hivra is independent and is not affiliated with Fly.io, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A Hivra account costs nothing, but every Hivra Cloud computer is a paid plan. A free account works with a server you connect yourself.",
+        "Hivra is independent and is not affiliated with Fly.io, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A free Hivra account does not include managed compute. A free account works with a server you connect yourself.",
       ),
     },
     {
@@ -183,7 +183,7 @@ export const page: ComparePage = {
     },
     {
       q: "Is there a free way to try each?",
-      a: "Fly.io's page lists a $1 trial credit for new Fly.io accounts, valid for a week, as an offer that may change. A Hivra account costs nothing, but every Hivra Cloud computer is paid, with a 7-day money-back guarantee on card payments. A free account works with a server you connect yourself.",
+      a: `Fly.io's page lists a $1 trial credit for new Fly.io accounts, valid for a week, as an offer that may change. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans come with a 7-day money-back guarantee on card payments. A free account works with a server you connect yourself.`,
     },
   ],
   closing: CLOSING,

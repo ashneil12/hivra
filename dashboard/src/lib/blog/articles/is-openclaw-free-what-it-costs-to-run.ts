@@ -1,5 +1,5 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, MONEY_BACK_GUARANTEE } from "../plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE, MONEY_BACK_GUARANTEE } from "../plan-facts";
 
 // Written 2026-10-14 for "is openclaw free" (590 US searches a month, KD 18, Aug 2026 data),
 // with "openclaw pricing" (260) and "openclaw cost" (140) folded into the same page. Demand
@@ -70,7 +70,7 @@ export const article: BlogArticle = {
           "| Raspberry Pi | $35 to $80 once, no monthly fee (OpenClaw's own figure) | You power it, update it and keep the SD card alive |",
           "| Rented VPS | A small monthly server bill, yours to pick | You install OpenClaw, patch it and watch it |",
           "| A managed host | Whatever that host charges | The host runs the computer; you still bring the model |",
-          `| Hivra | ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} | Every Hivra Cloud computer needs a paid plan; you still bring the model |`,
+          `| Hivra | ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE} | Managed compute is not included in a free account; model usage is separate |`,
         ].join("\n"),
         "On every row except a local model, the model bill sits on top and goes to your provider, not to the host.",
         "A rented server is the cheapest ongoing route if you like running Linux. It is the wrong pick if you don't want a second machine to babysit, because updates and odd failures land on you. The [OpenClaw self-hosting guide](/blog/how-to-self-host-openclaw) covers the install itself, and the [OpenClaw alternative page](/features/openclaw-alternative) puts the hosted route next to switching the agent.",
@@ -97,7 +97,7 @@ export const article: BlogArticle = {
     {
       heading: "What does OpenClaw cost on Hivra?",
       paragraphs: [
-        `Every Hivra Cloud computer needs a paid plan, and that includes the one OpenClaw runs on. ${ENTRY_PLAN_PRICE} a month gets you ${ENTRY_PLAN_SIZE}, and that covers OpenClaw with the live browser switched on. OpenClaw on its own needs 1 vCPU and 2 GB, and the browser adds 1 vCPU and 2 GB more. Paid plans aren't paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}.`,
+        `${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${ENTRY_PLAN_PRICE} a month gets you ${ENTRY_PLAN_SIZE}, and that covers OpenClaw with the live browser switched on. OpenClaw on its own needs 1 vCPU and 2 GB, and the browser adds 1 vCPU and 2 GB more. Paid plans aren't paused for inactivity, and they come with a ${MONEY_BACK_GUARANTEE}.`,
         "The model is still yours. You pick the provider in the Control UI and that account gets the bill.",
         "Hivra isn't always the right route. A Pi you already have is cheaper once you've bought it, and it keeps the data at home. A VPS is cheaper hardware if you want root and don't mind the upkeep. And if OpenClaw itself isn't the agent you want, the [Hermes and OpenClaw comparison](/blog/hermes-vs-openclaw) says where each fits.",
         "Hivra is independent and isn't affiliated with the OpenClaw project.",
@@ -119,7 +119,7 @@ export const article: BlogArticle = {
     },
     {
       q: "How much does it cost to run OpenClaw on Hivra?",
-      a: `Every Hivra Cloud computer needs a paid plan, and OpenClaw's starts at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. That size covers OpenClaw with the live browser on. Model usage bills your own provider account, and Hivra adds no markup on it. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
+      a: `${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} That size covers OpenClaw with the live browser on. Model usage bills your own provider account, and Hivra adds no markup on it. Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
     },
     {
       q: "Can OpenClaw limit how much I spend on the model?",
@@ -131,7 +131,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Is there a free hosted plan for OpenClaw?",
-      a: `Not on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`,
+      a: `A free Hivra account does not include managed compute. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`,
     },
   ],
   relatedArticles: [

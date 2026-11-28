@@ -5,7 +5,7 @@ import { Breadcrumbs } from "@/components/public-editorial/Editorial";
 import { ActionLinks } from "@/components/public-editorial/ActionLinks";
 import editorial from "@/components/public-editorial/secondary-site.module.css";
 import CopyButton from "@/components/tools/CopyButton";
-import { ENTRY_PLAN_PRICE } from "@/lib/blog/plan-facts";
+import { ENTRY_PLAN_PRICE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
 import { setupPrompt } from "@/lib/agent-setup/setup-md";
 import { absoluteTitle, buildWebsiteMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
@@ -73,7 +73,7 @@ export default async function SetupPage() {
         </section>
 
         <p className={styles.body}>
-          Every Hivra Cloud computer needs a paid plan, from {ENTRY_PLAN_PRICE} a month. You sign in and press Launch yourself:
+          {HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans start at {ENTRY_PLAN_PRICE} a month. You sign in and press Launch yourself:
           your coding agent never sees your password or pays for anything.
         </p>
         <ActionLinks items={[

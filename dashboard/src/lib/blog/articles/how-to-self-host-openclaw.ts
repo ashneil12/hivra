@@ -1,4 +1,5 @@
 import { BlogArticle } from "../types";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "../plan-facts";
 
 export const article: BlogArticle = {
   slug: "how-to-self-host-openclaw",
@@ -21,7 +22,7 @@ export const article: BlogArticle = {
       paragraphs: [
         "OpenClaw ships new releases several times a month and frequently introduces breaking changes. The community estimates $10,000-$20,000 per year in developer operations overhead for self-hosted instances managed at a production quality level, largely the time cost of keeping up with updates, handling schema migrations, and rewriting custom skills when API surfaces change.",
         "For running personal workflows or experimenting: the DIY route is fine. For anything business-critical requiring 24/7 reliability: the upgrade overhead is real. The r/openclaw subreddit has a steady stream of threads about breaking changes that went unannounced.",
-        "There is also a third option: Hermes Agent. The architecture is comparable (persistent AI agent, messaging gateway, skills/tools system), but Hermes ships a built-in migration tool (`hermes claw migrate`) for OpenClaw users and has a more stable release cadence. Hivra hosts both on managed VMs, each on a paid plan: [OpenClaw itself](/agents/openclaw), and Hermes launched from the dashboard. Check it out before committing 4 hours to a self-hosted OpenClaw setup.",
+        `There is also a third option: Hermes Agent. The architecture is comparable (persistent AI agent, messaging gateway, skills/tools system), but Hermes ships a built-in migration tool (\`hermes claw migrate\`) for OpenClaw users and has a more stable release cadence. Hivra can launch a fresh [OpenClaw agent](/agents/openclaw) or Hermes on a managed VM. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Check it out before committing 4 hours to a self-hosted OpenClaw setup.`,
       ],
     },
     {
@@ -82,7 +83,7 @@ export const article: BlogArticle = {
       heading: "When self-hosting stops making sense",
       paragraphs: [
         "Self-hosting OpenClaw makes sense if you want zero monthly software cost, full data sovereignty, or the ability to run entirely local models. It stops making sense if that 20-minute monthly upgrade process (4+ hours per year on updates alone, before breakage) is time you do not have. Still deciding whether OpenClaw is the right agent to host at all? [Agent Zero vs OpenClaw hosting](/blog/agent-zero-vs-openclaw-hosting) compares the two on requirements, security exposure, and monthly cost.",
-        "Three managed OpenClaw options:\n\n- **ClawHost:** purpose-built for OpenClaw, handles auto-updates.\n- **Blink Claw:** managed service with automatic update management.\n- **Zeabur:** container deployment platform that works with the Docker image.\n\nThere is also Hermes Agent (MIT licensed, built by Nous Research), with `hermes claw migrate` to migrate your OpenClaw config, memories, skills, and environment variables. Hermes has a more stable release cadence, fewer breaking changes, and managed hosting on Hivra's paid plans, launched from the dashboard. Hivra also hosts OpenClaw itself on the same paid plans, if you would rather keep the agent you have. If you have spent three Saturdays debugging OpenClaw upgrades, that migration exists for a reason.",
+        "Three managed OpenClaw options:\n\n- **ClawHost:** purpose-built for OpenClaw, handles auto-updates.\n- **Blink Claw:** managed service with automatic update management.\n- **Zeabur:** container deployment platform that works with the Docker image.\n\nThere is also Hermes Agent (MIT licensed, built by Nous Research), with `hermes claw migrate` to migrate your OpenClaw config, memories, skills, and environment variables. Hermes has a more stable release cadence, fewer breaking changes, and managed hosting on Hivra's paid plans, launched from the dashboard. Hivra also hosts OpenClaw itself on the same paid plans, if you prefer to launch a fresh agent on the same framework. If you have spent three Saturdays debugging OpenClaw upgrades, that migration exists for a reason.",
       ],
     },
   ],

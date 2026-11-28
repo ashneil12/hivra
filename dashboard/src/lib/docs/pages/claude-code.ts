@@ -1,6 +1,6 @@
 import type { DocPage } from "../types";
 import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
 
 export const doc: DocPage = {
   slug: "claude-code",
@@ -23,7 +23,7 @@ export const doc: DocPage = {
     {
       heading: "Before you start",
       paragraphs: [
-        "- **A Hivra account.** Every computer that Hivra Cloud runs needs a paid plan, and paid plans start at " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + ". You can use your own server if your account is eligible to connect it. See [What you pay for](/docs/plans-and-billing).\n- **A way for Claude Code to reach a model.** Either a Claude account you can sign in with inside Claude Code, or Hivra credits. Pasting an API key at launch is not offered for Claude Code.\n- **Where it will run.** Hivra Cloud, or a Proxmox server you connected. Connecting a server is covered in [Run agents on your own server](/docs/connect-your-own-server).",
+        `- **A Hivra account.** ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}. You can use your own server if your account is eligible to connect it. See [What you pay for](/docs/plans-and-billing).\n- **A way for Claude Code to reach a model.** Either a Claude account you can sign in with inside Claude Code, or Hivra credits. Pasting an API key at launch is not offered for Claude Code.\n- **Where it will run.** Hivra Cloud, or a Proxmox server you connected. Connecting a server is covered in [Run agents on your own server](/docs/connect-your-own-server).`,
         "Whether your Claude plan may be used from a remote computer is Anthropic's rule, not Hivra's. Read their terms before relying on it. Hivra describes the sign-in route as available where eligible, subject to the provider's terms.",
       ],
     },
@@ -133,8 +133,8 @@ export const doc: DocPage = {
       heading: "Costs",
       paragraphs: [
         "There are three separate costs and they do not overlap.",
-        "| What | Who bills it |\n| --- | --- |\n| The computer on Hivra Cloud | Your Hivra plan, from " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + " |\n| Model usage on Hivra credits | Your Hivra credits (rates are on [Choose how your agent gets its model](/docs/models-and-credits)) |\n| Model usage on your Claude sign-in | Anthropic, under your own plan |",
-        "A computer that Hivra Cloud runs needs a plan. A connected server uses your own capacity. Note that Stop does not cancel any of this.",
+        "| What | Who bills it |\n| --- | --- |\n| A computer on a paid Hivra Cloud plan | Your Hivra plan, from " + ENTRY_PLAN_PRICE + " a month for " + ENTRY_PLAN_SIZE + " |\n| Model usage on Hivra credits | Your Hivra credits (rates are on [Choose how your agent gets its model](/docs/models-and-credits)) |\n| Model usage on your Claude sign-in | Anthropic, under your own plan |",
+        "A connected server uses your own capacity. Stopping a computer doesn't cancel your plan or change what your model provider charges.",
       ],
     },
     {

@@ -8,9 +8,7 @@
 // - Prices, sizes and the guarantee come from lib/blog/plan-facts.ts, so they
 //   move with checkout. No plan names, no annual price, no trial.
 // - Hivra runs no free computer (owner decision, 21 Oct 2026). The page says
-//   once, in the shared sentences from plan-facts, that every computer Hivra
-//   Cloud runs is paid and that a free account works with a computer or server
-//   the person connects. No agent is singled out as the paid one.
+//   how paid plans and connected servers differ, using shared plan facts.
 // - The site names no legal entity, address or funding source, so this page
 //   names none: the section the owner called "How Hivra is funded" is titled
 //   "What Hivra costs" and states only the price.
@@ -29,6 +27,7 @@ import {
   FREE_ACCOUNT_SENTENCE,
   formatPlanSize,
   HOSTED_COMPUTE_NEEDS_PLAN_SHORT,
+  HOSTED_COMPUTE_PAID_PLANS_DEFAULT,
   MONEY_BACK_GUARANTEE,
 } from "@/lib/blog/plan-facts";
 import { NON_AFFILIATION_LINE } from "@/lib/brand-description";
@@ -130,6 +129,7 @@ export const FAQ_HEADING = "Common questions";
 export function buildAboutContent({ tokens }: { tokens: boolean }): AboutContent {
   const entry = formatPlanSize("entry");
   const larger = formatPlanSize("larger");
+  const hostedCompute = tokens ? HOSTED_COMPUTE_NEEDS_PLAN_SHORT : HOSTED_COMPUTE_PAID_PLANS_DEFAULT;
 
   return {
     headings: ABOUT_HEADINGS,
@@ -151,7 +151,7 @@ export function buildAboutContent({ tokens }: { tokens: boolean }): AboutContent
     today: [
       {
         lead: "Run supported AI agents.",
-        text: `Deploy Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon through their supported workflows. Different agents have different requirements, including cloud-only restrictions. Hermes runs on Hivra Cloud only. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
+        text: `Examples include Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon. See the [agent catalog](/agents) for the current list and where each agent runs. Hermes runs on Hivra Cloud only. ${hostedCompute}`,
       },
       {
         lead: "Launch a computer for yourself.",
@@ -203,7 +203,7 @@ export function buildAboutContent({ tokens }: { tokens: boolean }): AboutContent
     costs: [
       `Hivra Cloud is a paid hosting service. The entry size is **${entry}**. A larger size is **${larger}**. Self-hosting the software costs nothing, but you provide your own server and cover any AI usage.`,
       // The price is in the paragraph above, so the rule here is the short form plus the free-account sentence.
-      `${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${FREE_ACCOUNT_SENTENCE}`,
+      `${hostedCompute} ${FREE_ACCOUNT_SENTENCE}`,
       `Paid Hivra Cloud plans come with a **${MONEY_BACK_GUARANTEE}**. Check the [pricing](/pricing) and [terms](/terms) pages for the details before buying.`,
       ...(tokens
         ? [
@@ -270,11 +270,11 @@ export function buildAboutContent({ tokens }: { tokens: boolean }): AboutContent
       ? "Our official website is **hivra.cloud**. We're not affiliated with unrelated projects using similar names, including sites at hivra.ai or hivra.app. When you're signing in, paying or connecting a wallet, check the domain carefully."
       : "Our official website is **hivra.cloud**. We're not affiliated with unrelated projects using similar names, including sites at hivra.ai or hivra.app. When you're signing in or paying, check the domain carefully.",
 
-    faq: aboutFaq({ tokens }),
+    faq: aboutFaq({ tokens, hostedCompute }),
   };
 }
 
-function aboutFaq({ tokens }: { tokens: boolean }): AboutFaqItem[] {
+function aboutFaq({ tokens, hostedCompute }: { tokens: boolean; hostedCompute: string }): AboutFaqItem[] {
   const securityMarkup = `Follow the private reporting instructions at [hivra.cloud/security](/security). For general support, email [${SECURITY_EMAIL}](mailto:${SECURITY_EMAIL}).`;
 
   return [
@@ -288,7 +288,7 @@ function aboutFaq({ tokens }: { tokens: boolean }): AboutFaqItem[] {
     },
     {
       q: "Can I run Hivra without paying for cloud hosting?",
-      a: "Yes. Create a free account and connect your own computer or server, or self-host the open-source platform. Hivra doesn't run a computer for you without a paid plan, and you'll still pay your infrastructure and AI providers.",
+      a: `Yes. Create a free account and connect your own computer or server, or self-host the open-source platform. You'll still pay your infrastructure and AI providers. ${hostedCompute}`,
     },
     {
       q: "Can I use my existing AI subscription?",

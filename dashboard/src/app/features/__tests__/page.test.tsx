@@ -104,7 +104,7 @@ describe("/features page", () => {
     expect(within(price).getByText(bold("$19.99 a month for 4 vCPU and 8 GB of RAM"))).toBeInTheDocument();
     expect(price.textContent).toContain("Paid agent hosting starts at $9.99 a month for 2 vCPU and 4 GB of RAM.");
     expect(price.textContent).toContain("A free account works with a computer or server you connect yourself.");
-    expect(price.textContent).not.toContain("Every computer that Hivra Cloud runs for you needs a paid plan");
+    expect(price.textContent).toContain("gated, capacity-limited token-holder access for supported computers");
     expect(within(price).getByRole("link", { name: /Launch an agent/ })).toHaveAttribute("href", "/agents");
     expect(within(price).getByRole("link", { name: /See pricing/ })).toHaveAttribute("href", "/pricing");
 

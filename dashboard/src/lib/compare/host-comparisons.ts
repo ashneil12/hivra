@@ -1,5 +1,5 @@
 import type { ComparePage } from "./types";
-import { ENTRY_PLAN_PRICE, formatPlanSize } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, formatPlanSize } from "@/lib/blog/plan-facts";
 import { CLI_RUN_LIFETIME, SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
 import { COMPETITOR_FACTS, COMPETITOR_FACTS_CHECKED, formatCheckedMonth, type CompetitorSlug } from "./competitor-facts";
 import {
@@ -63,7 +63,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
           `On Agent 37's metered Cloud API the rate card is $0.80 per vCPU, $0.70 per GB of RAM and $0.09 per GB of disk, per 730-hour month, metered by the minute. Its pricing page calls the entry figure an estimate, not a subscription: a standard 2 vCPU, 4 GB sandbox with 4 GB of persistent disk is $4.76 for 730 running hours, $0.36 of it disk, (figures as of ${formatCheckedMonth()}). The page shows no total for a larger shape: on our arithmetic from the rate card, a 4 vCPU, 8 GB sandbox with 6 GB of disk would be about $9.34 for the same hours. A standard sandbox shares host resources. A VM, which its pages describe as a whole Linux machine with its own kernel, costs 2.5 times the compute rate, and a Performance sandbox on dedicated cores costs 4 times. Disk stays the same price. By our arithmetic from its rate card, the 2 vCPU, 4 GB shape as a VM would be about $11.36 for 730 running hours, so compare like with like before you compare it with Hivra.`,
           "A meter bills what the machine does, so read what it bills while the agent waits. Compute stops when a sandbox sleeps, but disk keeps billing while it is retained, and Agent 37's terms say usage is metered against the balance including while an instance is stopped or sleeping. An awake instance pays for compute even when idle, so an agent that is asked for something once an hour gains little from being awake all month unless it is set to sleep. Deleting an instance stops the meter. Hosting also leaves out models and tools, which are metered from the same balance with a per-instance spend cap, or you bring your own keys.",
           "Three terms matter when you plan a month on a prepaid balance. Auto top-up is on by default after your first top-up. If the balance runs out, Agent 37 says it may pause your instances until you top up. And top-ups are non-refundable, outside the first-month subscription refund described below. None of these is unusual for a meter, so set a balance alert before you rely on it. New accounts also get a $5 starter credit after adding a card, which Hivra has no equivalent of, and the pricing page carries a price-match offer to refund the difference on a cheaper sandbox, with no published terms.",
-          `Hivra's price is a different shape. ${ENTRY_PRICE_PROSE} buys a computer for the agent, and ${formatPlanSize("larger")} buys more room. You split the plan's vCPU and RAM across your agents. ${AI_USAGE} AI usage is paid separately, so a Hivra month can move too. A Hivra account costs nothing and works with a server you connect yourself, while every Hivra Cloud computer is paid.`,
+          `Hivra's price is a different shape. ${ENTRY_PRICE_PROSE} buys a computer for the agent, and ${formatPlanSize("larger")} buys more room. You split the plan's vCPU and RAM across your agents. ${AI_USAGE} AI usage is paid separately, so a Hivra month can move too. A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
         ),
       },
       {
@@ -194,7 +194,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
               },
               {
                 lead: "Lena, a hobbyist who wants to try an agent before spending anything:",
-                text: "Start with Agent 37's free managed agent, which sleeps when idle and has 1 vCPU, 4 GB of RAM, 2 GB of storage and no messaging apps (those start on Basic). The Cloud API also gives a $5 starter credit after you add a card. A Hivra account costs nothing, but every Hivra Cloud computer is paid, so the free route on Hivra is a server you connect yourself.",
+                text: `Start with Agent 37's free managed agent, which sleeps when idle and has 1 vCPU, 4 GB of RAM, 2 GB of storage and no messaging apps (those start on Basic). The Cloud API also gives a $5 starter credit after you add a card. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} A free account works with a server you connect yourself.`,
               },
               {
                 lead: "Raj, who already runs a Proxmox server at home:",
@@ -289,7 +289,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
       },
       {
         q: "Is there a free option on each?",
-        a: "Agent 37 offers a free managed agent (1 vCPU, 4 GB of RAM and 2 GB of storage, with messaging apps only on Basic and above) that sleeps after 15 minutes idle, with a card on file and nothing charged. Its Cloud API also gives a $5 starter credit after you add a card. A Hivra account costs nothing and works with a server you connect yourself, but every Hivra Cloud computer is paid.",
+        a: `Agent 37 offers a free managed agent (1 vCPU, 4 GB of RAM and 2 GB of storage, with messaging apps only on Basic and above) that sleeps after 15 minutes idle, with a card on file and nothing charged. Its Cloud API also gives a $5 starter credit after you add a card. A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
       },
       {
         q: "Does Agent 37 have SOC 2, and does Hivra?",
@@ -334,7 +334,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
         heading: "Where Hivra fits",
         blocks: paragraphs(
           `Hivra gives each agent a computer of its own, and you open it: a terminal, files, a browser and Git sit beside the agent in the dashboard. The agents are the ones people already use: ${HIVRA_AGENTS_CELL}. Claude Code and Codex are the vendors' own command line tools. Hivra is not affiliated with, endorsed by or a partner of Hostinger, Nous Research, Anthropic, OpenAI or the makers of any other agent it runs.`,
-          `The price is ${ENTRY_PRICE_PROSE}, or ${formatPlanSize("larger")}, billed monthly with a ${REFUND_LINKED}. ${STAYS_ON} There is no term to commit to and no renewal price to read in advance, because the price you see is the price you pay each month. ${AI_USAGE} A Hivra account costs nothing and works with a server you connect yourself, while every Hivra Cloud computer is paid.`,
+          `The price is ${ENTRY_PRICE_PROSE}, or ${formatPlanSize("larger")}, billed monthly with a ${REFUND_LINKED}. ${STAYS_ON} There is no term to commit to and no renewal price to read in advance, because the price you see is the price you pay each month. ${AI_USAGE} A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
           "The trade is plain. Hostinger's managed plans are cheaper per month at their sale prices and list root access on every plan. Hivra asks for more per month, takes no long commitment and is built around opening the agent's computer rather than configuring a hosting product.",
         ),
       },
@@ -585,7 +585,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
           `xCloud lists "OpenClaw in Cloud VPS 6GB" at $24.99 a month: 6 GB of RAM, 4 vCPU, 100 GB of NVMe storage and 30 TB of bandwidth, described as one always-on agent (figures as of ${formatCheckedMonth(COMPETITOR_FACTS_CHECKED)}). Its 16 GB size is $59.99 a month with 6 vCPU and 200 GB of NVMe, which its pages describe as room for tooling and browser work. Paperclip is sold on the same sizes. xCloud's OpenClaw and pricing pages show prices only for 6 GB and 16 GB. Its Paperclip page shows 24 GB at $84.99 a month with 8 vCPU and 300 GB of NVMe, and xCloud states that every agent uses the same sizes and prices. The 48, 64 and 120 GB sizes are listed without a price. The 16 GB size lists unlimited agents, while Hivra's plan compute is shared by the agent computers on one account, so weigh how many agents you will run.`,
           "Billing is monthly, or you can pick 12 or 24 months and save, but the discounted amounts are not stated on the pages we read. xCloud says there are no contracts or commitments. Its pages show no promotional price and no renewal price for agent hosting, so the figure you see is the figure we use. If a promotion appears later, compare the price after it ends, not the first month.",
           `What the xCloud price leaves out is the model. You supply your own provider key or account: its page lists Anthropic (an API key or a Claude Code CLI token), OpenAI (an API key or a ChatGPT sign-in for Codex), Google Gemini, OpenRouter, Z.AI and Moonshot AI now, with Groq, xAI and Mistral marked as coming soon. Paperclip's model costs are paid to your provider separately. Hivra's plan does not include AI usage either: ${AI_USAGE} Either way, add the model bill to the hosting bill to get a real month.`,
-          `Hivra's price is for a computer. ${ENTRY_PRICE_PROSE} buys one computer for the agent, ${formatPlanSize("larger")} buys more room, and the plan's compute is shared by the agent computers on one account. For comparison, Hivra's larger plan is ${formatPlanSize("larger")}, which is below xCloud's $24.99 entry price. Hivra does not publish a disk figure for either plan. A Hivra account costs nothing and works with a server you connect yourself, while every Hivra Cloud computer is paid.`,
+          `Hivra's price is for a computer. ${ENTRY_PRICE_PROSE} buys one computer for the agent, ${formatPlanSize("larger")} buys more room, and the plan's compute is shared by the agent computers on one account. For comparison, Hivra's larger plan is ${formatPlanSize("larger")}, which is below xCloud's $24.99 entry price. Hivra does not publish a disk figure for either plan. A Hivra account costs nothing and works with a server you connect yourself. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
         ),
       },
       {
@@ -724,7 +724,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
               },
               {
                 lead: "Raj, who runs a Proxmox server at home:",
-                text: "Pick Hivra with a free account and connect that server, so the agents run on hardware you own. A Hivra account costs nothing, while every Hivra Cloud computer is paid.",
+                text: `Pick Hivra with a free account and connect that server, so the agents run on hardware you own. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
               },
             ],
           },
@@ -855,7 +855,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
           `Nous has two routes, and its pages describe both (figures as of ${formatCheckedMonth()}). The first is credit. Cloud agents are charged from your Nous credit once a day, in arrears, on actual use: while an agent runs, compute is metered to the second plus storage, and while it is stopped you pay storage only. Inference and tool usage are billed separately from the same credit balance. Its page asks for at least $2 in credits, or an active subscription, to deploy a cloud agent. Top-ups are $10, $20, $50, $100 or $200, and the pages state no minimum top-up.`,
           `Nous's public pages do not list per-size prices. They say instance prices are per day, exclude inference and tool usage, and are shown only in the Portal deploy screen, so this page quotes no daily figure. Read the rate for the size you want there before you confirm, and compare on what is public: the plan prices and RAM and disk below, and the $2 credit minimum.`,
           `The second route is a plan. Nous lists Plus at $20 a month with one cloud agent (4 GB of RAM and 25 GB of disk), Super at $100 a month with five times Plus usage and one cloud agent (4 GB of RAM and 100 GB of disk), and Ultra at $200 a month with ten times Plus usage and one cloud agent (8 GB of RAM and 100 GB of disk). Its pages say bigger sizes and extra agents use credits, billed by the day. The pages we read do not state a vCPU count for these plans, and a plan's price covers more than hosting, because it includes Nous model usage.`,
-          `Hivra's price is a different shape. ${ENTRY_PRICE_PROSE} buys a computer for the agent, and ${formatPlanSize("larger")} buys more room. ${AI_USAGE} A Hivra account costs nothing, but every Hivra Cloud computer is paid, and Hermes runs only on Hivra Cloud. A Proxmox server you connect yourself runs OpenClaw, Agent Zero, Claude Code, Codex and Aeon, not Hermes.`,
+          `Hivra's price is a different shape. ${ENTRY_PRICE_PROSE} buys a computer for the agent, and ${formatPlanSize("larger")} buys more room. ${AI_USAGE} A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Hermes runs on Hivra Cloud only. A Proxmox server you connect yourself runs OpenClaw, Agent Zero, Claude Code, Codex and Aeon, not Hermes.`,
         ),
       },
       {
@@ -930,7 +930,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
               },
               {
                 lead: "Lena, a hobbyist who wants to try an agent before spending anything:",
-                text: "A Hivra account costs nothing, but every Hivra Cloud computer is paid, and Hermes needs a paid Hivra Cloud computer. Pick Nous's $2 minimum if you only want to see Hermes run, knowing that fee is non-refundable. Pick Hivra's $9.99 entry plan (2 vCPU and 4 GB) if you want a refundable month on a card payment.",
+                text: `A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Hermes runs on Hivra Cloud only. Pick Nous's $2 minimum if you only want to see Hermes run, knowing that fee is non-refundable. Pick Hivra's $9.99 entry plan (2 vCPU and 4 GB) if you want a refundable month on a card payment.`,
               },
               {
                 lead: "Raj, who already runs a Proxmox server at home:",

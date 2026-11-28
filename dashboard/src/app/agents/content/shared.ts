@@ -63,13 +63,7 @@ const TOKENS: Record<string, string> = {
   openclawWithBrowser: compute(OPENCLAW_WITH_BROWSER.cpu, OPENCLAW_WITH_BROWSER.ram),
   agentZeroMinimum: compute(AGENT_ZERO_MINIMUM.cpu, AGENT_ZERO_MINIMUM.ram),
   aiNote: AI_USAGE_NOTE,
-  /**
-   * "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM.
-   * A free account works with a computer or server you connect yourself." Not for Hermes, which runs on Hivra Cloud only.
-   * Owner decision 2026-10-21: the same rule for every agent, so no page names one agent as the paid one.
-   */
   paidNote: HOSTED_COMPUTE_NEEDS_PLAN,
-  /** "Every Hivra Cloud computer needs a paid plan." */
   paidShort: HOSTED_COMPUTE_NEEDS_PLAN_SHORT,
   staysOn: STAYS_ON,
   refund: REFUND_SENTENCE,

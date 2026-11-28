@@ -167,10 +167,10 @@ describe("what each page says about AI usage, credits and where the agent runs",
   // agents host for free. Every page now says the one rule; the free-account sentence goes only where a free
   // account can connect a server for that agent (Hermes runs on Hivra Cloud only, so it gets the short rule).
   it("states one paid-computer rule on every agent page and singles out no agent as the paid one", () => {
-    expect(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE).toBe("Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM.");
+    expect(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE).toBe("Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM.");
     expect(FREE_ACCOUNT_SENTENCE).toBe("A free account works with a computer or server you connect yourself.");
     expect(HOSTED_COMPUTE_NEEDS_PLAN).toBe(`${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${FREE_ACCOUNT_SENTENCE}`);
-    expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Every Hivra Cloud computer needs a paid plan.");
+    expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers.");
     for (const { slug } of PAGES) {
       const copy = copyOf(slug);
       const ownServer = PROFILE_DETAILS[slug as keyof typeof PROFILE_DETAILS].ownServer;
@@ -293,7 +293,15 @@ describe("the md's own structure", () => {
       ...hubCopyMarkup(),
       ...PAGES.flatMap(({ content }) => pageMarkup(content)),
     ].flatMap(linkHrefs);
-    expect([...new Set(hrefs)].sort()).toEqual(["/sandboxes", "/terms", "https://github.com/ashneil12/hivra"]);
+    expect([...new Set(hrefs)].sort()).toEqual(["/docs/connect-your-own-server", "/sandboxes", "/terms", "https://github.com/ashneil12/hivra"]);
+  });
+
+  it("describes OpenClaw as a new launch rather than importing an existing installation", () => {
+    const paragraphs = pageMarkup(AGENT_PAGE_CONTENT.openclaw);
+    const launch = paragraphs.find((paragraph) => paragraph.includes("Launch provisions a fresh installation."));
+
+    expect(linkHrefs(launch ?? "")).toContain("/docs/connect-your-own-server");
+    expect(launch).toContain("It does not import or take over an existing OpenClaw installation.");
   });
 });
 

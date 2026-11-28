@@ -14,7 +14,7 @@ import {
   relatedLinks,
 } from "../shared-copy";
 import { CLI_RUN_LIFETIME } from "@/lib/blog/runtime-facts";
-import { formatPlanSize } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, formatPlanSize } from "@/lib/blog/plan-facts";
 import { PRODUCT_FACTS_CHECKED } from "./checked";
 
 /**
@@ -47,7 +47,7 @@ export const page: ComparePage = {
       blocks: paragraphs(
         `With Claude Code on the web you pay for a Claude subscription, not for compute. Anthropic's documentation says a cloud session counts toward your plan's usage limits alongside the rest of your Claude and Claude Code usage, and that there is no separate charge for the cloud VM. As of ${MONTH}, Anthropic's pricing page lists Claude Pro at $20 a month billed monthly or $17 a month billed annually ($200 up front), Max at $100 a month, Ultra at $200 a month, Team seats at $20 a month on annual billing or $25 monthly for Standard and $100 annual or $125 monthly for Premium, and Enterprise at $20 a seat a month billed annually with a 20-seat minimum and usage billed at API rates on top. Anthropic says its Free level does not include Claude Code, and that cloud sessions are available on Pro, Max and Team, and for Enterprise users with premium seats or Chat + Claude Code seats.`,
         "What the subscription buys is a share of usage limits, not a fixed amount of work. Anthropic says cloud sessions share rate limits with all your other Claude and Claude Code usage, and that running several tasks in parallel uses more of the allowance in proportion. Its support pages describe a five-hour session limit and a weekly limit on Pro and Max, a weekly limit only on verified Ultra accounts, and Anthropic says it may apply additional caps at its discretion. Anthropic's pages give these as multiples of Pro rather than as numbers of messages or hours, so how much a given task costs you is something you learn by using it.",
-        `Hivra charges for the computer and leaves the model separate. ${ENTRY_PRICE_PROSE}, and every computer Hivra Cloud runs needs a paid plan. A Hivra account itself costs nothing, and a free account works with a server you connect yourself. ${AI_USAGE} For Claude Code that usually means signing in with your own Claude account inside the CLI, in which case your limits follow your Anthropic account wherever the work runs. So if you already pay Anthropic, Hivra is an added computer bill on top of a model bill you already have, while Claude Code on the web adds no bill beyond the subscription.`,
+        `Hivra charges for the computer and leaves the model separate. ${ENTRY_PRICE_PROSE}. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} A Hivra account itself costs nothing, and a free account works with a server you connect yourself. ${AI_USAGE} For Claude Code that usually means signing in with your own Claude account inside the CLI, in which case your limits follow your Anthropic account wherever the work runs. So if you already pay Anthropic, Hivra is an added computer bill on top of a model bill you already have, while Claude Code on the web adds no bill beyond the subscription.`,
         "That is the honest cost picture. If all you need is the session, the web product is the cheaper way to get it. You pay for the Hivra computer because you want the computer.",
       ),
     },
@@ -78,7 +78,7 @@ export const page: ComparePage = {
           rows: [
             {
               criterion: "Price model",
-              hivra: "A fixed monthly computer. Every computer Hivra Cloud runs needs a paid plan",
+              hivra: `A fixed monthly computer. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
               alternative: "No separate compute charge. Included with Claude Pro, Max and Team plans, and Enterprise premium or Chat + Claude Code seats",
             },
             {
@@ -274,7 +274,7 @@ export const page: ComparePage = {
     },
     {
       q: "How much does Hivra cost compared with Claude Code on the web?",
-      a: `Hivra is ${ENTRY_PRICE_PROSE}, and every computer Hivra Cloud runs needs a paid plan. A Hivra account itself costs nothing. The plan does not include AI usage, so Claude Code on Hivra is paid for with your own Claude account or Hivra credits. Claude Code on the web has no compute charge but needs a Claude subscription, which Anthropic lists from $20 a month billed monthly, as of ${MONTH}.`,
+      a: `Hivra is ${ENTRY_PRICE_PROSE}. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} A Hivra account itself costs nothing. The plan does not include AI usage, so Claude Code on Hivra is paid for with your own Claude account or Hivra credits. Claude Code on the web has no compute charge but needs a Claude subscription, which Anthropic lists from $20 a month billed monthly, as of ${MONTH}.`,
     },
     {
       q: "Can I use Claude Code on the web and Hivra together?",

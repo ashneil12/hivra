@@ -1,5 +1,5 @@
 import type { DocPage } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "@/lib/blog/plan-facts";
+import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
 import { SERVER_SIDE_AGENTS_KEEP_WORKING } from "@/lib/blog/runtime-facts";
 
 export const doc: DocPage = {
@@ -119,7 +119,7 @@ export const doc: DocPage = {
     },
     {
       q: "Can I run Hermes on my own server?",
-      a: "Not through Hivra today. Hermes runs on Hivra Cloud only, which needs a paid plan.",
+      a: `Not through Hivra today. Hermes runs on Hivra Cloud only. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
     },
     {
       q: "Which model does it use?",

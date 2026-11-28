@@ -78,9 +78,6 @@ const VERBATIM = [
   "Hivra started as HermesOS, a straightforward way to deploy Hermes Agent. The more we built, the clearer something became: this shouldn't be tied to one agent or one model.",
   "People were already using Claude Code, Codex and other tools to do serious work. What they needed wasn't another assistant telling them what it could do. They needed a reliable computer to run it on, one they could see, access and control.",
   "So HermesOS became Hivra. The name changed to make room for the wider project. Existing Hivra/HermesOS users, accounts and deployments carried across the rebrand.",
-  // The owner's md also said "and paid-plan restrictions" here and "OpenClaw and Agent Zero need a paid size" after it.
-  // On 21 October 2026 the owner ruled that Hivra runs no free computer, so no agent is singled out as the paid one.
-  "Deploy Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon through their supported workflows. Different agents have different requirements, including cloud-only restrictions.",
   "Agent Computers aren't only for agents.",
   "Connect through a browser, inspect what happened and take over when necessary.",
   "Pay for Hivra Cloud, connect infrastructure you already have or run the open-source platform yourself. The options aren't identical, and we'll tell you where a particular agent needs Hivra Cloud.",
@@ -178,10 +175,10 @@ describe("/about copy (token surfaces off, the production default)", () => {
       "Choose where it runs.",
       "Bring your own AI access.",
     ]);
-    // Concrete restrictions: Hermes is cloud only, and every computer Hivra Cloud runs is paid, whichever agent it carries
-    // (owner decision, 21 October 2026). No agent is singled out as the paid one.
-    expect(today).toHaveTextContent("Hermes runs on Hivra Cloud only. Every Hivra Cloud computer needs a paid plan.");
-    expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Every Hivra Cloud computer needs a paid plan.");
+    expect(today).toHaveTextContent("Hermes runs on Hivra Cloud only. Paid plans are the standard way to launch Hivra-run computers. Separate, gated and capacity-limited admission can apply to supported computers.");
+    expect(today).toHaveTextContent("Examples include Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon.");
+    expect(within(today).getByRole("link", { name: "agent catalog" })).toHaveAttribute("href", "/agents");
+    expect(buildAboutContent({ tokens: true }).today[0].text).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SHORT);
     expect(today.textContent).not.toMatch(/paid size|OpenClaw and Agent Zero need/i);
     // Omarchy and Windows are never called plainly available: the code runs Omarchy as a prepared
     // computer (it refuses a launch when no prepared slot exists) and Windows on the visitor's own
@@ -230,10 +227,8 @@ describe("/about copy (token surfaces off, the production default)", () => {
       MONEY_BACK_GUARANTEE,
     ]);
     expect(MONEY_BACK_GUARANTEE).toBe("7-day money-back guarantee on card payments");
-    // The rule in the canonical words, without the price a second time (it is in the paragraph above): every Hivra
-    // Cloud computer is paid, and a free account works with your own.
     expect(costs).toHaveTextContent(
-      "Every Hivra Cloud computer needs a paid plan. A free account works with a computer or server you connect yourself.",
+      "Paid plans are the standard way to launch Hivra-run computers. Separate, gated and capacity-limited admission can apply to supported computers. A free account works with a computer or server you connect yourself.",
     );
     expect((costs.textContent ?? "").match(/\$9\.99/g)).toHaveLength(1);
     expect(costs).toHaveTextContent(`Paid Hivra Cloud plans come with a ${MONEY_BACK_GUARANTEE}. Check the pricing and terms pages for the details before buying.`);
@@ -387,7 +382,7 @@ describe("/about copy (token surfaces off, the production default)", () => {
     await renderAbout(false);
     const free = screen.getByText("Can I run Hivra without paying for cloud hosting?").closest("details") as HTMLElement;
     expect(free).toHaveTextContent(
-      "Yes. Create a free account and connect your own computer or server, or self-host the open-source platform. Hivra doesn't run a computer for you without a paid plan, and you'll still pay your infrastructure and AI providers.",
+      "Yes. Create a free account and connect your own computer or server, or self-host the open-source platform. You'll still pay your infrastructure and AI providers. Paid plans are the standard way to launch Hivra-run computers. Separate, gated and capacity-limited admission can apply to supported computers.",
     );
   });
 

@@ -9,9 +9,6 @@ import {
   MONEY_BACK_GUARANTEE,
 } from "../plan-facts";
 
-// Owner decisions of 21 October 2026: every computer that Hivra Cloud runs for you is paid, whichever agent
-// it runs, and connecting your own server requires an eligible account. The copy is written
-// for the world with lapse enforcement on: it ships together with the HIVRA_LAPSE_ENFORCE_LIVE switch.
 // These tests also keep the pricing figures the 21 October rescale made honest: a total appears only
 // where the volume behind it is stated in the same article.
 
@@ -39,8 +36,7 @@ const faqAnswer = (slug: string, question: RegExp) => {
 const sentences = (copy: string) => copy.split(/(?<=[.!?])\s+|\n+/);
 
 /**
- * Claims that only some agents need a paid plan on Hivra, or that read as if an unpaid hosted computer
- * exists beside the paid ones. Every Hivra Cloud computer needs a paid plan.
+ * Claims that misleadingly single out agents as needing a paid plan.
  */
 const SELECTIVE_PAID_PLAN_CLAIMS: RegExp[] = [
   /\b(?:OpenClaw|Agent Zero|both agents)\b[^.!?\n]{0,40}\bneeds? (?:a )?paid plan\b/i,
@@ -53,16 +49,16 @@ const SELECTIVE_PAID_PLAN_CLAIMS: RegExp[] = [
 ];
 const selectivePaidPlanClaims = (copy: string) => SELECTIVE_PAID_PLAN_CLAIMS.filter((pattern) => pattern.test(copy)).map(String);
 
-describe("hosted computers need a paid plan, whichever agent runs on them", () => {
+describe("hosted computer eligibility and pricing copy", () => {
   it("builds the canonical sentences from the billing constants", () => {
     expect(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE).toBe(
-      `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`
+      `${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`
     );
     expect(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE).toBe(
-      "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM."
+      "Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM."
     );
     expect(CONNECTED_SERVER_ELIGIBILITY).toBe("To connect your own server to the Hivra dashboard, your account must be eligible.");
-    expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Every Hivra Cloud computer needs a paid plan.");
+    expect(HOSTED_COMPUTE_NEEDS_PLAN_SHORT).toBe("Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers.");
   });
 
   it("passes the banned-claim rules the public pages are scanned against, and writes no dash", () => {
@@ -89,11 +85,9 @@ describe("hosted computers need a paid plan, whichever agent runs on them", () =
     }
     for (const current of [
       HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE,
-      "Every Hivra Cloud computer needs a paid plan, and that includes the one OpenClaw runs on.",
-      "Every Hivra Cloud computer needs a paid plan, and OpenClaw's starts at $9.99 a month for 2 vCPU and 4 GB of RAM.",
-      "Hivra hosts both on managed VMs, each on a paid plan: [OpenClaw itself](/agents/openclaw), and Hermes launched from the dashboard.",
+      `Hivra can launch a fresh [OpenClaw agent](/agents/openclaw) or Hermes on a managed VM. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
       "and so does Hivra, on a paid plan. Hivra also hosts Hermes Agent on the same plans",
-      "with the server side handled for you. Every Hivra Cloud computer needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM.",
+      `with the server side handled for you. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE}`,
       "| Always-on compute | No. Sleep, reboots, and travel all kill it | Yes | Yes |",
       "that comes from the host (included on every Hivra Cloud computer), whichever CLI you run.",
     ]) {
@@ -114,17 +108,17 @@ describe("hosted computers need a paid plan, whichever agent runs on them", () =
     expect(copyOf("ai-agent-hosting-guide")).toContain("If you're weighing OpenClaw against Agent Zero, see");
     expect(copyOf("ai-agent-hosting-guide")).not.toMatch(/those last two/);
     expect(copyOf("ai-agent-vps")).toContain(`${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} ${CONNECTED_SERVER_ELIGIBILITY}`);
-    expect(copyOf("agent-zero-vs-openclaw-hosting")).toContain("Every Hivra Cloud computer needs a paid plan, whichever agent runs on it");
-    expect(copyOf("openclaw-broken-after-update")).toContain("Every Hivra Cloud computer needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM.");
+    expect(copyOf("agent-zero-vs-openclaw-hosting")).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SHORT);
+    expect(copyOf("openclaw-broken-after-update")).toContain(HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE);
     expect(faqAnswer("openclaw-broken-after-update", /without running the server myself/i)).toContain(
-      "with the server side handled for you. Every Hivra Cloud computer needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM."
+      `with the server side handled for you. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE}`
     );
-    expect(copyOf("how-to-self-host-openclaw")).toContain("each on a paid plan: [OpenClaw itself](/agents/openclaw)");
+    expect(copyOf("how-to-self-host-openclaw")).toContain(`a fresh [OpenClaw agent](/agents/openclaw) or Hermes on a managed VM. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`);
 
     const openclaw = BLOG_ARTICLES["is-openclaw-free-what-it-costs-to-run"];
     const free = openclaw.faqs.find(({ q }) => /free hosted plan/i.test(q));
     expect(free?.a).toBe(
-      `Not on Hivra. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`
+      `A free Hivra account does not include managed compute. ${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${CONNECTED_SERVER_ELIGIBILITY} A machine you already own, or a Pi you buy outright, is the route with no monthly hosting bill.`
     );
     // The price in that answer is the interpolated entry price with its size, not a hand-typed "$9.99".
     expect(free?.a).toContain(`${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}`);
@@ -142,9 +136,8 @@ describe("the memory cancellation answer", () => {
   it("tells the owner to export first, that the computer is stopped, that files are kept for a limited time and deletion is emailed first", () => {
     // Written for the world with lapse enforcement on (HIVRA_LAPSE_ENFORCE_LIVE is "true"): the copy and the switch ship together.
     expect(answer()).toContain("Export before you cancel.");
-    expect(answer()).toContain("Every Hivra Cloud computer needs a paid plan.");
     expect(answer()).toContain(
-      "Except for Hermes agents, which follow an older process that the Terms describe, the computer is stopped when a plan ends or when a card payment is still unpaid after the retries."
+      "For computers funded by your paid plan, except for Hermes agents, which follow an older process that the Terms describe, the computer is stopped when a plan ends or when a card payment is still unpaid after the retries."
     );
     expect(answer()).toContain("Its files are kept for a limited time so that you can start it again once you have paid");
     expect(answer()).toContain("Hivra emails you before anything is deleted");

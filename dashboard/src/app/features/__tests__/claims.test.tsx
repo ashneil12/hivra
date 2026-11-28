@@ -345,7 +345,7 @@ describe("feature page claims", () => {
     expect(text).toContain("Moving an existing setup is manual.");
     // No agent is "the paid one": the answer states the rule that holds for every computer Hivra Cloud runs.
     expect(text).toContain(
-      "Not on a computer that Hivra Cloud runs for you. Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself. The OpenClaw software is free. The computer that runs it is what you pay for.",
+      "A free Hivra account does not include managed compute. Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself. The OpenClaw software is free. Hosting and model usage are separate.",
     );
     expect(text).not.toContain("needs a paid size");
     expect(text).toContain("hosted on a paid Hivra computer, or try Hermes, also on a paid Hivra computer");
@@ -415,9 +415,9 @@ describe("feature page claims", () => {
     const text = visibleText((await renderFeature("no-docker-hosting")).container);
     expect(text).toContain("Hermes runs on Hivra Cloud only.");
     expect(text).toContain(
-      "Claude Code, Codex, OpenClaw, Agent Zero and Aeon can also run on a server you connect yourself, such as a Hetzner Cloud project or a Linux server that Hivra can reach over SSH. Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.",
+      "Claude Code, Codex, OpenClaw, Agent Zero and Aeon can also run on a server you connect yourself, using a Proxmox VE server connected with SSH details. Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.",
     );
-    expect(text).toContain("Not on Hivra Cloud today. For Claude Code, Codex, OpenClaw, Agent Zero and Aeon, you can connect your own server or a Hetzner Cloud project and choose where it runs.");
+    expect(text).toContain("Not on Hivra Cloud today. For Claude Code, Codex, OpenClaw, Agent Zero and Aeon, you can connect your own Proxmox VE server with SSH details and choose where it runs.");
     expect(text).not.toMatch(/\bin preview\b|preview bring-your-own|Hetzner-project deployment option/);
     // Staged rollout is something Hivra can do, not something that happens to every update.
     expect(text).toContain("Hivra can roll a new version out in stages, starting with a single agent.");
