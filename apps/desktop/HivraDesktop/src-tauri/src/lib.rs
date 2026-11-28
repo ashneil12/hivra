@@ -63,6 +63,56 @@ fn connection() -> Url {
     Url::parse(raw).unwrap_or_else(|_| Url::parse(DEFAULT_CONNECTION).expect("default connection"))
 }
 
+/// Whether an executable path can safely be written without quotes in a desktop
+/// Exec key. This deliberately conservative subset covers normal install and
+/// AppImage paths; unusual paths keep the plugin's spec-compliant quoting even
+/// though xdg-utils' generic opener mishandles that quoting.
+fn can_use_unquoted_desktop_exec(exec: &str) -> bool {
+    !exec.is_empty()
+        && exec
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-' | b'+' | b'@' | b'%'))
+}
+
+fn repair_desktop_exec(contents: &str, exec: &str) -> Option<String> {
+    if !can_use_unquoted_desktop_exec(exec) {
+        return None;
+    }
+    let quoted = format!("Exec=\"{exec}\" %u");
+    contents
+        .contains(&quoted)
+        .then(|| contents.replacen(&quoted, &format!("Exec={exec} %u"), 1))
+}
+
+/// tauri-plugin-deep-link writes a spec-compliant quoted Exec path, but the
+/// generic xdg-open fallback used by several Linux desktops does not implement
+/// Exec quoting and then sends the callback to a browser instead of the app.
+/// Rewrite simple paths to the compatible unquoted form after registration.
+#[cfg(target_os = "linux")]
+fn repair_linux_handler_exec(app: &AppHandle) -> Result<(), String> {
+    let binary = tauri::utils::platform::current_exe().map_err(|error| error.to_string())?;
+    let file_name = format!(
+        "{}-handler.desktop",
+        binary.file_name().and_then(|name| name.to_str()).ok_or("the executable has no UTF-8 file name")?
+    );
+    let exec = app
+        .env()
+        .appimage
+        .clone()
+        .unwrap_or_else(|| binary.into_os_string())
+        .to_string_lossy()
+        .into_owned();
+    let target = app
+        .path()
+        .data_dir()
+        .map_err(|error| error.to_string())?
+        .join("applications")
+        .join(file_name);
+    let contents = std::fs::read_to_string(&target).map_err(|error| error.to_string())?;
+    let Some(repaired) = repair_desktop_exec(&contents, &exec) else { return Ok(()) };
+    std::fs::write(&target, repaired).map_err(|error| error.to_string())
+}
+
 /// An address of the app's own pages, for navigating back to them.
 fn local_page(page: &str) -> Url {
     let base = if cfg!(windows) { "http://tauri.localhost/" } else { "tauri://localhost/" };
@@ -299,6 +349,10 @@ pub fn run() {
                 if let Err(error) = handle.deep_link().register("hivra") {
                     eprintln!("hivra: couldn't register the hivra:// browser handoff: {error}");
                 }
+                #[cfg(target_os = "linux")]
+                if let Err(error) = repair_linux_handler_exec(&handle) {
+                    eprintln!("hivra: couldn't repair the hivra:// browser handoff: {error}");
+                }
             }
             let links = handle.clone();
             handle.deep_link().on_open_url(move |event| {
@@ -349,5 +403,23 @@ mod tests {
             Some((current, sign_in::Intent::SignIn))
         );
         assert_eq!(pending, None);
+    }
+
+    #[test]
+    fn simple_desktop_exec_paths_are_made_xdg_open_compatible() {
+        let exec = "/home/ubuntu/Applications/Hivra_0.1.0_amd64.AppImage";
+        let contents = format!("[Desktop Entry]\nExec=\"{exec}\" %u\nTerminal=false\n");
+        assert_eq!(
+            repair_desktop_exec(&contents, exec),
+            Some(format!("[Desktop Entry]\nExec={exec} %u\nTerminal=false\n"))
+        );
+    }
+
+    #[test]
+    fn unusual_desktop_exec_paths_keep_spec_compliant_quoting() {
+        for exec in ["/tmp/Hivra with spaces.AppImage", "/tmp/Hivra\\path.AppImage", "/tmp/Hivra\"quoted\".AppImage"] {
+            let contents = format!("Exec=\"{exec}\" %u");
+            assert_eq!(repair_desktop_exec(&contents, exec), None);
+        }
     }
 }
