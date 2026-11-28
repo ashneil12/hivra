@@ -4,19 +4,21 @@ export const CANARY_MEMORY_OVERCOMMIT_PROVISIONER = "2026.11.28.2";
 const CANARY_MEMORY_GUEST = /^([1-9][0-9]{2,8}):hivra-bind-[0-9a-f]{32}$/;
 const CANARY_MEMORY_QA_CLONE = /^(93[0-9]{2}):hivra-qa-mem-[0-9a-f]{32}$/;
 const PRESSURE_BASELINE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?::(?:0|[1-9][0-9]{0,15})){4}$/;
+export const CANARY_MEMORY_HOST_ID = /^[a-z0-9][a-z0-9-]{0,62}$/;
 
 export type CanaryMemoryOvercommit = {
   ratioMilli: number;
   validUntilEpoch: number;
   measuredGuests: string[];
   pressureBaseline: string;
+  hostId: string;
 };
 
-export function parseCanaryMemoryOvercommit(data: unknown): CanaryMemoryOvercommit | null {
-  if (!data || typeof data !== "object") return null;
+export function parseCanaryMemoryOvercommit(data: unknown, hostId: string): CanaryMemoryOvercommit | null {
+  if (!data || typeof data !== "object" || !CANARY_MEMORY_HOST_ID.test(hostId)) return null;
   const { ratio_milli, valid_until_epoch, measured_guests, pressure_baseline } = data as Record<string, unknown>;
   const now = Math.floor(Date.now() / 1000);
-  if (typeof ratio_milli !== "number" || !Number.isInteger(ratio_milli) || ratio_milli < 1001 || ratio_milli > 1250
+  if (typeof ratio_milli !== "number" || !Number.isInteger(ratio_milli) || ratio_milli < 1001 || ratio_milli > 2000
     || typeof valid_until_epoch !== "number" || !Number.isInteger(valid_until_epoch)
     || valid_until_epoch <= now || valid_until_epoch > now + 90
     || !Array.isArray(measured_guests) || measured_guests.length > 64
@@ -31,7 +33,7 @@ export function parseCanaryMemoryOvercommit(data: unknown): CanaryMemoryOvercomm
     if (!vmid || vmid === "9302" || seen.has(vmid)) return null;
     seen.add(vmid);
   }
-  return { ratioMilli: ratio_milli, validUntilEpoch: valid_until_epoch, measuredGuests: measured_guests, pressureBaseline: pressure_baseline };
+  return { ratioMilli: ratio_milli, validUntilEpoch: valid_until_epoch, measuredGuests: measured_guests, pressureBaseline: pressure_baseline, hostId };
 }
 
 export function canaryMemoryOvercommitShell(grant?: CanaryMemoryOvercommit | null): string {
@@ -41,9 +43,9 @@ export function canaryMemoryOvercommitShell(grant?: CanaryMemoryOvercommit | nul
     valid_until_epoch: grant.validUntilEpoch,
     measured_guests: grant.measuredGuests,
     pressure_baseline: grant.pressureBaseline,
-  });
+  }, grant.hostId);
   if (!checked) throw new Error("Invalid Canary memory overcommit grant");
-  return `HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI=${checked.ratioMilli} HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL=${checked.validUntilEpoch} HIVRA_CAPACITY_CANARY_MEASURED_GUESTS=${quote(checked.measuredGuests.join("|"))} HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE=${quote(checked.pressureBaseline)} `;
+  return `HIVRA_CAPACITY_CANARY_HOST_ID=${quote(checked.hostId)} HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI=${checked.ratioMilli} HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL=${checked.validUntilEpoch} HIVRA_CAPACITY_CANARY_MEASURED_GUESTS=${quote(checked.measuredGuests.join("|"))} HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE=${quote(checked.pressureBaseline)} `;
 }
 
 export const DEFAULT_PROXMOX_HOST_CAPACITY_POLICY: ProxmoxHostCapacityPolicy = {

@@ -2,9 +2,10 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 
 const owner = "user_PilotFixture";
-const host = "pve11";
+const host = "fixture-node-a";
+const otherHost = "fixture-node-b";
 const lookup = "public.get_hivra_canary_memory_overcommit";
-const boot = "0abcdef0-0000-4000-8000-000000000001";
+const boot = "00000000-0000-4000-8000-00000000000a";
 let db: PGlite;
 
 beforeAll(async () => {
@@ -40,7 +41,7 @@ beforeEach(async () => {
   await db.exec(`
     reset role;
     truncate public.hivra_canary_memory_overcommit, public.proxmox_hosts, public.hivra_agents, public.hermes_instances;
-    insert into public.proxmox_hosts values ('pve11', 'active', null), ('pve13', 'active', null);
+    insert into public.proxmox_hosts values ('${host}', 'active', null), ('${otherHost}', 'active', null);
   `);
 });
 
@@ -86,11 +87,14 @@ it("is off by default and reserves the public RPC exclusively for the service ro
 });
 
 it.each([
-  "host_id = 'pve13'",
+  "host_id = 'Fixture-Node-A'",
+  "host_id = 'fixture-node-'",
+  "host_id = 'fixture node'",
+  "singleton = false",
   "owner_id = 'user_'",
   "owner_id = 'user_multiple owners'",
   "ratio_milli = 1000",
-  "ratio_milli = 1251",
+  "ratio_milli = 2001",
   "expires_at = 'infinity'",
   "customer_health_checked_at = '-infinity'",
   "measured_guest_generations = '[]'",
@@ -105,6 +109,19 @@ it.each([
 ])("rejects unsafe settings: %s", async (change) => {
   await setPermit();
   await expect(db.exec(`update public.hivra_canary_memory_overcommit set ${change}`)).rejects.toMatchObject({ code: "23514" });
+});
+
+it("allows only one configured host and accepts bounded ratios above 1250 milli", async () => {
+  await setPermit();
+  await expect(db.exec(`
+    insert into public.hivra_canary_memory_overcommit (host_id, owner_id, ratio_milli, expires_at)
+    values ('${otherHost}', 'user_Other', 1500, statement_timestamp() + interval '15 minutes')
+  `)).rejects.toMatchObject({ code: "23505" });
+  await enableWithClones([]);
+  for (const ratio of [1001, 1500, 2000]) {
+    await db.exec(`update public.hivra_canary_memory_overcommit set ratio_milli = ${ratio}`);
+    expect(await grant()).toMatchObject({ ratio_milli: ratio });
+  }
 });
 
 it("requires every pressure baseline field and emits canonical values without precision loss", async () => {
@@ -148,14 +165,14 @@ it("requires exact host and owner, an active host, and fresh affirmative custome
   expect(await grant()).toBeNull();
   await db.exec(`update public.hivra_canary_memory_overcommit set customer_health_ok = true`);
   expect(await grant()).toMatchObject({ ratio_milli: 1100, measured_guests: [] });
-  for (const [wrongHost, wrongOwner] of [["pve13", owner], ["PVE11", owner], [null, owner], [host, "user_Other"], [host, null]]) {
+  for (const [wrongHost, wrongOwner] of [[otherHost, owner], [host.toUpperCase(), owner], [null, owner], [host, "user_Other"], [host, null]]) {
     expect(await grant(wrongHost, wrongOwner)).toBeNull();
   }
-  await db.exec(`update public.proxmox_hosts set status = 'draining' where id = 'pve11'`);
+  await db.exec(`update public.proxmox_hosts set status = 'draining' where id = '${host}'`);
   expect(await grant()).toBeNull();
-  await db.exec(`update public.proxmox_hosts set status = 'active', decommissioned_at = statement_timestamp() where id = 'pve11'`);
+  await db.exec(`update public.proxmox_hosts set status = 'active', decommissioned_at = statement_timestamp() where id = '${host}'`);
   expect(await grant()).toBeNull();
-  await db.exec(`delete from public.proxmox_hosts where id = 'pve11'`);
+  await db.exec(`delete from public.proxmox_hosts where id = '${host}'`);
   expect(await grant()).toBeNull();
 });
 
@@ -189,7 +206,7 @@ it("qualifies only exact enrolled guest identities with a current ordinary alloc
   const fixtures: Array<[number, Record<string, unknown>]> = [
     [1100, {}],
     [1101, { user_id: "user_Other" }],
-    [1102, { proxmox_host: "pve13" }],
+    [1102, { proxmox_host: otherHost }],
     [1103, { deployment_mode: "self-managed" }],
     [1104, { computer_substrate: "proxmox-lxc" }],
     [1105, { deployment_target_id: allocation }],
@@ -239,21 +256,21 @@ it("qualifies only exact enrolled guest identities with a current ordinary alloc
   expect(await grant()).toMatchObject({ measured_guests: [cloneIdentity(9301)] });
 });
 
-it("does not credit a QA VMID with a retained Native or Classic tenant reference on pve11", async () => {
+it("does not credit a QA VMID with a retained Native or Classic tenant reference on the selected host", async () => {
   await setPermit();
   await enableWithClones([9300, 9301, 9303, 9304, 9305, 9306, 9307, 9308, 9309].map(vmid => cloneIdentity(vmid)));
   await db.exec(`
     insert into public.hivra_agents (vmid, proxmox_host, user_id, status, sleep_state) values
-      (9300, 'pve11', 'user_Other', 'running', 'hibernated'),
-      (9301, ' PVE11 ', 'user_Other', 'stopped', 'awake'),
-      (9303, 'pve11', 'user_Other', 'deleted', 'awake'),
-      (9304, 'pve13', 'user_Other', 'running', 'awake');
+      (9300, '${host}', 'user_Other', 'running', 'hibernated'),
+      (9301, ' ${host.toUpperCase()} ', 'user_Other', 'stopped', 'awake'),
+      (9303, '${host}', 'user_Other', 'deleted', 'awake'),
+      (9304, '${otherHost}', 'user_Other', 'running', 'awake');
     insert into public.hermes_instances values
-      ('pve11', 9305, 'proxmox', 'paused', null),
-      ('PVE11', 9306, 'proxmox', 'cold_archived', null),
-      ('pve11', 9307, 'proxmox', 'deleted', statement_timestamp()),
-      ('pve11', 9308, 'proxmox', 'deleted', null),
-      ('pve11', 9309, null, 'failed', null);
+      ('${host}', 9305, 'proxmox', 'paused', null),
+      ('${host.toUpperCase()}', 9306, 'proxmox', 'cold_archived', null),
+      ('${host}', 9307, 'proxmox', 'deleted', statement_timestamp()),
+      ('${host}', 9308, 'proxmox', 'deleted', null),
+      ('${host}', 9309, null, 'failed', null);
     set role service_role;
   `);
   expect(await grant()).toMatchObject({ measured_guests: [9303, 9304, 9307].map(vmid => cloneIdentity(vmid)) });

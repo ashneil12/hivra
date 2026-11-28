@@ -5,12 +5,17 @@ import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
   CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  CANARY_MEMORY_HOST_ID,
   parseCanaryMemoryOvercommit,
   type CanaryMemoryOvercommit,
 } from "@/lib/infrastructure/host-capacity-policy";
 
-const PILOT_HOST = "pve11";
 const OWNER = /^user_[A-Za-z0-9]+$/;
+
+export function canaryMemoryOvercommitHost(): string | null {
+  const host = process.env.HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID;
+  return host && CANARY_MEMORY_HOST_ID.test(host) ? host : null;
+}
 
 export async function readCanaryMemoryOvercommit(input: {
   host: string;
@@ -18,7 +23,7 @@ export async function readCanaryMemoryOvercommit(input: {
   channel: string;
   bundleVersion?: string;
 }): Promise<CanaryMemoryOvercommit | null> {
-  if (input.host !== PILOT_HOST || input.channel !== "canary"
+  if (input.host !== canaryMemoryOvercommitHost() || input.channel !== "canary"
     || (input.bundleVersion !== undefined && input.bundleVersion !== CANARY_MEMORY_OVERCOMMIT_PROVISIONER)
     || !OWNER.test(input.ownerId) || !isCanonicalGitCanaryDeployment() || !supabaseAdmin) return null;
   try {
@@ -26,7 +31,7 @@ export async function readCanaryMemoryOvercommit(input: {
       p_host_id: input.host,
       p_owner_id: input.ownerId,
     });
-    if (!error) return parseCanaryMemoryOvercommit(data);
+    if (!error) return parseCanaryMemoryOvercommit(data, input.host);
   } catch {
     // A read failure cannot authorize relaxed host admission.
   }

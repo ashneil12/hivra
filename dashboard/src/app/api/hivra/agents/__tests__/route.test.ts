@@ -510,6 +510,7 @@ describe("POST /api/hivra/agents", () => {
     "HIVRA_CANARY_QA_HOLDER_ENABLED",
     "HIVRA_CANARY_QA_HOLDER_USER_ID",
     "HIVRA_CANARY_QA_HOLDER_EXPIRES_AT",
+    "HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID",
     "HIVRA_CANARY_DEEPSEEK_IMAGE_HOST",
     "HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256",
     "HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID",
@@ -1634,12 +1635,15 @@ describe("POST /api/hivra/agents", () => {
   });
 
   it.each([
-    ["canary", "pve11", PORTABLE_HIVRA_PROVISIONER_VERSION, true],
-    ["canary", "pve11", "2026.11.28.1", false],
-    ["canary", "pve19", PORTABLE_HIVRA_PROVISIONER_VERSION, false],
-    ["main", "pve11", PORTABLE_HIVRA_PROVISIONER_VERSION, false],
+    ["canary", "fixture-node-a", PORTABLE_HIVRA_PROVISIONER_VERSION, true],
+    ["canary", "fixture-node-a", "2026.11.28.1", false],
+    ["canary", "fixture-node-b", PORTABLE_HIVRA_PROVISIONER_VERSION, false],
+    ["main", "fixture-node-a", PORTABLE_HIVRA_PROVISIONER_VERSION, false],
   ] as const)("reads a fresh DB memory grant only for the qualified launch (%s / %s / %s)", async (branch, host, version, eligible) => {
-    enableManagedGvisorQaFixture({ VERCEL_TARGET_ENV: "canary", VERCEL_GIT_COMMIT_REF: branch });
+    enableManagedGvisorQaFixture({
+      VERCEL_TARGET_ENV: "canary", VERCEL_GIT_COMMIT_REF: branch,
+      HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID: "fixture-node-a",
+    });
     mockAuth.mockResolvedValue({ userId: "user_fixture1" });
     mockSubscriptionRow = {
       plan: "operator", status: "active", instance_limit: 3,
@@ -1649,10 +1653,10 @@ describe("POST /api/hivra/agents", () => {
       ok: true, targetId: host, provisionerVersion: version,
       env: { PROXMOX_NODE: host, PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21", PROXMOX_PRIVATE_GATEWAY: "10.250.21.1" },
     });
-    const guest = `1100:hivra-bind-${"a".repeat(32)}`;
+    const guest = `700001:hivra-bind-${"a".repeat(32)}`;
     const grant = {
       ratio_milli: 1100, valid_until_epoch: Math.floor(Date.now() / 1000) + 60, measured_guests: [guest],
-      pressure_baseline: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:3344:0:32",
+      pressure_baseline: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:123:0:7",
     };
     for (const data of [null, grant, null]) {
       mockRunProxmoxHostScript.mockReset()
@@ -1665,6 +1669,7 @@ describe("POST /api/hivra/agents", () => {
       const calls = mockSupabaseRpc.mock.calls.filter(([name]) => name === "get_hivra_canary_memory_overcommit");
       expect(calls).toEqual(eligible ? [[ "get_hivra_canary_memory_overcommit", { p_host_id: host, p_owner_id: "user_fixture1" } ]] : []);
       if (eligible && data) {
+        expect(script).toContain(`HIVRA_CAPACITY_CANARY_HOST_ID='${host}'`);
         expect(script).toContain(`HIVRA_CAPACITY_CANARY_MEASURED_GUESTS='${guest}'`);
         expect(script.indexOf("flock -w")).toBeLessThan(script.indexOf("HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI="));
       } else {

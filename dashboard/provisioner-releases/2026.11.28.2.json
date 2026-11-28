@@ -144,8 +144,8 @@
     },
     {
       "path": "hivra-canary-memory-qa-clone.sh",
-      "bytes": 7907,
-      "sha256": "be7adfe95a325b4f9e8a08a3c3bf4caab7b17f12b991315ee1241cb0ca9fe1b7"
+      "bytes": 8177,
+      "sha256": "e1fa58a1076b7459185f0c0508abccf5675e687a47e9b34d6acff2fdbcb2def5"
     },
     {
       "path": "hivra-catalog-app.py",
@@ -159,8 +159,8 @@
     },
     {
       "path": "hivra-host-capacity-admission",
-      "bytes": 39392,
-      "sha256": "443f77c0ea4945c6b097c9811501880c7134300a6f65622fef0a1393aa6b5ed6"
+      "bytes": 39562,
+      "sha256": "f575902370c8cbca930d6863347c242364534b50269541d6de803284ffa2ea63"
     },
     {
       "path": "hivra-install-agent.py",

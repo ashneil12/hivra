@@ -1,8 +1,9 @@
 create table if not exists public.hivra_canary_memory_overcommit (
-  host_id text primary key check (host_id = 'pve11'),
+  singleton boolean primary key default true check (singleton),
+  host_id text not null check (host_id ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'),
   owner_id text not null check (owner_id ~ '^user_[A-Za-z0-9]+$'),
   enabled boolean not null default false,
-  ratio_milli integer not null check (ratio_milli between 1001 and 1250),
+  ratio_milli integer not null check (ratio_milli between 1001 and 2000),
   expires_at timestamptz not null check (isfinite(expires_at)),
   customer_health_ok boolean not null default false,
   customer_health_checked_at timestamptz check (isfinite(customer_health_checked_at)),
@@ -36,7 +37,7 @@ as $$
         statement_timestamp() + interval '90 seconds')))::bigint as valid_until_epoch
     from public.hivra_canary_memory_overcommit s
     join public.proxmox_hosts h on h.id = s.host_id
-    where s.host_id = 'pve11' and s.host_id = p_host_id and s.owner_id = p_owner_id
+    where s.host_id = p_host_id and s.owner_id = p_owner_id
       and s.enabled and s.expires_at > statement_timestamp() and s.customer_health_ok
       and s.customer_health_checked_at between statement_timestamp() - interval '10 minutes' and statement_timestamp()
       and h.status = 'active' and h.decommissioned_at is null
@@ -55,7 +56,8 @@ as $$
       and a.infrastructure_binding_token_enforced and a.infrastructure_binding_token_hash ~ '^[0-9a-f]{64}$'
       and p.measured_guest_generations -> guest.key = to_jsonb(a.sleep_generation)
   ), qa_settings as (
-    select p.host_id, q.key, substring(q.key from '^([0-9]{4}):')::integer as vmid
+    select public.holder_admission_normalize_host_id(p.host_id) as host_key,
+      q.key, substring(q.key from '^([0-9]{4}):')::integer as vmid
     from permit p
     cross join lateral unnest(p.measured_qa_clones) q(key)
     where array_ndims(p.measured_qa_clones) = 1
@@ -70,12 +72,12 @@ as $$
     and not exists (select 1 from qa_settings group by vmid having count(*) > 1)
     and not exists (
       select 1 from public.hivra_agents a
-      where a.vmid = q.vmid and public.holder_admission_normalize_host_id(a.proxmox_host) = q.host_id
+      where a.vmid = q.vmid and public.holder_admission_normalize_host_id(a.proxmox_host) = q.host_key
         and a.status is distinct from 'deleted'
     )
     and not exists (
       select 1 from public.hermes_instances h
-      where h.proxmox_vmid = q.vmid and public.holder_admission_normalize_host_id(h.proxmox_node) = q.host_id
+      where h.proxmox_vmid = q.vmid and public.holder_admission_normalize_host_id(h.proxmox_node) = q.host_key
         and (h.deleted_at is null or h.lifecycle_state is distinct from 'deleted')
     )
   )

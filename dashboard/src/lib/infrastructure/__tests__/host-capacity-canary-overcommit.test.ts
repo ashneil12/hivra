@@ -7,13 +7,14 @@ import path from "node:path";
 const HELPER = path.join(process.cwd(), "provisioner", "hivra-host-capacity-admission");
 const BINDING = `hivra-bind-${"a".repeat(32)}`;
 const QA_TAG = `hivra-qa-mem-${"b".repeat(32)}`;
-const BOOT_ID = "cc6ed82b-4fc6-43f9-bd77-807c5061f61b";
+const BOOT_ID = "00000000-0000-4000-8000-000000000001";
+const HOST_ID = "fixture-node-a";
 const OPERATION = "11111111-1111-4111-8111-111111111111";
 
 describe("sealed Canary memory overcommit admission", () => {
   let dir: string;
   let helper: string;
-  let qemu: ChildProcess | undefined;
+  let processes: ChildProcess[];
   let states: Record<string, { vmid: number; qmpstatus: string; pid?: number }>;
   let configs: Record<string, Record<string, string | number>>;
   let currentConfigs: typeof configs;
@@ -28,9 +29,9 @@ describe("sealed Canary memory overcommit admission", () => {
 
   async function active(maximumMb: number, {
     young = false, status = "running", qmpStatus = status, vmid = 101, duringSample = "",
-  } = {}) {
+  }: { young?: boolean; status?: string; qmpStatus?: string; vmid?: number; duringSample?: string } = {}) {
     const hz = Number(spawnSync("getconf", ["CLK_TCK"], { encoding: "utf8" }).stdout);
-    qemu = spawn("python3", ["-u", "-c", `
+    const qemu = spawn("python3", ["-u", "-c", `
 import json, socket, sys
 from pathlib import Path
 with socket.socket(socket.AF_UNIX) as listener:
@@ -51,6 +52,7 @@ with socket.socket(socket.AF_UNIX) as listener:
 `, path.join(dir, "run", `${vmid}.qmp`), qmpStatus, path.join(dir, "proc/meminfo"), duringSample], {
       stdio: ["ignore", "pipe", "inherit"],
     });
+    processes.push(qemu);
     await once(qemu.stdout!, "data");
     const pid = qemu.pid!;
     put(`run/${vmid}.pid`, `${pid}\n`);
@@ -97,6 +99,7 @@ with socket.socket(socket.AF_UNIX) as listener:
       encoding: "utf8",
       timeout: 7500,
       env: {
+        NODE_ENV: "test",
         PATH: `${dir}:/usr/bin:/bin`,
         PERL5LIB: dir,
         ...(pilot ? {
@@ -104,6 +107,7 @@ with socket.socket(socket.AF_UNIX) as listener:
           HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL: String(Math.floor(Date.now() / 1000) + 60),
           HIVRA_CAPACITY_CANARY_MEASURED_GUESTS: `101:${BINDING}`,
           HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE: `${BOOT_ID}:0:0:0:0`,
+          HIVRA_CAPACITY_CANARY_HOST_ID: HOST_ID,
         } : {}),
         FIXTURE_STATES: JSON.stringify(states),
         FIXTURE_CONFIGS: JSON.stringify(configs),
@@ -121,6 +125,7 @@ with socket.socket(socket.AF_UNIX) as listener:
     states = {};
     configs = {};
     currentConfigs = {};
+    processes = [];
     helper = path.join(dir, "hivra-host-capacity-admission");
     put("hivra-host-capacity-admission", readFileSync(HELPER, "utf8")
       .replaceAll("/proc/self/fd/8", "PRESERVE_FD_PATH")
@@ -131,8 +136,8 @@ with socket.socket(socket.AF_UNIX) as listener:
       .replaceAll("/var/lib/hivra/provision-operations", path.join(dir, "intents"))
       .replaceAll("/etc/pve/qemu-server", path.join(dir, "configs"))
       .replace('/root/hivra-provisioner-canary/hivra-host-capacity-admission', helper)
-      .replace('"$EUID" = 0', '"$EUID" = "${EUID}"'));
-    put("proc/sys/kernel/hostname", "pve11\n");
+      .replace('"$EUID" == 0', '"$EUID" == "$(id -u)"'));
+    put("proc/sys/kernel/hostname", `${HOST_ID}\n`);
     put("proc/sys/kernel/random/boot_id", `${BOOT_ID}\n`);
     meminfo();
     put("proc/uptime", "1000.00 4000.00\n");
@@ -150,12 +155,11 @@ sub load_current_config { my ($class, $vmid, $current) = @_; return decode_json(
   });
 
   afterEach(async () => {
-    if (qemu) {
+    await Promise.all(processes.filter(qemu => qemu.exitCode === null && qemu.signalCode === null).map(async qemu => {
       const finished = once(qemu, "exit");
       qemu.kill();
       await finished;
-      qemu = undefined;
-    }
+    }));
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -184,8 +188,29 @@ sub load_current_config { my ($class, $vmid, $current) = @_; return decode_json(
     expect(run({ env })).toMatchObject({ status: 1, stderr: expect.stringContaining("insufficient live memory headroom") });
     meminfo({ swapUsedKb: 1 });
     expect(run({ env })).toMatchObject({ status: 1, stderr: expect.stringContaining("swap is in use") });
-    put("proc/sys/kernel/hostname", "pve13\n");
-    expect(run({ env })).toMatchObject({ status: 1, stderr: expect.stringContaining("requires the installed Canary bundle on pve11") });
+    put("proc/sys/kernel/hostname", "fixture-node-b\n");
+    expect(run({ env })).toMatchObject({ status: 1, stderr: expect.stringContaining("requires the installed Canary bundle on the authorized host") });
+  });
+
+  it("admits synthetic 1.5x density only with qualified PSS and checks the measured and hard limits separately", async () => {
+    const firstPid = await active(19 * 1024, { vmid: 9301 });
+    const nextPid = await active(19 * 1024, { vmid: 9303 });
+    configs["9301"].tags = QA_TAG;
+    configs["9303"].tags = QA_TAG;
+    enroll(9301, firstPid);
+    enroll(9303, nextPid);
+    const env = {
+      HIVRA_CAPACITY_CANARY_MEASURED_GUESTS: `9301:${QA_TAG}|9303:${QA_TAG}`,
+      HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI: "1500",
+    };
+    expect(run({ env })).toMatchObject({ status: 0, stdout: expect.stringContaining("floor_headroom_mb=2048 active_floor_mb=1024 active_max_mb=38912") });
+    expect(run({ env: { ...env, HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI: "1499" } })).toMatchObject({
+      status: 1, stderr: expect.stringContaining("active memory ceilings exceed the Canary hard density"),
+    });
+    expect(run({ env: { ...env, HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI: "2000" } })).toMatchObject({ status: 0 });
+    const sample = `proc/${firstPid}/smaps_rollup`;
+    put(sample, readFileSync(path.join(dir, sample), "utf8").replace("Pss: 3145728 kB", "Pss: 12582912 kB"));
+    expect(run({ env })).toMatchObject({ status: 1, stderr: expect.stringContaining("measured memory plus host reserve") });
   });
 
   it("charges full maximum for missing, stale, unsafe or mismatched QA enrollment", async () => {
@@ -271,30 +296,30 @@ sub load_current_config { my ($class, $vmid, $current) = @_; return decode_json(
     expect(run({ env: { HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE: "" } })).toMatchObject({
       status: 1, stderr: expect.stringContaining("requires a pressure baseline"),
     });
-    put("proc/vmstat", "pswpin 4\npswpout 3344\noom_kill 2\n");
-    meminfo({ swapUsedKb: 32 });
+    put("proc/vmstat", "pswpin 4\npswpout 6017\noom_kill 2\n");
+    meminfo({ swapUsedKb: 23 });
     const pressure = (value: string) => run({ env: { HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE: value } });
-    expect(pressure(`${BOOT_ID}:4:3344:2:32`)).toMatchObject({ status: 0 });
-    expect(pressure(`${BOOT_ID}:4:3344:2:64`)).toMatchObject({ status: 0 });
-    expect(pressure(`${BOOT_ID}:4:3344:2:65`)).toMatchObject({ status: 1, stderr: expect.stringContaining("invalid pressure baseline") });
-    expect(pressure(`${BOOT_ID}:4:-1:2:32`)).toMatchObject({ status: 1, stderr: expect.stringContaining("invalid pressure baseline") });
-    expect(pressure(`${OPERATION}:4:3344:2:32`)).toMatchObject({
+    expect(pressure(`${BOOT_ID}:4:6017:2:23`)).toMatchObject({ status: 0 });
+    expect(pressure(`${BOOT_ID}:4:6017:2:64`)).toMatchObject({ status: 0 });
+    expect(pressure(`${BOOT_ID}:4:6017:2:65`)).toMatchObject({ status: 1, stderr: expect.stringContaining("invalid pressure baseline") });
+    expect(pressure(`${BOOT_ID}:4:-1:2:23`)).toMatchObject({ status: 1, stderr: expect.stringContaining("invalid pressure baseline") });
+    expect(pressure(`${OPERATION}:4:6017:2:23`)).toMatchObject({
       status: 1, stderr: expect.stringContaining("host boot differs from the pressure baseline"),
     });
-    for (const recorded of [3343, 3345]) {
-      expect(pressure(`${BOOT_ID}:4:${recorded}:2:32`)).toMatchObject({
+    for (const recorded of [6016, 6018]) {
+      expect(pressure(`${BOOT_ID}:4:${recorded}:2:23`)).toMatchObject({
         status: 1, stderr: expect.stringContaining("counters differ from the pressure baseline"),
       });
     }
-    meminfo({ swapUsedKb: 33 });
-    expect(pressure(`${BOOT_ID}:4:3344:2:32`)).toMatchObject({
+    meminfo({ swapUsedKb: 24 });
+    expect(pressure(`${BOOT_ID}:4:6017:2:23`)).toMatchObject({
       status: 1, stderr: expect.stringContaining("swap is in use above the pressure baseline"),
     });
   });
 
   it("rejects swap growth during sampling even below the baseline limit", async () => {
-    meminfo({ swapUsedKb: 31 });
-    const duringSample = readFileSync(path.join(dir, "proc/meminfo"), "utf8").replace("65505 kB", "65504 kB");
+    meminfo({ swapUsedKb: 22 });
+    const duringSample = readFileSync(path.join(dir, "proc/meminfo"), "utf8").replace("65514 kB", "65513 kB");
     await active(24 * 1024, { duringSample });
     expect(run({ env: { HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE: `${BOOT_ID}:0:0:0:64` } })).toMatchObject({
       status: 1, stderr: expect.stringContaining("swap use grew during measurement"),
@@ -380,7 +405,7 @@ sub load_current_config { my ($class, $vmid, $current) = @_; return decode_json(
     expect(run({ env: { HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL: "1" } })).toMatchObject({
       status: 1, stderr: expect.stringContaining("expired Canary memory overcommit"),
     });
-    expect(run({ env: { HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI: "1251" } })).toMatchObject({
+    expect(run({ env: { HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI: "2001" } })).toMatchObject({
       status: 1, stderr: expect.stringContaining("invalid Canary memory overcommit"),
     });
     expect(run({ env: { HIVRA_CAPACITY_CANARY_MEASURED_GUESTS: `9302:${BINDING}` } })).toMatchObject({
@@ -389,9 +414,12 @@ sub load_current_config { my ($class, $vmid, $current) = @_; return decode_json(
     const alternate = path.join(dir, "uninstalled");
     put("uninstalled", readFileSync(helper));
     expect(run({ executable: alternate })).toMatchObject({
-      status: 1, stderr: expect.stringContaining("requires the installed Canary bundle on pve11"),
+      status: 1, stderr: expect.stringContaining("requires the installed Canary bundle on the authorized host"),
     });
-    put("proc/sys/kernel/hostname", "pve13\n");
-    expect(run()).toMatchObject({ status: 1, stderr: expect.stringContaining("requires the installed Canary bundle on pve11") });
+    for (const hostId of ["", "../fixture-node-a", "fixture-node-b"]) {
+      expect(run({ env: { HIVRA_CAPACITY_CANARY_HOST_ID: hostId } })).toMatchObject({
+        status: 1, stderr: expect.stringContaining("requires the installed Canary bundle on the authorized host"),
+      });
+    }
   });
 });

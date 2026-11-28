@@ -134,6 +134,7 @@ describe("ensureHivraAgentAwake", () => {
       ...process.env,
       VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
       VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+      HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID: "fixture-node-a",
     });
     const candidate = row({ user_id: "user_fixture", type: "hermes", computer_substrate: "proxmox-kvm", seat_funding: "paid" });
     const managed = (host: string, vmid = VMID) => ({
@@ -143,18 +144,18 @@ describe("ensureHivraAgentAwake", () => {
     try {
       const grant = {
         ratio_milli: 1100, valid_until_epoch: Math.floor(Date.now() / 1000) + 60, measured_guests: [],
-        pressure_baseline: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:3344:0:32",
+        pressure_baseline: "00000000-0000-4000-8000-000000000042:0:17:0:24",
       };
       mockMemoryGrant.mockResolvedValueOnce({ data: grant, error: null })
         .mockResolvedValueOnce({ data: grant, error: { code: "PGRST205" } });
       for (const [host, vmid, restore] of [
-        ["pve11", VMID, true], ["pve11", VMID, true], ["pve11", VMID, false],
-        ["pve19", VMID, true], ["pve11", 9302, true],
+        ["fixture-node-a", VMID, true], ["fixture-node-a", VMID, true], ["fixture-node-a", VMID, false],
+        ["fixture-node-b", VMID, true], ["fixture-node-a", 9302, true],
       ] as const) {
         await runWakeHostScript(candidate, managed(host, vmid), { restore });
       }
       expect(mockMemoryGrant.mock.calls).toEqual(Array(2).fill([
-        "get_hivra_canary_memory_overcommit", { p_host_id: "pve11", p_owner_id: "user_fixture" },
+        "get_hivra_canary_memory_overcommit", { p_host_id: "fixture-node-a", p_owner_id: "user_fixture" },
       ]));
       const scripts = mockRunScript.mock.calls.map(([script]) => String(script));
       expect(scripts[0]).toContain("HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI=1100");

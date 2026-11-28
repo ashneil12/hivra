@@ -6,12 +6,15 @@ import path from "node:path";
 
 const WRAPPER = path.join(process.cwd(), "provisioner", "hivra-canary-memory-qa-clone.sh");
 const VMID = "9304";
+const TEMPLATE_VMID = "8050";
+const HOST_ID = "fixture-node-a";
+const QEMU_CONFIGS = `pve/nodes/${HOST_ID}/qemu-server`;
 const TAG = `hivra-qa-mem-${"a".repeat(32)}`;
-const BOOT = "d8294236-c7df-49cb-a647-a49d7bea10fb";
+const BOOT = "00000000-0000-4000-8000-000000000002";
 const PID = "1428";
 const START = "72300";
-const PRESSURE_BASELINE = `${BOOT}:0:3344:0:32`;
-const TEMPLATE = "template: 1\nostype: l26\nonboot: 0\nnet0: virtio=AA:BB:CC:DD:EE:FF,bridge=hivra0\nnet7: virtio=AA:BB:CC:DD:EE:11,bridge=hivra0\nscsi0: local-lvm:base-9007-disk-0,size=12G\n";
+const PRESSURE_BASELINE = `${BOOT}:0:6017:0:23`;
+const TEMPLATE = `template: 1\nostype: l26\nonboot: 0\nnet0: virtio=AA:BB:CC:DD:EE:FF,bridge=fixturebr0\nnet7: virtio=AA:BB:CC:DD:EE:11,bridge=fixturebr0\nscsi0: local-lvm:base-${TEMPLATE_VMID}-disk-0,size=12G\n`;
 
 const MOCK_HOST = String.raw`#!/usr/bin/env python3
 import fcntl
@@ -22,10 +25,11 @@ from pathlib import Path
 
 root = Path(os.environ["MOCK_ROOT"])
 vmid, tag, pid, start = (os.environ[name] for name in ("MOCK_VMID", "MOCK_TAG", "MOCK_PID", "MOCK_START"))
+host_id, template_vmid = (os.environ[name] for name in ("MOCK_HOST_ID", "MOCK_TEMPLATE_VMID"))
 name = Path(sys.argv[0]).name
 args = sys.argv[1:]
 mode = os.environ.get("MOCK_MODE")
-config = root / f"pve/nodes/pve11/qemu-server/{vmid}.conf"
+config = root / f"pve/nodes/{host_id}/qemu-server/{vmid}.conf"
 ledger = root / f"references/qa-memory-{vmid}.operator.list"
 wake = root / f"ops/wake-{vmid}.selected"
 pidfile = root / f"run/qemu-server/{vmid}.pid"
@@ -65,11 +69,11 @@ elif name == "qm":
     action, target, *options = args
     if action == "config":
         assert options == ["--current", "1"]
-        print((root / "template" if target == "9007" else config).read_text(), end="")
+        print((root / "template" if target == template_vmid else config).read_text(), end="")
     elif action == "clone":
         held()
         assert not Path("/proc/self/fd/8").exists() and not Path("/proc/self/fd/9").exists()
-        assert target == "9007" and options == [vmid, "--name", tag, "--full", "0"]
+        assert target == template_vmid and options == [vmid, "--name", tag, "--full", "0"]
         assert not config.exists() and ledger.read_text() == f"{vmid}\n"
         stock = (root / "template").read_text().replace("template: 1\n", "")
         config.write_text(f"name: {tag}\n" + stock)
@@ -138,23 +142,27 @@ describe("Canary memory QA clone host wrapper", () => {
 
   function run({
     env = {}, vmid = VMID, tag = TAG, digest = createHash("sha256").update(text("template")).digest("hex"), cpuBudget = "40000",
-    lockFile = "locks/hivra-allocation.lock",
+    lockFile = "locks/hivra-allocation.lock", templateVmid = TEMPLATE_VMID,
   } = {}) {
     const runner = lockFile
       ? ["-euc", 'exec 8>>"$1"; flock -nx 8; shift; exec bash "$@"', "stub-route", path.join(dir, lockFile)]
       : [];
-    return spawnSync("bash", [...runner, script, vmid, tag, digest, cpuBudget], {
+    return spawnSync("bash", [...runner, script, vmid, tag, digest, cpuBudget, templateVmid], {
       encoding: "utf8",
       timeout: 10_000,
       env: {
+        NODE_ENV: "test",
         PATH: `${dir}/bin:/usr/bin:/bin`,
         HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI: "1250",
         HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL: String(Math.floor(Date.now() / 1000) + 60),
         HIVRA_CAPACITY_CANARY_MEASURED_GUESTS: `${VMID}:${TAG}`,
         HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE: PRESSURE_BASELINE,
+        HIVRA_CAPACITY_CANARY_HOST_ID: HOST_ID,
         MOCK_PRESSURE_BASELINE: PRESSURE_BASELINE,
         MOCK_ROOT: dir,
         MOCK_CPUS: "12",
+        MOCK_HOST_ID: HOST_ID,
+        MOCK_TEMPLATE_VMID: TEMPLATE_VMID,
         MOCK_VMID: VMID,
         MOCK_TAG: TAG,
         MOCK_PID: PID,
@@ -173,7 +181,7 @@ describe("Canary memory QA clone host wrapper", () => {
 
   beforeEach(() => {
     dir = mkdtempSync(path.join(tmpdir(), "hivra-qa-clone-"));
-    for (const name of ["bin", "bundle", "proc/sys/kernel/random", "pve/nodes/pve11/qemu-server", "pve/nodes/pve11/lxc", "locks", "run/qemu-server", "run/hivra-provision", "ops", "references", "results"]) {
+    for (const name of ["bin", "bundle", "proc/sys/kernel/random", QEMU_CONFIGS, `pve/nodes/${HOST_ID}/lxc`, "locks", "run/qemu-server", "run/hivra-provision", "ops", "references", "results"]) {
       mkdirSync(path.join(dir, name), { recursive: true });
     }
     const rewrites = {
@@ -198,7 +206,7 @@ describe("Canary memory QA clone host wrapper", () => {
       .replace('"$EUID" == 0', '"$EUID" == "$(id -u)"')
       .replace('"$owner" == 0', '"$owner" == "$(id -u)"'));
     script = path.join(dir, "bundle/hivra-canary-memory-qa-clone.sh");
-    put("proc/sys/kernel/hostname", "pve11\n");
+    put("proc/sys/kernel/hostname", `${HOST_ID}\n`);
     put("proc/sys/kernel/random/boot_id", `${BOOT}\n`);
     put("template", TEMPLATE);
     put("kvm", "");
@@ -222,6 +230,19 @@ describe("Canary memory QA clone host wrapper", () => {
     noMutation();
   });
 
+  it("requires a valid exact host ID and a non-QA source VMID before touching inventory", () => {
+    for (const id of ["", "fixture-node-b", "../fixture-node-a"]) {
+      expect(run({ env: { HIVRA_CAPACITY_CANARY_HOST_ID: id } })).toMatchObject({
+        status: 1, stderr: expect.stringContaining("wrong host or bundle"),
+      });
+    }
+    for (const templateVmid of ["0", "9301", "9399", "1000000000"]) {
+      expect(run({ templateVmid })).toMatchObject({ status: 1, stderr: expect.stringContaining("invalid fixture scope") });
+    }
+    expect(callLog()).toEqual([]);
+    noMutation();
+  });
+
   it("refuses a missing FD8 or an FD8 for the wrong inode before touching inventory", () => {
     for (const lockFile of ["", "locks/foreign.lock"]) {
       expect(run({ lockFile })).toMatchObject({
@@ -234,10 +255,10 @@ describe("Canary memory QA clone host wrapper", () => {
 
   it("does not touch an existing foreign config", () => {
     const foreign = "name: untouched\ntags: hivra-bind-00000000000000000000000000000000\n";
-    put(`pve/nodes/pve11/qemu-server/${VMID}.conf`, foreign);
+    put(`${QEMU_CONFIGS}/${VMID}.conf`, foreign);
     expect(run()).toMatchObject({ status: 1, stderr: expect.stringContaining("VMID has existing host state") });
     expect(callLog()).toEqual([]);
-    expect(text(`pve/nodes/pve11/qemu-server/${VMID}.conf`)).toBe(foreign);
+    expect(text(`${QEMU_CONFIGS}/${VMID}.conf`)).toBe(foreign);
     noMutation();
   });
 
@@ -266,9 +287,15 @@ describe("Canary memory QA clone host wrapper", () => {
     noMutation();
   });
 
+  it("rejects a base disk belonging to a different template VMID", () => {
+    put("template", TEMPLATE.replace(`base-${TEMPLATE_VMID}-disk`, "base-8051-disk"));
+    expect(run()).toMatchObject({ status: 1, stderr: expect.stringContaining("template must have one bounded local linked disk") });
+    noMutation();
+  });
+
   it("claims the exact VMID under FD8, strips network and autostart, and publishes the PID-bound receipt", () => {
     expect(run()).toMatchObject({ status: 0, stdout: expect.stringContaining(`HIVRA_CANARY_MEMORY_QA_RUNNING ${VMID} ${TAG}`) });
-    const config = text(`pve/nodes/pve11/qemu-server/${VMID}.conf`);
+    const config = text(`${QEMU_CONFIGS}/${VMID}.conf`);
     expect(config).not.toMatch(/^net[0-9]+:/m);
     expect(config).toMatch(/^onboot: 0$/m);
     expect(config).toMatch(/^cpulimit: 0\.25$/m);

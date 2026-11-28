@@ -84,9 +84,10 @@ CANARY_OVERCOMMIT_MILLI="${HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI:-}"
 CANARY_OVERCOMMIT_UNTIL="${HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL:-}"
 CANARY_MEASURED_GUESTS="${HIVRA_CAPACITY_CANARY_MEASURED_GUESTS:-}"
 CANARY_PRESSURE_BASELINE="${HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE:-}"
+CANARY_HOST_ID="${HIVRA_CAPACITY_CANARY_HOST_ID:-}"
 if [[ -v HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI || -v HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL \
-  || -v HIVRA_CAPACITY_CANARY_MEASURED_GUESTS || -v HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE ]]; then
-  [[ "$CANARY_OVERCOMMIT_MILLI" =~ ^1[0-9]{3}$ && "$CANARY_OVERCOMMIT_MILLI" -gt 1000 && "$CANARY_OVERCOMMIT_MILLI" -le 1250 \
+  || -v HIVRA_CAPACITY_CANARY_MEASURED_GUESTS || -v HIVRA_CAPACITY_CANARY_PRESSURE_BASELINE || -v HIVRA_CAPACITY_CANARY_HOST_ID ]]; then
+  [[ "$CANARY_OVERCOMMIT_MILLI" =~ ^[12][0-9]{3}$ && "$CANARY_OVERCOMMIT_MILLI" -gt 1000 && "$CANARY_OVERCOMMIT_MILLI" -le 2000 \
     && "$CANARY_OVERCOMMIT_UNTIL" =~ ^[1-9][0-9]{0,11}$ ]] \
     || { echo "invalid Canary memory overcommit policy" >&2; exit 1; }
   [ -n "$CANARY_PRESSURE_BASELINE" ] || { echo "Canary memory overcommit requires a pressure baseline" >&2; exit 1; }
@@ -95,9 +96,10 @@ if [[ -v HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI || -v HIVRA_CAPACITY_CANARY_OVER
     || { echo "expired Canary memory overcommit policy" >&2; exit 1; }
   [ "$CANARY_OVERCOMMIT_UNTIL" -le "$((now + 90))" ] \
     || { echo "invalid Canary memory overcommit grant lifetime" >&2; exit 1; }
-  [ "$EUID" = 0 ] && [ "$(cat /proc/sys/kernel/hostname)" = pve11 ] \
-    && [ "$(readlink -e -- "${BASH_SOURCE[0]}")" = /root/hivra-provisioner-canary/hivra-host-capacity-admission ] \
-    || { echo "Canary memory overcommit requires the installed Canary bundle on pve11" >&2; exit 1; }
+  [[ "$EUID" == 0 && "$CANARY_HOST_ID" =~ ^[a-z0-9][a-z0-9-]{0,62}$ \
+    && "$(cat /proc/sys/kernel/hostname)" == "$CANARY_HOST_ID" \
+    && "$(readlink -e -- "${BASH_SOURCE[0]}")" == /root/hivra-provisioner-canary/hivra-host-capacity-admission ]] \
+    || { echo "Canary memory overcommit requires the installed Canary bundle on the authorized host" >&2; exit 1; }
   [ "$ALLOW_REDUCTION" = 0 ] \
     && [[ ! -v HIVRA_CAPACITY_MEMINFO_PATH && ! -v HIVRA_PROVISION_OPERATIONS_DIR ]] \
     || { echo "Canary memory overcommit requires host-local launch or wake evidence" >&2; exit 1; }

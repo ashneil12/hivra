@@ -12,6 +12,7 @@ const mockResolveHost = jest.fn();
 const mockRunHostScript = jest.fn();
 
 jest.mock("@/lib/hivra/canary-memory-overcommit", () => ({
+  ...jest.requireActual<typeof import("@/lib/hivra/canary-memory-overcommit")>("@/lib/hivra/canary-memory-overcommit"),
   readCanaryMemoryOvercommit: (...args: unknown[]) => mockGrant(...args),
 }));
 jest.mock("@/lib/logger", () => ({ log: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
@@ -27,7 +28,9 @@ import { POST } from "../route";
 
 const ORIGINAL_ENV = process.env;
 const TOKEN = "qa-clone-fixture-secret";
-const hostEnv = { PROXMOX_NODE: "pve11", PROXMOX_SSH_HOST: "192.0.2.11" };
+const HOST = "fixture-node-a";
+const TEMPLATE_VMID = 9051;
+const hostEnv = { PROXMOX_NODE: HOST, PROXMOX_SSH_HOST: "192.0.2.11" };
 const hostRow = { total_cpu: 12, reserved_cpu: 2, cpu_overcommit_ratio: 5 };
 const body = {
   apply: true,
@@ -47,8 +50,9 @@ function request(payload: unknown = body, token: string | null = TOKEN) {
 
 function grant(measuredGuests: string[] = [`${body.vmid}:${body.tag}`]) {
   return {
+    hostId: HOST,
     measuredGuests, ratioMilli: 1180, validUntilEpoch: Math.floor(Date.now() / 1000) + 60,
-    pressureBaseline: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:3344:0:32",
+    pressureBaseline: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:123:0:7",
   };
 }
 
@@ -74,6 +78,8 @@ beforeEach(() => {
     VERCEL_GIT_REPO_OWNER: "ashneil12",
     VERCEL_GIT_REPO_SLUG: "hivra",
     HIVRA_MANAGED_PROVISIONER_CHANNEL: "canary",
+    HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID: HOST,
+    HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID: String(TEMPLATE_VMID),
   };
 });
 
@@ -108,11 +114,25 @@ it.each([
 });
 
 it.each([
+  ["HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID", undefined],
+  ["HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID", "invalid host"],
+  ["HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID", undefined],
+  ["HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID", "not-a-vmid"],
+  ["HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID", "9390"],
+] as const)("fails closed without valid private host/template configuration (%s=%s)", async (key, value) => {
+  if (value === undefined) delete process.env[key];
+  else process.env[key] = value;
+  expect((await POST(request())).ok).toBe(false);
+  expect(mockGrant).not.toHaveBeenCalled();
+  expect(mockRunHostScript).not.toHaveBeenCalled();
+});
+
+it.each([
   [{ apply: false }], [{ apply: "true" }], [{ ownerId: "arbitrary" }], [{ vmid: "9310" }],
   [{ vmid: 9299 }], [{ vmid: 9302 }], [{ vmid: 9400 }],
   [{ tag: "hivra-bind-" + "a".repeat(32) }], [{ templateConfigSha256: "not-a-digest" }],
-  [{ ratioMilli: 1250 }], [{ validUntilEpoch: 5000000000 }], [{ host: "pve13" }], [{ measuredGuests: [] }],
-  [{ cpuBudgetMilli: 100000 }],
+  [{ ratioMilli: 1250 }], [{ validUntilEpoch: 5000000000 }], [{ host: "fixture-node-b" }], [{ measuredGuests: [] }],
+  [{ cpuBudgetMilli: 100000 }], [{ templateVmid: 9052 }],
 ])("rejects noncanonical bodies or client-supplied authority: %j", async change => {
   expect((await POST(request({ ...body, ...change }))).status).toBe(400);
   expect(mockGrant).not.toHaveBeenCalled();
@@ -128,7 +148,7 @@ it.each<[string[] | null]>([
   mockGrant.mockResolvedValue(entries ? grant(entries) : null);
   expect((await POST(request())).ok).toBe(false);
   expect(mockGrant).toHaveBeenCalledWith({
-    host: "pve11", ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+    host: HOST, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
   });
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
@@ -139,7 +159,7 @@ it("does not dispatch a matching VMID and tag after the grant expires", async ()
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
 
-it("does not dispatch without an active pve11 CPU policy row", async () => {
+it("does not dispatch without an active CPU policy row for the configured host", async () => {
   mockGrant.mockResolvedValue(grant());
   mockCpuPolicy.mockResolvedValue({ data: null, error: null });
   expect((await POST(request())).ok).toBe(false);
@@ -147,21 +167,21 @@ it("does not dispatch without an active pve11 CPU policy row", async () => {
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
 
-it("binds the exact sealed Canary wrapper and the server-issued grant to pve11's host command", async () => {
+it("binds the exact sealed Canary wrapper and the server-issued grant to the configured host command", async () => {
   const selected = grant();
   mockGrant.mockResolvedValue(selected);
   mockRunHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING ${body.vmid} ${body.tag}\n`, stderr: "" });
 
   const response = await POST(request());
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ data: { host: "pve11", vmid: body.vmid, tag: body.tag, state: "running" } });
+  expect(await response.json()).toMatchObject({ data: { host: HOST, vmid: body.vmid, tag: body.tag, state: "running" } });
 
   expect(mockHostTable).toHaveBeenCalledWith("proxmox_hosts");
   const query = mockHostTable.mock.results[0].value;
   expect(query.select).toHaveBeenCalledWith("total_cpu,reserved_cpu,cpu_overcommit_ratio");
-  expect(query.eq.mock.calls).toEqual([["id", "pve11"], ["status", "active"]]);
+  expect(query.eq.mock.calls).toEqual([["id", HOST], ["status", "active"]]);
   expect(query.is).toHaveBeenCalledWith("decommissioned_at", null);
-  expect(mockResolveHost).toHaveBeenCalledWith(process.env, "pve11");
+  expect(mockResolveHost).toHaveBeenCalledWith(process.env, HOST);
   expect(mockRunHostScript).toHaveBeenCalledTimes(1);
   const [script, env, options] = mockRunHostScript.mock.calls[0];
   expect(env).toBe(hostEnv);
@@ -174,7 +194,8 @@ it("binds the exact sealed Canary wrapper and the server-issued grant to pve11's
   expect(script).toMatch(/exec 8>>\/run\/lock\/hivra-allocation\.lock[\s\S]*flock -x -w 40 8[\s\S]*sha256sum -c --status BUNDLE\.sha256[\s\S]*bash "\$PROVISIONER_DIR\/hivra-canary-memory-qa-clone\.sh"/);
   expect(script).toContain("/root/hivra-provisioner-canary");
   expect(script).toContain(body.templateConfigSha256);
-  expect(script).toContain(`'${body.templateConfigSha256}' 40000`);
+  expect(script).toContain(`'${body.templateConfigSha256}' 40000 ${TEMPLATE_VMID}`);
+  expect(script).toContain(`HIVRA_CAPACITY_CANARY_HOST_ID='${HOST}'`);
   expect(script).toContain(`HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI=${selected.ratioMilli}`);
   expect(script).toContain(`HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL=${selected.validUntilEpoch}`);
   expect(script).toContain(`${body.vmid}:${body.tag}`);

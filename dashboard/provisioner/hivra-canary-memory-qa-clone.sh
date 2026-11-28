@@ -20,12 +20,14 @@ publish_exact() {
   rm -- "$tmp"
 }
 
-[[ $# == 4 ]] || fail "exact VMID, tag, template config digest and CPU budget are required"
-vmid="$1" tag="$2" template_digest="$3" cpu_budget_milli="$4"
+[[ $# == 5 ]] || fail "exact VMID, tag, template config digest, CPU budget and template VMID are required"
+vmid="$1" tag="$2" template_digest="$3" cpu_budget_milli="$4" template_vmid="$5"
 [[ "$vmid" =~ ^93[0-9]{2}$ && "$vmid" != 9302 && "$tag" =~ ^hivra-qa-mem-[0-9a-f]{32}$ \
-  && "$template_digest" =~ ^[0-9a-f]{64}$ && "$cpu_budget_milli" =~ ^[1-9][0-9]{0,8}$ ]] || fail "invalid fixture scope"
+  && "$template_digest" =~ ^[0-9a-f]{64}$ && "$cpu_budget_milli" =~ ^[1-9][0-9]{0,8}$ \
+  && "$template_vmid" =~ ^[1-9][0-9]{0,8}$ && ! "$template_vmid" =~ ^93[0-9]{2}$ ]] || fail "invalid fixture scope"
 provisioner=/root/hivra-provisioner-canary
-[[ "$EUID" == 0 && "$(cat /proc/sys/kernel/hostname)" == pve11 \
+host_id="${HIVRA_CAPACITY_CANARY_HOST_ID:-}"
+[[ "$EUID" == 0 && "$host_id" =~ ^[a-z0-9][a-z0-9-]{0,62}$ && "$(cat /proc/sys/kernel/hostname)" == "$host_id" \
   && "$(readlink -e -- "${BASH_SOURCE[0]}")" == "$provisioner/hivra-canary-memory-qa-clone.sh" ]] || fail "wrong host or bundle"
 [[ -n "${HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI:-}" && -n "${HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL:-}" \
   && "|${HIVRA_CAPACITY_CANARY_MEASURED_GUESTS:-}|" == *"|$vmid:$tag|"* ]] || fail "current exact pilot permit is required"
@@ -35,8 +37,8 @@ references=/var/lib/hivra/vmid-references
 enrollment="$ops/qa-memory-$vmid.enrolled"
 wake="$ops/wake-$vmid.selected"
 ledger="$references/qa-memory-$vmid.operator.list"
-qemu_configs=/etc/pve/nodes/pve11/qemu-server
-lxc_configs=/etc/pve/nodes/pve11/lxc
+qemu_configs="/etc/pve/nodes/$host_id/qemu-server"
+lxc_configs="/etc/pve/nodes/$host_id/lxc"
 cfg="$qemu_configs/$vmid.conf"
 pidfile="/run/qemu-server/$vmid.pid"
 memory=4096
@@ -71,17 +73,17 @@ for intent in "$ops"/operation-*.selected; do
   [[ "$status" == 1 ]] || fail "VMID has a managed claim or unreadable intent"
 done
 
-template="$(timeout 10 qm config 9007 --current 1)" || fail "could not read stock template 9007"
+template="$(timeout 10 qm config "$template_vmid" --current 1)" || fail "could not read stock template"
 [[ "$(printf '%s\n' "$template" | sha256sum | cut -d ' ' -f1)" == "$template_digest" ]] || fail "stock template config digest changed"
 grep -Fxq 'template: 1' <<<"$template" && grep -Fxq 'ostype: l26' <<<"$template" || fail "template is not stock Linux"
 awk '$1 == "onboot:" {seen++; if ($0 != "onboot: 0") bad=1} END {exit (bad || seen > 1)}' <<<"$template" \
   || fail "template autostart is not safely disabled"
 hazard='^(args|hookscript|ivshmem|hostpci[0-9]+|usb[0-9]+|virtiofs[0-9]+|tpmstate[0-9]+|efidisk[0-9]+|unused[0-9]+|lock):'
 if grep -Eq "$hazard|^\[" <<<"$template"; then fail "template has unsupported host configuration"; fi
-awk -v storage="$storage" '
+awk -v storage="$storage" -v vmid="$template_vmid" '
   $1 ~ /^(ide|virtio|scsi|sata)[0-9]+:$/ {
     if ($2 ~ /-cloudinit(,|$)/) next
-    if ($2 !~ ("^"storage":base-9007-disk-[0-9]+,")) exit 1
+    if ($2 !~ ("^" storage ":base-" vmid "-disk-[0-9]+,")) exit 1
     if ($2 !~ /(^|,)size=([1-9]|[1-3][0-9]|40)G(,|$)/) exit 1
     disks++
   }
@@ -98,7 +100,7 @@ admit() {
 }
 admit -
 publish_exact "$ledger" "$vmid" 0644 || fail "could not reserve exact VMID"
-timeout 35 qm clone 9007 "$vmid" --name "$tag" --full 0 8>&- 9>&- || fail "clone not confirmed; inspect the reserved VMID"
+timeout 35 qm clone "$template_vmid" "$vmid" --name "$tag" --full 0 8>&- 9>&- || fail "clone not confirmed; inspect the reserved VMID"
 clone="$(timeout 10 qm config "$vmid" --current 1)" || fail "could not read exact clone"
 grep -Fxq "name: $tag" <<<"$clone" || fail "clone identity mismatch"
 if grep -Eq "$hazard|^template:|^\[" <<<"$clone"; then fail "clone has unsupported host configuration"; fi
