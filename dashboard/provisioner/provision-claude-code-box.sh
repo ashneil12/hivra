@@ -161,6 +161,25 @@ c_bold=$'\033[1m'; c_dim=$'\033[2m'; c_green=$'\033[32m'; c_red=$'\033[31m'; c_r
 say()  { printf '%s==>%s %s\n' "$c_bold" "$c_reset" "$*"; }
 ok()   { printf '%s  ok%s %s\n' "$c_green" "$c_reset" "$*"; }
 warn() { printf '%s  ! %s %s\n' "$c_red" "$c_reset" "$*" >&2; }
+HERMES_GUEST_PHASE_START_CS=""
+hermes_guest_phase() {
+  [ "$HERMES_BAKED" = 1 ] || return 0
+  case "$1" in
+    start|base_ready|proxy_unit_written|profile_start|swap_ready|model_configured|native_ui_configured|services_start|native_dashboard_started|native_gateway_started|local_ready|receipt_verified) ;;
+    *) return 0 ;;
+  esac
+  local uptime ignored now
+  [ -r /proc/uptime ] || return 0
+  IFS=' ' read -r uptime ignored < /proc/uptime || return 0
+  [[ "$uptime" =~ ^[0-9]+[.][0-9]{2}$ ]] || return 0
+  now=$((10#${uptime/./}))
+  if [ "$1" = start ]; then
+    HERMES_GUEST_PHASE_START_CS="$now"
+  fi
+  [ -n "$HERMES_GUEST_PHASE_START_CS" ] && [ "$now" -ge "$HERMES_GUEST_PHASE_START_CS" ] || return 0
+  printf 'HIVRA_HERMES_GUEST_PHASE %s %d\n' "$1" "$(((now - HERMES_GUEST_PHASE_START_CS) * 10))" >&2 || true
+}
+hermes_guest_phase start
 # die() also leaves its own message (Hivra's fixed text) for hivra-install-agent.py,
 # which names it in the host log's "Hivra guest installation failure" line; the
 # guest is removed on failure, so this is the only trace of which step stopped.
@@ -403,6 +422,7 @@ if [ "$COMPUTER_SUBSTRATE" = "proxmox-kvm" ]; then
     || die "qemu-guest-agent failed to start"
 fi
 ok "base packages present"
+hermes_guest_phase base_ready
 
 # Hivra pins no agent version: each launch installs the newest release its
 # upstream publishes at this moment. After launch Hivra never changes it on its
@@ -1022,6 +1042,7 @@ fi
 chmod 0644 /etc/systemd/system/bux-hivra-chat.service
 ok "installed /etc/systemd/system/bux-hivra-chat.service (port ${HIVRA_CHAT_PORT}, kind ${AGENT_KIND})"
 fi
+hermes_guest_phase proxy_unit_written
 # Chat turns run in detached runner processes (hivra-chat/chat-runs.cjs). A
 # gateway restart (runtime update, crash) must stop only the gateway itself and
 # leave in-flight agent runs working; the restarted gateway adopts them.
@@ -1878,6 +1899,7 @@ HERMES_PORT=9119
 HERMES_DIR="${AGENT_HOME}/.hermes"
 HERMES_BIN="${AGENT_HOME}/.local/bin/hermes"
 HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
+hermes_guest_phase profile_start
 HERMES_TMP="$(sudo -u "${AGENT_USER}" -H mktemp -d /tmp/hivra-hermes.XXXXXX)" \
   || die "could not create a Hermes install directory"
 
@@ -1889,6 +1911,7 @@ if ! swapon --show=NAME --noheadings 2>/dev/null | grep -q .; then
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
   ok "2G swapfile enabled (install headroom for small boxes)"
 fi
+hermes_guest_phase swap_ready
 
 if [ "$HERMES_BAKED" = 1 ]; then
   HERMES_VERSION="$BAKED_HERMES_VERSION"
@@ -1973,6 +1996,7 @@ else
   warn "no managed-Venice key at launch — Hermes starts unconfigured; set a model in its own settings"
 fi
 rm -rf -- "${HERMES_TMP}"
+hermes_guest_phase model_configured
 
 # What the agent page shows at /hermes is Hermes's Desktop workspace in a
 # browser (the Webapp), which Hermes's gateway serves on loopback once
@@ -2028,6 +2052,7 @@ WantedBy=multi-user.target
 UNIT
 chmod 0644 /etc/systemd/system/bux-hermes.service
 ok "Hermes dashboard service installed (127.0.0.1:${HERMES_PORT})"
+hermes_guest_phase native_ui_configured
 
 # Scheduled tasks and chat channels (Telegram, Discord, Slack) run inside
 # Hermes's gateway, a separate process from its dashboard. Upstream's advice
@@ -2188,6 +2213,7 @@ ok "git guard: .claude/settings.local.json is ignored and refused at commit"
 
 # ===========================================================================
 say "7/7  enable + start the services"
+hermes_guest_phase services_start
 # ===========================================================================
 systemctl daemon-reload
 start_native_terminals
@@ -2240,9 +2266,11 @@ if [ "$AGENT_KIND" = "hermes" ]; then
   systemctl enable --now bux-hermes.service >/dev/null 2>&1 \
     || die "Hermes service did not start"
   ok "bux-hermes enabled + started (Hermes web UI on 127.0.0.1:${HERMES_PORT}, mounted at /hermes)"
+  hermes_guest_phase native_dashboard_started
   if hermes_gateway_setup; then
     rm -f -- "${HERMES_GATEWAY_NOTE}"
     ok "Hermes gateway installed as a user service with linger (scheduled tasks and chat channels)"
+    hermes_guest_phase native_gateway_started
   elif [ "$HERMES_BAKED" = 1 ]; then
     die "baked Hermes gateway did not start"
   else
@@ -2479,6 +2507,7 @@ fi
 # This private receipt deliberately excludes credentials, user files, browser
 # profiles, process environments and command lines. It is evidence for a later
 # release review, not an automatic release or redistribution approval.
+hermes_guest_phase local_ready
 BUNDLE_VERSION="$(tr -d '[:space:]' < "$SRC_DIR/VERSION")"
 RECEIPT_ARGS=(
   --provisioner-version "$BUNDLE_VERSION"
@@ -2502,6 +2531,7 @@ printf '%s\n' "$RECEIPT_RESULT" | grep -Eq '^HIVRA_RUNTIME_RECEIPT_V1 sha256=[0-
   && sha256sum -c --status runtime-notice-manifest.sha256) \
   || die "installed runtime evidence checksum verification failed"
 ok "$RECEIPT_RESULT"
+hermes_guest_phase receipt_verified
 
 if [ "$AGENT_KIND" = "aeon" ]; then
   LOGIN_HINT="sudo -iu ${AGENT_USER} gh auth login   (or paste a PAT in the dashboard Connect step)"

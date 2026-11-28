@@ -119,3 +119,18 @@ check. Proxmox reported pending changes and the worker stopped before reading
 tenant credentials. A warm claim now verifies the staged fixed envelope and
 default CPU weight without writing those fields; cold launches still apply
 their requested resource caps and scheduling weight.
+
+### Guest elapsed-time trace
+
+The `2026.11.28.1` seal adds `HIVRA_HERMES_GUEST_PHASE <phase> <elapsed_ms>`
+to the baked guest installer. Values are cumulative from the guest's `start`
+marker and read from a monotonic clock; subtract neighboring values to compare
+guest stages. The warm host trace also marks `standby_guest_revalidated` before
+guest dispatch. Host timings are per-stage and have a different clock; don't
+subtract one clock from the other.
+
+Collect only the fixed names and integer timings from the exact owned launch's
+log before normal Delete. The trace distinguishes base setup, swap and model
+configuration, native service startup, local readiness and verified runtime
+receipt. It does not change what readiness requires and is not proof of a
+successful chat reply or native Update.

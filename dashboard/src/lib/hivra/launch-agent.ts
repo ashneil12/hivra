@@ -46,7 +46,7 @@ import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement
 import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
 import { CANARY_QA_HOLDER_NAME, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
 import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
-import { HERMES_STANDBY_CPU_UNITS, HERMES_STANDBY_PROVISIONER_VERSION, parseHermesStandbyIdentity, type HermesStandby } from "@/lib/hivra/hermes-standby";
+import { HERMES_STANDBY_CPU_UNITS, HERMES_STANDBY_PROVISIONER_VERSIONS, parseHermesStandbyIdentity, type HermesStandby } from "@/lib/hivra/hermes-standby";
 import { parseSleepMode, supportsIdleNap } from "@/lib/hivra/agent-sleep-policy";
 import type { SeatFunding } from "@/lib/hivra/seat-funding";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
@@ -257,10 +257,10 @@ const PREPARED_RUNTIME_BUNDLE_VERSION = "2026.11.27.6";
 
 function supportsPreparedKvmImage(kind: PreparedKvmImage["kind"], version: string | undefined, agentKind: string) {
   if (kind === "agent-zero" || kind === "bux-dependencies") {
-    return (version === PREPARED_RUNTIME_BUNDLE_VERSION || version === HERMES_STANDBY_PROVISIONER_VERSION)
+    return (version === PREPARED_RUNTIME_BUNDLE_VERSION || HERMES_STANDBY_PROVISIONER_VERSIONS.includes(version ?? ""))
       && (kind === "agent-zero" ? agentKind === kind : agentKind === "claude" || agentKind === "codex");
   }
-  return ["2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(candidate => candidate === version)
+  return ["2026.11.27.4", "2026.11.27.5", ...HERMES_STANDBY_PROVISIONER_VERSIONS, PREPARED_RUNTIME_BUNDLE_VERSION].some(candidate => candidate === version)
     && (kind === "ubuntu-qga" ? STOCK_QGA_AGENT_KINDS.includes(agentKind) : agentKind === kind);
 }
 
@@ -329,7 +329,7 @@ export function phase1Script(params: {
   const candidate = params.preparedImage;
   const standby = params.hermesStandby;
   if (standby && (runtime || params.agentKind !== "hermes" || !params.hermesImageSha256
-      || params.canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION)) {
+      || !HERMES_STANDBY_PROVISIONER_VERSIONS.includes(params.canaryProvisionerVersion ?? ""))) {
     throw new Error("Hermes standby requires a sealed managed baked-image host");
   }
   const preparedImage = !runtime && candidate && !params.wantBrowser
@@ -396,7 +396,7 @@ fi`
       ? [`HIVRA_PREPARED_RUNTIME=${shellQuote(preparedImage.kind)}`] : []),
   ].join(" ") + " ";
   const batchQemuAdmission = !runtime
-    && ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].includes(params.canaryProvisionerVersion ?? "")
+    && ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", ...HERMES_STANDBY_PROVISIONER_VERSIONS, PREPARED_RUNTIME_BUNDLE_VERSION].includes(params.canaryProvisionerVersion ?? "")
     && ["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(params.agentKind);
   const hostCapacityAdmission = (batchQemuAdmission ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : "") + buildHostCapacityAdmissionCommand({
     provisionerDirectory: runtimePaths.provisionerDirectory,
@@ -1703,7 +1703,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
         }
       }
       if (pilotKind === "hermes" && pilot) {
-        if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)) {
+        if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", "2026.11.27.5", ...HERMES_STANDBY_PROVISIONER_VERSIONS, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)) {
           return apiError("The selected Canary host does not support the pinned Hermes image.", 503);
         }
         hermesImageSha256 = pilot.image_sha256;
@@ -1760,7 +1760,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
     const vmidEnd = resolveHivraVmidEnd(env, vmidStart);
     const ipLastOctetStart = resolveHivraIpLastOctetStart(env);
     if (hermesImageSha256 && useHermesStandby && seatFunding === "paid") {
-      if (canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION
+      if (!HERMES_STANDBY_PROVISIONER_VERSIONS.includes(canaryProvisionerVersion ?? "")
           || !Number.isInteger(cpu) || cpu !== maximumCpu || ram !== maximumRam) {
         return apiError("The Canary Hermes standby does not match this launch.", 409);
       }
