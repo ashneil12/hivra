@@ -47,8 +47,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (!agent) return apiError("Agent not found", 404);
 
+    const source = (await req.json().catch(() => null))?.source;
     const result = await ensureHivraAgentAwake(String(agent.id), {
-      trigger: "open",
+      trigger: source === "chat" ? "action" : "open",
       portableOwnerId: userId,
       waitMs: WAKE_WAIT_MS,
       workDeadlineMs,

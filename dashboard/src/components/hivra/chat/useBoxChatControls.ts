@@ -80,7 +80,7 @@ export interface BoxChatControls {
   error: string | null;
 }
 
-export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey, modelLocked, lockedModelName, computerId, onConnectionServiceRestarted }: {
+export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey, modelLocked, lockedModelName, computerId, guestPaused, onConnectionServiceRestarted }: {
   boxUrl: string;
   token?: string | null;
   agentKind: string;
@@ -91,6 +91,7 @@ export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey,
   lockedModelName?: string;
   /** The computer whose connection service the owner can update from the picker. Without it the picker points to Manage. */
   computerId?: string;
+  guestPaused?: boolean;
   /** The update restarted the connection service, which drops embedded surfaces' sign-ins. */
   onConnectionServiceRestarted?: () => void;
 }): BoxChatControls {
@@ -122,7 +123,7 @@ export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey,
     setMetaAnswered(false);
     setUpdate({ state: "idle", message: null });
     wanted.current = undefined;
-    if (!token) return;
+    if (!token || guestPaused) return;
     const controller = new AbortController();
     void getBoxChatMeta(boxUrl, token, controller.signal).then((meta) => {
       if (controller.signal.aborted) return;
@@ -130,12 +131,12 @@ export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey,
       setMetaAnswered(true);
     });
     return () => controller.abort();
-  }, [boxUrl, token]);
+  }, [boxUrl, guestPaused, token]);
 
   useEffect(() => {
     setModel(undefined);
     setRestrict(null);
-    if (!token || !isChatCli) return;
+    if (!token || !isChatCli || guestPaused) return;
     let cancelled = false;
     // An older computer has no /api/model or /api/restrict: the error hides that picker, as it does in Settings.
     void getBoxModel(boxUrl, token).then((r) => {
@@ -145,10 +146,10 @@ export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey,
       if (!cancelled && !r.error) setRestrict(r.restrict);
     });
     return () => { cancelled = true; };
-  }, [boxUrl, token, isChatCli]);
+  }, [boxUrl, guestPaused, token, isChatCli]);
 
   const changeModel = useCallback((value: string) => {
-    if (!token || pending) return;
+    if (!token || pending || guestPaused) return;
     const previous = model;
     setPending(true);
     setError(null);
@@ -161,10 +162,10 @@ export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey,
         setError(r.error || "Couldn't change the model");
       }
     });
-  }, [boxUrl, model, pending, token]);
+  }, [boxUrl, guestPaused, model, pending, token]);
 
   const changeRestrict = useCallback((value: BoxRestrict) => {
-    if (!token || pending) return;
+    if (!token || pending || guestPaused) return;
     const previous = restrict;
     setPending(true);
     setError(null);
@@ -177,7 +178,7 @@ export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey,
         setError(r.error || "Couldn't change access");
       }
     });
-  }, [boxUrl, pending, restrict, token]);
+  }, [boxUrl, guestPaused, pending, restrict, token]);
 
   const ready = levels.length > 0;
   const changeEffort = useCallback((level: EffortLevel | null) => {
@@ -203,7 +204,7 @@ export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey,
   }, [ready, levels, skey]);
 
   const startEffortUpdate = useCallback(() => {
-    if (!computerId || !token || update.state === "updating") return;
+    if (!computerId || !token || guestPaused || update.state === "updating") return;
     setUpdate({ state: "updating", message: null });
     void (async () => {
       let watch = true;
@@ -240,7 +241,7 @@ export function useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey,
       }
       if (alive.current) setUpdate({ state: "failed", message: "The computer hasn't finished updating yet. Try again in a minute." });
     })();
-  }, [boxUrl, computerId, token, update.state]);
+  }, [boxUrl, computerId, guestPaused, token, update.state]);
 
   const models = isChatCli && !modelLocked && model !== undefined ? BOX_MODEL_OPTIONS[agentKind] || [] : [];
   return {

@@ -1228,7 +1228,12 @@ export default function AgentPage() {
   // Chat turns are tied to the open request, so unmounting the chat would stop
   // every running conversation. Once opened, keep it mounted (hidden) while the
   // owner works in other surfaces so parallel chats keep doing their work.
-  const [chatOpened, setChatOpened] = useState(false);
+  const [openedChat, setOpenedChat] = useState<{ id: string; url: string; token: string | null | undefined } | null>(null);
+  const chatOpened = !!openedChat && agent?.id === id && agent.status === "running"
+    && openedChat.id === id && openedChat.url === agent.chat_url && openedChat.token === agent.api_token;
+  if (openedChat && !chatOpened && agent?.id === id) setOpenedChat(null);
+  const retainKvmChat = chatOpened && agentSleepUiEnabled() && agent?.deployment_mode === "hivra-managed"
+    && agent.computer_substrate === "proxmox-kvm" && (agent.type === "claude-code" || agent.type === "codex");
   // Manage keeps unsaved edits (a resize selection, a model id, a destroy
   // confirmation) while the owner looks at another surface: once opened for
   // this agent, it stays mounted and hidden.
@@ -1246,7 +1251,7 @@ export default function AgentPage() {
   // the sleep switch off, every agent reads as awake and none of this runs.
   const sleepView = agent?.id === id ? agentSleepView(agent) : "awake";
   const awake = sleepView === "awake";
-  const wake = useAgentWake(id, sleepView, agent?.id === id ? agent.sleep_state : undefined, () => setReloadKey((k) => k + 1), agent?.id === id);
+  const wake = useAgentWake(id, sleepView, agent?.id === id ? agent.sleep_state : undefined, () => setReloadKey((k) => k + 1), agent?.id === id, retainKvmChat && tab === "chat");
   // The surfaces start fresh after every wake: their connections died with the sleep.
   const wakeEpoch = agentSleepUiEnabled() && agent?.id === id ? sleepGenerationOf(agent) : 0;
   const surfaceEpoch = wakeEpoch ? `:g${wakeEpoch}` : "";
@@ -1644,7 +1649,11 @@ export default function AgentPage() {
   const provisioning = agent.status === "provisioning";
   const chatSurfaceReady = !isDashboard && !isComputer && agent.status === "running" && Boolean(agent.chat_url)
     && chatReadiness !== "upgrade_required" && chatReadiness !== "unavailable" && loggedIn === true;
-  if (effectiveTab === "chat" && chatSurfaceReady && !chatOpened) setChatOpened(true);
+  if (effectiveTab === "chat" && chatSurfaceReady && !chatOpened && agent.chat_url) {
+    setOpenedChat({ id, url: agent.chat_url, token: agent.api_token });
+  }
+  const showRetainedChat = retainKvmChat && (!awake || chatReadiness === null || chatSurfaceReady);
+  const showChat = effectiveTab === "chat" && (chatSurfaceReady && awake || showRetainedChat);
   // While it is being set up, a computer or agent shows its setup progress.
   // Manage replaces it only when the owner asks for Manage, so Delete is
   // always reachable: its tab or Open Manage here, or a link to one of its
@@ -1740,9 +1749,11 @@ export default function AgentPage() {
         ) : null}
         </SurfaceCodeBoundary>
         </DesktopTabOpen.Provider>
-        {chatOpened && chatSurfaceReady && awake && agent.chat_url ? (
-          <div hidden={effectiveTab !== "chat"} inert={effectiveTab !== "chat"} style={{ height: "100%", minHeight: 0 }}>
-            <HivraChat key={`${agent.id}:${agent.chat_url}:chat${surfaceEpoch}`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id} onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
+        {chatOpened && (chatSurfaceReady && awake || retainKvmChat) && agent.chat_url ? (
+          <div hidden={!showChat} inert={!showChat} style={{ height: "100%", minHeight: 0 }}>
+            <HivraChat key={`${agent.id}:${agent.chat_url}:chat${retainKvmChat ? "" : surfaceEpoch}`} boxUrl={agent.chat_url} agentName={agent.name} accent={accent} agentKind={cliKind} storageKey={agent.id} token={agent.api_token} goal={agent.goal} context={agent.context} firstTask={agent.first_task} emoji={agent.emoji} instanceId={agent.id} modelLabel={agent.llm_config?.model} computerId={agent.id}
+              guestPaused={retainKvmChat ? !awake || !chatSurfaceReady : undefined}
+              onConnectionServiceRestarted={() => setSurfaceSignInEpoch((epoch) => epoch + 1)} />
           </div>
         ) : null}
         {awake && agent.status === "running" && agent.chat_url && agent.computer_profile !== "windows" ? (
@@ -1784,7 +1795,7 @@ export default function AgentPage() {
             {managePanel}
           </div>
         ) : null}
-        {showManage ? null : !awake ? (
+        {showManage || (showChat && showRetainedChat) ? null : !awake ? (
           <AgentWakePanel name={agent.name} failure={wake.failure} onRetry={wake.retry} resting={wake.resting} />
         ) : provisioning && !setupIssue && agent.computer_profile === "windows" && agent.deployment_mode === "self-managed" ? (
           <div style={{ padding: "clamp(32px, 6vw, 56px) clamp(16px, 4vw, 40px)", maxHeight: "100%", overflowY: "auto", textAlign: "center", color: "var(--text-muted)" }}>

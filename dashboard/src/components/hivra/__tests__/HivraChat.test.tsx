@@ -18,6 +18,7 @@ import { EFFORT_POLL_MS } from "../chat/useBoxChatControls";
 import { AgentChatListSlotContext } from "../agent-shell/AgentChatListSlot";
 import { getBoxChatMeta, getBoxModel, getBoxRestrict, listBoxChatRuns, listBoxSessions, readBoxSession, setBoxModel, setBoxRestrict, stampAgentFirstUsage, updateAgentRuntime, AgentActionError, stopBoxChatRun, uploadBoxFile, wakeAgent } from "@/lib/hivra/agent-api";
 import { startAgentWelcomeRun } from "@/lib/hivra/agent-welcome";
+import { inspectChatReadiness } from "@/lib/hivra/chat-readiness";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 
@@ -78,6 +79,8 @@ jest.mock("@/lib/hivra/agent-api", () => ({
   AgentActionError: jest.requireActual("@/lib/hivra/agent-api").AgentActionError,
   boxChatRunEventsUrl: (boxUrl: string, runId: string) => `${boxUrl}/api/chat/runs/${runId}/events`,
 }));
+
+jest.mock("@/lib/hivra/chat-readiness", () => ({ inspectChatReadiness: jest.fn() }));
 
 jest.mock("@/lib/hivra/agent-welcome", () => ({
   startAgentWelcomeRun: jest.fn(),
@@ -770,6 +773,83 @@ describe("HivraChat", () => {
     afterEach(() => {
       if (previousFlag === undefined) delete process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP;
       else process.env.NEXT_PUBLIC_HIVRA_AGENT_SLEEP = previousFlag;
+    });
+
+    it("retains a draft without passive wake and sends once after an explicit wake and readiness", async () => {
+      jest.useFakeTimers();
+      try {
+        window.localStorage.setItem("hivra:first-welcome:sleepdraft", "1");
+        (inspectChatReadiness as jest.Mock).mockResolvedValue("native_connected");
+        (wakeAgent as jest.Mock).mockResolvedValueOnce({ state: "waking" }).mockResolvedValueOnce({ state: "awake" });
+        const fetchMock = jest.fn().mockResolvedValue(chatResponse(goodReply()));
+        global.fetch = fetchMock as unknown as typeof fetch;
+        const chat = (guestPaused: boolean) => <HivraChat boxUrl="https://box.example.com" storageKey="sleep-draft" agentKind="codex" computerId="agent-1" guestPaused={guestPaused} />;
+        const { rerender } = render(chat(false));
+        const input = screen.getByRole("textbox");
+        fireEvent.change(input, { target: { value: "Keep my draft" } });
+        rerender(chat(true));
+        (listBoxSessions as jest.Mock).mockClear();
+        (listBoxChatRuns as jest.Mock).mockClear();
+        fireEvent.focus(window);
+        expect(input).toHaveValue("Keep my draft");
+        expect(listBoxSessions).not.toHaveBeenCalled();
+        expect(listBoxChatRuns).not.toHaveBeenCalled();
+        expect(wakeAgent).not.toHaveBeenCalled();
+        expect(fetchMock).not.toHaveBeenCalled();
+        await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send message" })); });
+        expect(wakeAgent).toHaveBeenCalledWith("agent-1", expect.any(AbortSignal), "chat");
+        expect(fetchMock).not.toHaveBeenCalled();
+        await act(async () => { jest.advanceTimersByTime(1000); });
+        expect(await screen.findByText(/Back from my nap/)).toBeInTheDocument();
+        const posts = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/chat"));
+        expect(posts).toHaveLength(1);
+        expect(JSON.parse(posts[0][1].body)).toMatchObject({ message: "Keep my draft", runId: expect.any(String) });
+        expect(inspectChatReadiness).toHaveBeenCalledWith("https://box.example.com", "codex", undefined);
+      } finally { jest.useRealTimers(); }
+    });
+
+    it("doesn't post when wake fails, keeps the draft and delivers once after the owner retries", async () => {
+      (wakeAgent as jest.Mock).mockResolvedValueOnce({ state: "failed", message: "No host headroom." }).mockResolvedValueOnce({ state: "awake" });
+      (inspectChatReadiness as jest.Mock).mockResolvedValue("native_connected");
+      const fetchMock = jest.fn().mockResolvedValue(chatResponse(goodReply()));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" agentKind="codex" computerId="agent-1" guestPaused />);
+      await sendMessage("Do not lose this");
+      expect(await screen.findByText(/No host headroom/)).toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox")).toHaveValue("Do not lose this");
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      expect(await screen.findByText(/Back from my nap/)).toBeInTheDocument();
+      expect(fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/chat"))).toHaveLength(1);
+    });
+
+    it("doesn't send if the owner leaves while a wake is pending", async () => {
+      let finishWake!: (value: { state: "awake" }) => void;
+      (wakeAgent as jest.Mock).mockReturnValue(new Promise((resolve) => { finishWake = resolve; }));
+      const fetchMock = jest.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const { unmount } = render(<HivraChat boxUrl="https://box.example.com" agentName="Atlas" computerId="agent-1" guestPaused />);
+      await sendMessage("Do not send after leaving");
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
+      const signal = (wakeAgent as jest.Mock).mock.calls[0][1] as AbortSignal;
+      unmount();
+      expect(signal.aborted).toBe(true);
+      await act(async () => { finishWake({ state: "awake" }); });
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("restores an unsubmitted draft on reopen without posting it", async () => {
+      (listBoxChatRuns as jest.Mock).mockResolvedValue([]);
+      const fetchMock = jest.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      window.localStorage.setItem("hivra_sessions_reopendraft", JSON.stringify([{
+        id: "stored-session", title: "Draft", messages: [], createdAt: 1, loaded: true,
+      }]));
+      window.localStorage.setItem("hivra_draft_reopendraft_stored-session", "Still a draft");
+      render(<HivraChat boxUrl="https://box.example.com" storageKey="reopen-draft" agentName="Atlas" computerId="agent-1" guestPaused={false} />);
+      expect(await screen.findByDisplayValue("Still a draft")).toBeInTheDocument();
+      expect(wakeAgent).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
     });
 
     it("wakes it after a network failure and sends the same message again", async () => {

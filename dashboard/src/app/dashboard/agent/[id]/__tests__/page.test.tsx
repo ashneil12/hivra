@@ -76,10 +76,10 @@ jest.mock("@/components/workspace/useWorkspaceAgents", () => ({
 
 const mockChatMounts = jest.fn();
 jest.mock("@/components/hivra/HivraChat", () => ({
-  HivraChat: function MockHivraChat() {
+  HivraChat: function MockHivraChat({ guestPaused }: { guestPaused?: boolean }) {
     const { useEffect } = jest.requireActual<typeof import("react")>("react");
     useEffect(() => { mockChatMounts(); }, []);
-    return <div>Chat panel</div>;
+    return <div data-guest-paused={guestPaused}>Chat panel</div>;
   },
 }));
 
@@ -2929,6 +2929,25 @@ describe("AgentPage", () => {
       fireEvent.pointerDown(window);
       await waitFor(() => expect(mockWakeAgent).toHaveBeenCalledTimes(1));
       expect(await screen.findByText("Waking up your agent")).toBeVisible();
+    });
+
+    it("retains the same ready managed coding chat through hibernation and readiness recheck", async () => {
+      const kvm = { ...awakeRow, deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm" };
+      mockGetAgent.mockResolvedValue(kvm);
+      render(<AgentPage />);
+      const composer = await screen.findByText("Chat panel");
+      expect(composer).toHaveAttribute("data-guest-paused", "false");
+      mockGetAgent.mockResolvedValue({ ...kvm, sleep_state: "hibernated", sleep_generation: 7 });
+      fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() => expect(composer).toHaveAttribute("data-guest-paused", "true"));
+      expect(screen.getByText("Chat panel")).toBe(composer);
+      expect(screen.queryByText("Waking up your agent")).not.toBeInTheDocument();
+      fireEvent.keyDown(window, { key: "a" });
+      expect(mockWakeAgent).not.toHaveBeenCalled();
+      mockGetAgent.mockResolvedValue({ ...kvm, sleep_generation: 8 });
+      fireEvent(document, new Event("visibilitychange"));
+      await waitFor(() => expect(composer).toHaveAttribute("data-guest-paused", "false"));
+      expect(mockChatMounts).toHaveBeenCalledTimes(1);
     });
 
     it("leaves an agent that reads awake alone, and ignores sleep entirely with the switch off", async () => {

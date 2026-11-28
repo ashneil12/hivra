@@ -661,10 +661,11 @@ export type WakeAgentResult =
  * 202 means still waking. A network failure or any other answer is "failed",
  * never a throw, so the page can show a plain message and a button to try again.
  */
-export async function wakeAgent(id: string, signal?: AbortSignal): Promise<WakeAgentResult> {
+export async function wakeAgent(id: string, signal?: AbortSignal, source?: "chat"): Promise<WakeAgentResult> {
   try {
     const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/wake`, {
       method: "POST", cache: "no-store", signal,
+      ...(source ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source }) } : {}),
     });
     const j = await readJson(r);
     const data = j?.success === true && j.data && typeof j.data === "object" ? j.data as Record<string, unknown> : null;
