@@ -1,9 +1,17 @@
 /** @jest-environment node */
 
+import { NextRequest } from "next/server";
+import { encryptSecret } from "@/lib/crypto";
+import { createSupabaseMemoryDb, type SupabaseMemoryDb } from "@/test-utils/supabase-memory-db";
+import { POST } from "@/app/api/webhooks/telegram-wake/[agentId]/route";
+import { telegramWakeSecretToken } from "../telegram-wake/config";
+
 const mockReadRow = jest.fn();
+let mockChannelDb: SupabaseMemoryDb;
 jest.mock("@/lib/supabase", () => ({
   supabaseAdmin: {
-    from: () => {
+    from: (table: string) => {
+      if (table !== "hivra_agents") return mockChannelDb.db.from(table);
       const q: Record<string, unknown> = {};
       for (const m of ["select", "eq"]) q[m] = () => q;
       q.maybeSingle = () => mockReadRow();
@@ -12,6 +20,8 @@ jest.mock("@/lib/supabase", () => ({
   },
 }));
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
+const mockAfter = jest.fn();
+jest.mock("next/server", () => ({ ...jest.requireActual("next/server"), after: (task: () => unknown) => mockAfter(task) }));
 
 const mockClaim = jest.fn();
 const mockFinish = jest.fn();
@@ -55,6 +65,7 @@ const mockDisarm = jest.fn();
 const mockRearm = jest.fn();
 const mockSettle = jest.fn();
 jest.mock("../telegram-wake/lifecycle", () => ({
+  ...jest.requireActual("../telegram-wake/lifecycle"),
   disarmTelegramForWake: (...a: unknown[]) => mockDisarm(...a),
   rearmTelegramAfterFailedWake: (...a: unknown[]) => mockRearm(...a),
   settleTelegramAfterWake: (...a: unknown[]) => mockSettle(...a),
@@ -106,6 +117,7 @@ describe("ensureHivraAgentAwake with a Telegram wake webhook", () => {
   beforeEach(() => {
     jest.resetAllMocks();
     order.length = 0;
+    mockChannelDb = createSupabaseMemoryDb({ tables: ["hivra_agent_telegram_wake", "hivra_agent_channel_wake"] });
     mockLapsed.mockResolvedValue(false);
     mockClaim.mockResolvedValue("claimed");
     mockFinish.mockResolvedValue(true);
@@ -125,7 +137,65 @@ describe("ensureHivraAgentAwake with a Telegram wake webhook", () => {
     mockSettle.mockResolvedValue(undefined);
     mockReadRow.mockResolvedValue({ data: row(), error: null });
   });
-  afterEach(() => { process.env = { ...saved }; });
+  afterEach(() => {
+    jest.restoreAllMocks();
+    process.env = { ...saved };
+  });
+
+  it("authenticates the current Telegram arm, then leaves one failed wake ready to re-arm", async () => {
+    const armId = "22222222-2222-4222-8222-222222222222";
+    const staleArmId = "33333333-3333-4333-8333-333333333333";
+    const signingSeed = "x".repeat(40);
+    const botToken = `123456789:${"Ab_-".repeat(9)}`;
+    process.env.HIVRA_TELEGRAM_WAKE_SECRET = signingSeed;
+    process.env.ENCRYPTION_KEY = "ef".repeat(32);
+    mockChannelDb.insertRow("hivra_agent_telegram_wake", {
+      agent_id: AGENT_ID, user_id: "user-1", enabled: true, arm_id: armId, state: "armed",
+      token_enc: encryptSecret(botToken), pending_since: null, next_attempt_at: null,
+    });
+    const lifecycle = jest.requireActual<typeof import("../telegram-wake/lifecycle")>("../telegram-wake/lifecycle");
+    mockDisarm.mockImplementation(lifecycle.disarmTelegramForWake);
+    mockRearm.mockImplementation(lifecycle.rearmTelegramAfterFailedWake);
+    const fetchStub = jest.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      order.push("delete_webhook");
+      return Response.json({ ok: true, result: true });
+    });
+    mockRunScript.mockImplementation(async () => {
+      order.push("host_script");
+      return { ok: true, stdout: wakeReceipt({ ok: false, to: "napping", reason: "resume_failed" }), stderr: "" };
+    });
+    const call = (arm: string) => POST(new NextRequest(
+      `https://hooks.example.test/api/webhooks/telegram-wake/${AGENT_ID}`,
+      {
+        method: "POST",
+        headers: { "x-telegram-bot-api-secret-token": telegramWakeSecretToken(signingSeed, AGENT_ID, arm) },
+        body: JSON.stringify({ update_id: 1 }),
+      },
+    ), { params: Promise.resolve({ agentId: AGENT_ID }) });
+
+    expect((await call(staleArmId)).status).toBe(401);
+    expect(mockAfter).not.toHaveBeenCalled();
+    const answer = await call(armId);
+    expect(answer.status).toBe(503);
+    expect(answer.headers.get("Retry-After")).toBe("5");
+    expect(mockAfter).toHaveBeenCalledTimes(1);
+    expect(mockClaim).not.toHaveBeenCalled();
+    await mockAfter.mock.calls[0][0]();
+
+    expect(mockLapsed).toHaveBeenCalledWith(expect.objectContaining({ user_id: "user-1" }), "start");
+    expect(mockClaim).toHaveBeenCalledTimes(1);
+    expect(mockClaim).toHaveBeenCalledWith({ agentId: AGENT_ID, operationId: expect.any(String) });
+    expect(mockFinish).toHaveBeenCalledWith({ ...mockClaim.mock.calls[0][0], result: "wake_failed" });
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ agentId: AGENT_ID, trigger: "telegram" }));
+    expect(order).toEqual(["delete_webhook", "host_script"]);
+    expect(fetchStub).toHaveBeenCalledWith(
+      `https://api.telegram.org/bot${botToken}/deleteWebhook`,
+      expect.objectContaining({ method: "POST", body: '{"drop_pending_updates":false}' }),
+    );
+    expect(mockChannelDb.tables.hivra_agent_telegram_wake[0]).toMatchObject({
+      state: "pending_arm", pending_since: expect.any(String), next_attempt_at: null,
+    });
+  });
 
   it("deletes the webhook after admission and before the host resumes the computer, and records the time", async () => {
     mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
