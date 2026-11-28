@@ -75,9 +75,7 @@ fn can_use_unquoted_desktop_exec(exec: &str) -> bool {
 }
 
 fn repair_desktop_entry(contents: &str, exec: &str) -> Option<String> {
-    if !can_use_unquoted_desktop_exec(exec) {
-        return None;
-    }
+    let can_unquote_exec = can_use_unquoted_desktop_exec(exec);
     let quoted = format!("\"{exec}\" %u");
     let replacement = format!("Exec={exec} %u");
     let mut repaired = String::with_capacity(contents.len());
@@ -88,7 +86,7 @@ fn repair_desktop_entry(contents: &str, exec: &str) -> Option<String> {
         let (body, carriage_return) = body.strip_suffix('\r').map_or((body, ""), |body| (body, "\r"));
         let mut output = body.to_string();
         if let Some((key, value)) = body.split_once('=') {
-            if key.trim() == "Exec" && value.trim() == quoted {
+            if can_unquote_exec && key.trim() == "Exec" && value.trim() == quoted {
                 output = replacement.clone();
                 changed = true;
             } else if key.trim() == "MimeType" {
@@ -469,6 +467,16 @@ mod tests {
         let exec = "/opt/hivra/hivra-desktop";
         let contents = format!("[Desktop Entry]\nExec = \"{exec}\" %u\n");
         assert_eq!(repair_desktop_entry(&contents, exec), Some(format!("[Desktop Entry]\nExec={exec} %u\n")));
+    }
+
+    #[test]
+    fn unusual_desktop_exec_paths_still_get_valid_mime_type_lists() {
+        let exec = "/tmp/Hivra with spaces.AppImage";
+        let contents = format!("Exec=\"{exec}\" %u\nMimeType=x-scheme-handler/hivra\n");
+        assert_eq!(
+            repair_desktop_entry(&contents, exec),
+            Some(format!("Exec=\"{exec}\" %u\nMimeType=x-scheme-handler/hivra;\n"))
+        );
     }
 
     #[test]
