@@ -10,6 +10,8 @@
 //
 // Pure (no server imports) so the tests can run the program itself.
 
+import { OPENCLAW_SQLITE_PATH, OPENCLAW_SQLITE_SCHEDULE_PY } from "./openclaw-schedule-program";
+
 export const IDLE_PROBE_PREFIX = "HIVRA_IDLE ";
 export const IDLE_PROBE_VERSION = 1;
 
@@ -220,6 +222,7 @@ for p in (HOME + "/.openclaw/cron/jobs-state.json", HOME + "/.openclaw/cron/jobs
             if t: nexts.append(t)
             stack.extend(x.values())
         elif isinstance(x, list): stack.extend(x[:2000])
+${OPENCLAW_SQLITE_SCHEDULE_PY}openclaw_sqlite_jobs(HOME + "${OPENCLAW_SQLITE_PATH.slice(1)}")
 a0 = rjson("/opt/a0/usr/scheduler/tasks.json", 1 << 20)
 if isinstance(a0, dict) and a0.get("tasks"): nexts.append(time.time())
 def has_cron_jobs(text):

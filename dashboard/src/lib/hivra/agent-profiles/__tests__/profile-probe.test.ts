@@ -64,6 +64,51 @@ run("profile probe vs the fixed probe, on the same fixture computer", () => {
   };
   const future = (seconds: number) => new Date(Date.now() + seconds * 1000).toISOString();
 
+  const openclawSqlite = (rows: [number, string][]) => {
+    const file = path.join(dir, "home/.openclaw/state/openclaw.sqlite");
+    mkdirSync(path.dirname(file), { recursive: true });
+    const created = spawnSync("python3", ["-I", "-B", "-c", `
+import json, shutil, sqlite3, sys
+p = sys.argv[1]
+db = sqlite3.connect(p + ".source")
+db.execute("PRAGMA journal_mode=WAL")
+db.execute("PRAGMA wal_autocheckpoint=0")
+db.execute("CREATE TABLE cron_jobs(enabled INTEGER NOT NULL, state_json TEXT NOT NULL)")
+db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+db.executemany("INSERT INTO cron_jobs VALUES(?,?)", json.loads(sys.argv[2]))
+db.commit()
+shutil.copyfile(p + ".source", p)
+for sidecar in ("-wal", "-shm"):
+    shutil.copyfile(p + ".source" + sidecar, p + sidecar)
+db.close()
+`, file, JSON.stringify(rows)], { encoding: "utf8" });
+    expect(created.stderr).toBe("");
+    expect(created.status).toBe(0);
+  };
+
+  it("reads committed OpenClaw WAL deadlines and ignores disabled jobs in both probes", () => {
+    const early = Math.ceil(Date.now() / 1000) * 1000 + 3_600_000;
+    openclawSqlite([
+      [0, JSON.stringify({ nextRunAtMs: early - 60_000 })],
+      [1, JSON.stringify({ nextRunAtMs: early + 60_000 })],
+      [1, JSON.stringify({ nextRunAtMs: early })],
+      [1, JSON.stringify({ runningAtMs: early - 3_601_000 })],
+    ]);
+    put("home/.openclaw/cron/jobs-state.json", JSON.stringify({ state: { nextRunAtMs: early + 120_000 } }));
+    for (const probe of [exec(legacy(IDLE_PROBE_PROGRAM)), profileRun("openclaw"), profileRun("not-a-type")]) {
+      expect(probe).toMatchObject({ nextJobAt: new Date(early).toISOString().replace(".000", ""), activeRuns: 1, errors: [] });
+    }
+  });
+
+  it.each(["malformed database", "invalid enabled job state"])("reports an unknown schedule for %s", (defect) => {
+    if (defect === "malformed database") put("home/.openclaw/state/openclaw.sqlite", "not a database");
+    else openclawSqlite([[1, "{}"]]);
+    for (const probe of [exec(legacy(IDLE_PROBE_PROGRAM)), profileRun("openclaw")]) {
+      expect(probe.nextJobAt).toBeNull();
+      expect(probe.errors).toContain("openclaw_schedule");
+    }
+  });
+
   /** Everything the old probe read, for every agent at once. */
   const kitchenSink = () => {
     put("home/.hivra/chat-runs/a/status.json", JSON.stringify({ state: "starting", startedAt: "2026-11-12T10:00:00Z" }));
