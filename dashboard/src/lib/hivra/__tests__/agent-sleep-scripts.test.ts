@@ -685,6 +685,14 @@ host("wake script against a stub host", () => {
     none(locked.calls);
   });
 
+  it("does not retry or start after batched hard admission refuses", () => {
+    const script = buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION(h.provisionerDir), batchQemuAdmission: true });
+    const run = h.run(script, HIBERNATED, { STUB_ADMISSION_REFUSES: "1" });
+    expect(receipt(run)).toMatchObject({ ok: false, reason: "capacity", from: "hibernated", to: "hibernated" });
+    expect(run.calls.filter((call) => call.startsWith("admission "))).toEqual(["admission 1234 4096 4096 2 2048 1 1500 1200 0"]);
+    none(run.calls);
+  });
+
   it("measures the locked recheck and refuses a changed state before admission", () => {
     const run = h.run(wake(), HIBERNATED, { STUB_FLOCK_STATE: JSON.stringify(NAPPING) });
     const r = receipt(run)!;

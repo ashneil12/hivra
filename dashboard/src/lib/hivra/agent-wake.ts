@@ -13,6 +13,7 @@ import { resolveHivraLifecycleTarget, type HivraLifecycleTarget } from "./agent-
 import { sleepMemoryDropAfterDays, STALE_SLEEP_LEASE_MS } from "./agent-sleep-policy";
 import { isStartBlockedForLapse } from "./lapse-gate";
 import { isCanaryQaHolderSeat, type CanaryQaHolderRow } from "./canary-qa-holder";
+import { isCanonicalGitCanaryDeployment } from "./canonical-git-canary";
 import {
   claimAgentWake,
   finishAgentWake,
@@ -288,11 +289,16 @@ export async function runWakeHostScript(
       if (!helper) throw new Error("Canary admission helper is not sealed.");
       admission.overcommit = { grant, helperSha256: helper.sha256 };
     }
+    const fastQm = isFastWakeEnabled("fast_qm");
+    const batchQemuAdmission = !grant && fastQm && options.restore && row.sleep_state === "hibernated"
+      && context.kind === "managed" && context.provisionerChannel === "canary"
+      && isCanonicalGitCanaryDeployment();
     script = buildWakeHostScript({
       vmid: target.vmid,
       bindingTag: target.bindingTag,
       admission,
-      ...(isFastWakeEnabled("fast_qm") ? { fastConfigRead: true } : {}),
+      ...(fastQm ? { fastConfigRead: true } : {}),
+      ...(batchQemuAdmission ? { batchQemuAdmission: true } : {}),
       // A wake that took a Telegram wake row back also drops the guest's dead long polls, so the bot polls again at once.
       ...(options.killStaleSockets === true ? { killStaleSockets: true } : {}),
       // The host runs this computer's public connector: drop the proxy's nap marker, and never touch the guest's tunnel.

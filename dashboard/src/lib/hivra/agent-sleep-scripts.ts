@@ -1449,6 +1449,7 @@ export interface WakeHostScriptInput {
   admission: WakeAdmission;
   /** The binding check reads the VM's config file instead of starting the qm CLI. Off by default. */
   fastConfigRead?: boolean;
+  batchQemuAdmission?: boolean;
   /** The guest fixup also drops stale outbound :443 connections (frozen long polls). Off by default. */
   killStaleSockets?: boolean;
   /**
@@ -1478,7 +1479,7 @@ function assertAdmission(admission: WakeAdmission): void {
 }
 
 /** fastQmDefined: FAST_QM_SHELL already came earlier in the script, so it is not repeated here. */
-function wakeAdmissionShell(admission: WakeAdmission, fastQmDefined: boolean): string {
+function wakeAdmissionShell(admission: WakeAdmission, fastQmDefined: boolean, batchQemuAdmission = false): string {
   const overcommit = admission.overcommit;
   if (overcommit && !/^[0-9a-f]{64}$/.test(overcommit.helperSha256)) throw new Error("Invalid Canary admission helper digest.");
   return `PROVISIONER_DIR=${shellQuote(admission.provisionerDirectory)}
@@ -1494,7 +1495,7 @@ ${fastQmDefined ? "" : `${ADMISSION_FAST_QM_SHELL}
     export PVE_QEMU_CONF_DIR QEMU_RUN_DIR
 ${overcommit ? `    [ "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(CANARY_MEMORY_OVERCOMMIT_PROVISIONER)} ] || return 1
     [ "$(sha256sum "$PROVISIONER_DIR/hivra-host-capacity-admission" | cut -d ' ' -f1)" = ${shellQuote(overcommit.helperSha256)} ] || return 1
-` : ""}    ${canaryMemoryOvercommitShell(overcommit?.grant)}bash "$PROVISIONER_DIR/hivra-host-capacity-admission" "$@"
+` : ""}    ${canaryMemoryOvercommitShell(overcommit?.grant)}${batchQemuAdmission && !overcommit ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : ""}bash "$PROVISIONER_DIR/hivra-host-capacity-admission" "$@"
   )
 }
 # The same reading of the VM's own config as the start helper.
@@ -1695,7 +1696,7 @@ ${receiptShell("wake")}
 ${ctlShell(input.killStaleSockets === true, input.hostIngress === true)}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
 ` : ""}${stateShell(input.fastConfigRead === true)}
-${wakeAdmissionShell(input.admission, input.fastConfigRead === true)}
+${wakeAdmissionShell(input.admission, input.fastConfigRead === true, input.batchQemuAdmission === true)}
 ${input.hostIngress === true ? `${ingressShell()}
 ` : ""}install -d -m 0755 /run/lock
 # The sleep script holds this lock while it works. A wake never runs beside it:

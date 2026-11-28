@@ -739,6 +739,37 @@ describe("ensureHivraAgentAwake with the fast wake switches", () => {
     expect(String(mockRunScript.mock.calls[0][0])).toContain('CONFIG="$(hivra_fast_qm config "$VMID" 2>/dev/null)" || finish false unreachable');
   });
 
+  it("only requests batched hard admission for fast managed disk restore on Git Canary", async () => {
+    const env = jest.replaceProperty(process, "env", {
+      ...process.env, HIVRA_FAST_WAKE: "fast_qm", VERCEL: "1", VERCEL_ENV: "production",
+      VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud", VERCEL_GIT_COMMIT_REF: "canary",
+      VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+    });
+    const canaryTarget = {
+      ...target, executionContext: { ...target.executionContext, kind: "managed", provisionerChannel: "canary" },
+    } as HivraLifecycleTarget;
+    const batch = 'HIVRA_CAPACITY_BATCH_QEMU=1 bash "$PROVISIONER_DIR/hivra-host-capacity-admission"';
+    const script = () => String(mockRunScript.mock.calls.at(-1)?.[0]);
+    const sleeping = row({ sleep_state: "hibernated" });
+    try {
+      await runWakeHostScript(sleeping, canaryTarget, { restore: true });
+      expect(script()).toContain(batch);
+      await runWakeHostScript(row(), canaryTarget, { restore: false });
+      expect(script()).not.toContain(batch);
+      await runWakeHostScript(sleeping, target as HivraLifecycleTarget, { restore: true });
+      expect(script()).not.toContain(batch);
+      process.env.HIVRA_FAST_WAKE = "timing";
+      await runWakeHostScript(sleeping, canaryTarget, { restore: true });
+      expect(script()).not.toContain(batch);
+      process.env.HIVRA_FAST_WAKE = "fast_qm";
+      process.env.VERCEL_GIT_COMMIT_REF = "main";
+      await runWakeHostScript(sleeping, canaryTarget, { restore: true });
+      expect(script()).not.toContain(batch);
+    } finally {
+      env.restore();
+    }
+  });
+
   it("deferred_log: answers before the event is written, and hands the write to after()", async () => {
     process.env.HIVRA_FAST_WAKE = "deferred_log";
     let release: (value: unknown) => void = () => undefined;
