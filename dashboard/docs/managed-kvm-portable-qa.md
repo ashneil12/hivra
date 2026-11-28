@@ -111,3 +111,72 @@ portable Proxmox lock. Only then use the service-only abort RPC to clear the
 exact old lease and return the source row to ordinary hibernation. There is
 no automatic fallback, and this abort is not available after placement
 commit: repair that destination in place while the source stays fenced.
+
+### Guarded operator cleanup
+
+Do not arm a trial on the strength of offline cleanup tests. The tools below
+cover two distinct states:
+
+- **Retire:** after a finished wake and successful signed-in acceptance,
+  retire only the exact stopped source recorded in the journal. Keep the
+  checkpoint. Verify the destination is still using the pinned reservation
+  and the accepted boot with its sole current edge connector. The source
+  script verifies the original allocation, binding, raw and effective
+  hashes, and pinned thin-volume identities under native and Hivra locks.
+- **Abort:** before placement commit, remove only a stopped destination with
+  its original slot and preparation lineage proved. Quiesced restore failures
+  can be reconciled if the prepared artifacts still match. Verify physical
+  destination absence before releasing the source's exact fence. Restore only
+  the original cold state; never start the source as part of cleanup.
+
+The abort tooling does **not** cover a slot with no operation-bound preparation
+attempt, an interrupted native conversion without proven lineage, or a
+destination with a boot attempt, quarantine bridge rules, a running guest,
+or another active writer. Leave the hold and last recoverable copy in place.
+Do not substitute a general lock bypass or deletion command. After retirement,
+the authoritative destination still uses the ordinary signed Delete route.
+Per-operation replay receipts are not reusable host permits. Reconcile
+operation bookkeeping and the encrypted checkpoint separately; these tools
+do not purge the shared repository.
+
+Work only on the authorized Canary owner and fixture. Retain the signed
+acceptance evidence (retirement), immutable preparation or boot profile,
+checkpoint proof, and independently measured source volume identities. Turn
+off the exact runtime selector and let its workers drain. Keep the exact
+maintenance admission for retirement while it is still required. Use the
+operator-only `hivra_kvm_portable_private.claim_cleanup` function with the
+original action, owner, operation, generation, allocation ID, binding hash,
+journal phase and both placements; never expose the full binding hash on any
+output channel. A missing or changed receipt is a refusal, not permission to
+generate replacement input from the current host.
+
+The runner is `dashboard/scripts/ops/kvm-portable-guarded-cleanup.ts`. Run it
+with the dashboard's `ts-node/register/transpile-only` and
+`tsconfig-paths/register` hooks and the repository's
+`scripts/register-server-only-noop.cjs` hook; set
+`TS_NODE_COMPILER_OPTIONS='{"module":"commonjs","moduleResolution":"node"}'`.
+It requires `--apply-canary`, an absolute private manifest path (mode 0600,
+`{authority,run}`), and an absolute trusted operator driver path. The driver
+is environment-specific and must be verified offline before live use.
+
+The runner sends JSON on stdin and reads a JSON response from one bounded
+driver invocation per action:
+
+- `read` calls the private `read_cleanup` with the held receipt and the
+  original tuple, returning the exact DB receipt or null.
+- `host` verifies the selected host is one of the two authorized registered
+  targets and uses strict host authentication. It runs the supplied script
+  with no request data or credentials on stdout; return only
+  `{ok,stdout}`, where stdout is restricted to the script's native receipt.
+- `connectors` uses the exact owned tunnel and returns the active connector
+  IDs; an unavailable lookup must not produce an empty list.
+- `finish` passes the generated evidence to private `finish_cleanup` with
+  the original receipt and tuple. Return true only after the returned journal
+  matches the terminal operation. A lost response can be reconciled by
+  replaying those exact finish arguments; never redispatch against a completed
+  hold.
+
+The runner independently asks the host to verify absence after a successful
+cleanup command and re-reads authority before mutation and finalization. A
+nonzero exit is not evidence of absence. Use the original manifest for a
+retry only after reconciling the exact journal and host state.

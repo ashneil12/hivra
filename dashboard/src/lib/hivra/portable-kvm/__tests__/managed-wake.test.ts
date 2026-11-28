@@ -192,7 +192,8 @@ it("carries the paid idle checkpoint into the verified destination only after th
       events.push("prepare");
       const plan: PortableKvmDestinationPrepareInput = JSON.parse(script.match(/'(\{"agentId":[^']+\n)'/)![1]);
       expect(plan).toMatchObject({ hostId: destination.hostId, vmid: destination.vmid, bindingTag,
-        checkpointSha256: expectedCheckpoint(), disk, profile: { cores: 2, memoryMb: 3072, managed: expectedManaged } });
+        checkpointSha256: expectedCheckpoint(), disk, abortScope: { ownerId: owner },
+        profile: { cores: 2, memoryMb: 3072, managed: expectedManaged } });
       prepared = { agentId, operationId: lease.operation_id, generation: lease.generation,
         checkpointSha256: lease.checkpoint_sha256!, hostId: destination.hostId, vmid: destination.vmid, bindingTag,
         configurationSha256: sha("destination current"), rawConfigurationSha256: sha("destination raw"),

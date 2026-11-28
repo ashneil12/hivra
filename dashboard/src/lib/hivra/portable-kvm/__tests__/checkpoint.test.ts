@@ -13,7 +13,8 @@ jest.mock("../../agent-lifecycle-host", () => ({ resolveHivraLifecycleTarget: (.
 jest.mock("../../computer-backups/sweep", () => ({ computerBackupPassword: () => "test-fixture-root" }));
 jest.mock("@/lib/cold-storage-ssh", () => ({ buildColdStorageInstallScriptOrExit: () => "true" }));
 
-import { advancePortableKvmSourceCheckpoint, portableKvmCheckpointDigest } from "../checkpoint";
+import { advancePortableKvmSourceCheckpoint } from "../checkpoint";
+import { portableKvmCheckpointDigest } from "../source-fence";
 
 const owner = "user_fixture";
 const agentId = "11111111-1111-4111-8111-111111111111";

@@ -4,7 +4,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  bootPortableKvmDestination, enablePortableKvmDestinationNetwork,
+  bootPortableKvmDestination, buildPortableKvmDestinationRetirementWitness, enablePortableKvmDestinationNetwork,
+  parsePortableKvmDestinationRetirementWitness,
   releasePortableKvmDestinationLock, serializePortableKvmDestinationBootProfile, verifyPortableKvmQuarantinedDestination,
   type PortableKvmDestinationBootProfile,
 } from "../destination-boot";
@@ -320,6 +321,9 @@ it.each([
   await expect(verifyPortableKvmQuarantinedDestination(input, h.adapter)).resolves.toEqual(bootReceipt);
   h.commit();
   const networkReceipt = await enablePortableKvmDestinationNetwork(input, h.adapter);
+  const witness = (boot = bootId) => h.adapter.runHostScript({ hostId: destination.hostId,
+    script: buildPortableKvmDestinationRetirementWitness(h.profile, boot, connectorId, Date.now() + 60_000), timeoutMs: 65_000 });
+  expect((await witness()).ok).toBe(false);
   expect(networkReceipt).toMatchObject({ bootId, connectorId });
   expect(h.events()).toBe("install_fence\nstart\nqga_0\nqga_0\nqga_0\nlink_up\nqga_2\ndelete_fence\nqga_1\n");
   const raw = readFileSync(join(h.root, "pve/9344.conf"), "utf8");
@@ -333,6 +337,10 @@ it.each([
   writeFileSync(join(h.root, "pve/9344.conf"), raw);
   await expect(release()).resolves.toMatchObject({ state: "destination_lock_released" });
   expect(h.events()).toMatch(/qga_1\nclear_link_cache\nqga_1\nunlock\n$/);
+  const result = await witness();
+  expect(result.ok).toBe(true);
+  expect(parsePortableKvmDestinationRetirementWitness(result.stdout, h.profile, bootId, connectorId)).toBe(true);
+  expect(parsePortableKvmDestinationRetirementWitness(result.stdout, h.profile, bootId, tunnelId)).toBe(false);
   const released = readFileSync(join(h.root, "pve/9344.conf"), "utf8");
   expect(released).not.toContain("[");
   expect(released).toContain(`tags: ${bindingTag};${allocationTag}\n`);

@@ -94,6 +94,7 @@ printf '%s\\n' ${shellQuote(diskOutput)}
   const exec = async (script: string, input = "") => {
     const uid = process.getuid?.() ?? 0;
     const local = script.replace('Path("/var/lib/hivra-sleep")', `Path(${JSON.stringify(root)})`)
+      .replace('Path("/run/lock")', `Path(${JSON.stringify(root)})`)
       .replaceAll("info.st_uid == 0", "info.st_uid == " + uid).replace("os.geteuid() == 0", "os.geteuid() == " + uid);
     const result = await new Promise<{ stdout: string; stderr: string; status: number | null }>((resolve, reject) => {
       const child = spawn("bash", ["-c", local], { env: { NODE_ENV: "test", PATH: bin + ":/usr/bin:/bin", TEST_ROOT: root } });
@@ -116,6 +117,13 @@ printf '%s\\n' ${shellQuote(diskOutput)}
 }
 
 const dispatch = () => dispatchPortableKvmDestinationJob(reservation, password, env);
+
+it("refuses late dispatch once a host abort journal has claimed this operation", async () => {
+  const host = fakeHost();
+  writeFileSync(join(host.marker, "..", ".abort-journal-" + reservation.operationId), "{}\n", { mode: 0o600 });
+  expect(await dispatch()).toEqual({ state: "unavailable" });
+  expect(existsSync(host.job)).toBe(false);
+});
 const poll = () => pollPortableKvmDestinationJob(reservation, env);
 
 async function settled() {

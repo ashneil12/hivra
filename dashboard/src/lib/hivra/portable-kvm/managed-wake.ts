@@ -10,7 +10,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolveHivraLifecycleTarget } from "../agent-lifecycle-host";
 import { isStartBlockedForLapse } from "../lapse-gate";
 import { shellQuote } from "../proxmox-target";
-import { advancePortableKvmSourceCheckpoint, portableKvmCheckpointDigest, portableKvmCheckpointPassword } from "./checkpoint";
+import { advancePortableKvmSourceCheckpoint, portableKvmCheckpointPassword } from "./checkpoint";
 import {
   bootPortableKvmDestination, enablePortableKvmDestinationNetwork, releasePortableKvmDestinationLock, serializePortableKvmDestinationBootProfile,
   verifyPortableKvmQuarantinedDestination, type PortableKvmDestinationBootAdapter,
@@ -24,7 +24,7 @@ import {
 import { advancePortableKvmIdleHandoff, requestPortableKvmOwnerWake, type PortableKvmCheckpointReceipt, type PortableKvmHandoff } from "./handoff";
 import { isPortableKvmReadyToCheckpoint, isPortableKvmWakeClaimed, readPortableKvmPilot, type PortableKvmPilot, type PortableKvmPlacement } from "./pilot";
 import { buildPortableKvmSlotClaimScript } from "./slot-claim";
-import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence } from "./source-fence";
+import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence, portableKvmCheckpointDigest } from "./source-fence";
 import { buildPortableKvmSourceProfileCheck, isPortableKvmSourceProfileEligible } from "./source-profile";
 
 const hostProfile = z.object({
@@ -80,7 +80,8 @@ function destinationPlan(pilot: PortableKvmPilot, agent: Record<string, unknown>
   const { storage, profile } = pilotProfile(pilot, agent, lease.destination, cpuUnits);
   if (!lease.checkpoint_sha256) throw new Error("Portable KVM checkpoint authority is missing");
   return { ...lease.destination, ...storage, profile, disk, agentId: lease.agent_id, operationId: lease.operation_id,
-    generation: lease.generation, checkpointSha256: lease.checkpoint_sha256, expiresAt: new Date(lease.expires_at).toISOString() };
+    generation: lease.generation, checkpointSha256: lease.checkpoint_sha256, expiresAt: new Date(lease.expires_at).toISOString(),
+    abortScope: { ownerId: pilot.ownerId } };
 }
 
 async function readReservation(plan: PortableKvmDestinationPrepareInput, env: Record<string, string | undefined>) {

@@ -57,6 +57,9 @@ const planSchema = z.object({
   storageId: storageName,
   volumeGroup: storageName,
   thinPool: storageName,
+  abortScope: z.object({
+    ownerId: z.string().regex(/^user_[A-Za-z0-9]{1,128}$/),
+  }).strict().optional(),
   profile: z.object({
     machine: z.string().regex(/^pc-i440fx-[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\+pve[0-9]+)?$/),
     cores: z.number().int().min(1).max(8),
@@ -75,7 +78,7 @@ const planSchema = z.object({
   }).strict(),
 }).strict().refine(plan => {
   const managed = plan.profile.managed;
-  if (!managed) return true;
+  if (!managed) return plan.abortScope === undefined;
   const gateway = managed.cloudInit.gateway;
   return managed.cpuLimit <= plan.profile.cores && gateway !== plan.ip
     && (!managed.resources || managed.resources.balloonMb === plan.profile.memoryMb)
@@ -399,6 +402,23 @@ def destination_disks():
             "unexpected_destination_disk_inventory")
     return {lv["lv_name"]: lv for lv in owned}
 
+def publish_abort_lineage(path):
+    raw, current = check_configuration(allow_generated_section=True)
+    by_name = destination_disks()
+    with ExitStack() as stack:
+        volumes = {}
+        for name, size in ((volume_name, plan["disk"]["bytes"]), (seed_name, 4 * 1024**2)):
+            lv = by_name[name]
+            open_device(stack, lv, name, size)
+            volumes[name] = {"vgUuid": lv["vg_uuid"], "lvUuid": lv["lv_uuid"]}
+        require(check_configuration(allow_generated_section=True) == (raw, current), "abort_lineage_readback_drift")
+    record = {"prepareSha256": hashlib.sha256(expected).hexdigest(),
+              "rawSha256": hashlib.sha256(raw).hexdigest(), "currentSha256": hashlib.sha256(current).hexdigest(),
+              "volumes": volumes}
+    if path == abort_seed:
+        require(json.loads(private_read(abort_native))["volumes"] == volumes, "abort_lineage_volume_changed")
+    publish(path, (json.dumps(record, separators=(",", ":")) + "\n").encode("ascii"))
+
 def measure_destination():
     raw, current = check_configuration()
     by_name = destination_disks()
@@ -453,6 +473,7 @@ def run():
         lock(stack, locks / ("hivra-vm-" + vmid + ".backup.lock"))
         lock(stack, locks / ("hivra-vm-" + vmid + ".lock"))
         private_dir(registry, create=True)
+        require(not os.path.lexists(abort_journal), "destination_abort_already_claimed")
         check_unowned()
         check_headroom()
         if os.path.lexists(marker):
@@ -474,6 +495,12 @@ def run():
             if managed:
                 check_snippet(True)
             check_permit()
+            if plan.get("abortScope"):
+                raw_slot = cfg.read_bytes()
+                require(hashlib.sha1(raw_slot).hexdigest() == digest, "abort_slot_readback_drift")
+                slot = {"prepareSha256": hashlib.sha256(expected).hexdigest(),
+                        "rawSha256": hashlib.sha256(raw_slot).hexdigest()}
+                publish(abort_slot, (json.dumps(slot, separators=(",", ":")) + "\n").encode("ascii"))
             publish(attempt, expected)
             if managed:
                 publish(metadata, meta_wire)
@@ -482,12 +509,21 @@ def run():
                 output("qm", "set", vmid, "--skiplock", "1", "--digest", digest, *args)
             else:
                 output("qm", "create", vmid, "--start", "0", *args)
+            if plan.get("abortScope"):
+                publish_abort_lineage(abort_native)
             check_permit()
             check_headroom()
             check_unowned()
             if managed:
                 generate_seed()
+                if plan.get("abortScope"):
+                    publish_abort_lineage(abort_seed)
             reservation = measure_destination()
+            if plan.get("abortScope"):
+                lineage = json.loads(private_read(abort_seed))
+                require(reservation["rawConfigurationSha256"] == lineage["rawSha256"]
+                        and reservation["configurationSha256"] == lineage["currentSha256"],
+                        "abort_lineage_reservation_drift")
             wire = (json.dumps(reservation, separators=(",", ":")) + "\n").encode("ascii")
             publish(marker, wire)
         check_permit()
@@ -512,6 +548,10 @@ registry = root / "portable-kvm-destinations"
 permit = root / "portable-kvm-destination-permits" / vmid
 attempt = registry / (".attempt-" + vmid)
 marker = registry / vmid
+abort_slot = registry / (".abort-slot-" + vmid)
+abort_native = registry / (".abort-native-" + vmid)
+abort_seed = registry / (".abort-seed-" + vmid)
+abort_journal = registry / (".abort-journal-" + plan["operationId"])
 stage = Path("/var/lib/hivra/portable-kvm-restore-staging")
 locks = Path("/run/lock")
 cfg = Path("/etc/pve/qemu-server", vmid + ".conf")
