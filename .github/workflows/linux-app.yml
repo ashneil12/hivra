@@ -63,7 +63,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p target/release/smoke
-          xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -c '
+          dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -c '
+            # Xvfb has no GPU compositor; these are smoke-test environment
+            # workarounds, not flags shipped into user desktops.
+            export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1
             ./target/release/hivra-desktop >target/release/smoke/app.log 2>&1 &
             app_pid=$!
             window=""
@@ -82,7 +85,9 @@ jobs:
               cat target/release/smoke/app.log >&2 || true
               exit 1
             fi
-            import -window root target/release/smoke/screen.png
+            # Let WebKitGTK finish its first paint before judging the pixels.
+            sleep 5
+            import -window "$window" target/release/smoke/screen.png
             identify target/release/smoke/screen.png
             deviation=$(identify -format "%[standard-deviation]" target/release/smoke/screen.png)
             if awk -v value="$deviation" "BEGIN { exit !(value > 100) }"; then
@@ -94,6 +99,7 @@ jobs:
             kill "$app_pid" 2>/dev/null || true
           '
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
         with:
           name: hivra-linux-unsigned
           path: |
@@ -101,5 +107,5 @@ jobs:
             apps/desktop/HivraDesktop/src-tauri/target/release/bundle/appimage/*.AppImage
             apps/desktop/HivraDesktop/src-tauri/target/release/smoke/screen.png
             apps/desktop/HivraDesktop/src-tauri/target/release/smoke/app.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 14
