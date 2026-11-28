@@ -351,6 +351,20 @@ describe("hetzner-instance-builders", () => {
     expect(configContent).toContain("toolsets:\n  - hermes-cli\n  - video_gen");
   });
 
+  it("writes the exact custom provider model ID into the guest config", () => {
+    const params = realisticGatewayDeployParams();
+    const model = "claude-sonnet-4-20250514";
+    const script = buildAgentDeployScript({
+      ...params,
+      provider: "custom_llm",
+      model,
+      agentSettings: { ...params.agentSettings!, customLlmBaseUrl: "https://models.example.com/v1" },
+    });
+    const config = extractEmbeddedFile(script, "config.yaml");
+    expect(config).toContain(`default: "${model}"`);
+    expect(config).toContain('base_url: "https://models.example.com/v1"');
+  });
+
   it("emits terminal.backend=docker only when terminalBackend=docker AND root mode is on", () => {
     const build = (
       agentSettings: Record<string, unknown>
