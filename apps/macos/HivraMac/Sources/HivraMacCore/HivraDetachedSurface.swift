@@ -10,4 +10,9 @@ public struct HivraDetachedSurface: Codable, Hashable, Sendable {
         self.url = url
         self.title = title
     }
+
+    public func canOpen(allowsDeveloperConnections: Bool) -> Bool {
+        guard let origin = HivraTrustedWebOrigin(url) else { return false }
+        return allowsDeveloperConnections || origin == HivraTrustedWebOrigin(HivraConnectionProfile.hivra.url)
+    }
 }

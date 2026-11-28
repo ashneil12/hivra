@@ -78,6 +78,14 @@ public struct HivraConnectionProfile: Identifiable, Codable, Hashable, Sendable 
         saved.contains(where: { $0.id == builtInHivraID }) ? saved : [hivra] + saved
     }
 
+    private static let builtInCanaryURL: URL? = {
+        #if HIVRA_PUBLIC_BUILD
+        nil
+        #else
+        URL(string: "https://canary.hermesos.cloud/dashboard")
+        #endif
+    }()
+
     public static let developerDefaults: [HivraConnectionProfile] = [
         HivraConnectionProfile(
             id: builtInLocalID,
@@ -85,13 +93,14 @@ public struct HivraConnectionProfile: Identifiable, Codable, Hashable, Sendable 
             url: URL(string: "http://127.0.0.1:3000/dashboard")!,
             kind: .local
         ),
-        HivraConnectionProfile(
+    ] + (builtInCanaryURL.map {
+        [HivraConnectionProfile(
             id: builtInCanaryID,
             name: "Hivra Canary",
-            url: URL(string: "https://canary.hermesos.cloud/dashboard")!,
+            url: $0,
             kind: .hivraCloud
-        ),
-    ]
+        )]
+    } ?? [])
 
     public var isBuiltInLocal: Bool {
         id == Self.builtInLocalID &&
@@ -110,10 +119,11 @@ public struct HivraConnectionProfile: Identifiable, Codable, Hashable, Sendable 
     }
 
     public var isBuiltInCanary: Bool {
-        id == Self.builtInCanaryID &&
+        guard let host = Self.builtInCanaryURL?.host else { return false }
+        return id == Self.builtInCanaryID &&
             kind == .hivraCloud &&
             url.scheme?.lowercased() == "https" &&
-            url.host?.lowercased() == "canary.hermesos.cloud" &&
+            url.host?.lowercased() == host &&
             url.port == nil &&
             url.user == nil &&
             url.password == nil
