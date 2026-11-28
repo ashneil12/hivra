@@ -293,19 +293,19 @@ class SandboxResolverTests(unittest.TestCase):
                                      RESOLVED_UPSTREAM=upstream, RESOLVER_SOURCES=(resolver, upstream)), \
                     mock.patch.object(adapter.os, "fstat", return_value=SimpleNamespace(
                         st_mode=stat.S_IFREG | 0o644, st_uid=0)):
-                resolver.write_text("nameserver 127.0.0.11\nnameserver 10.1.2.3\n")
+                resolver.write_text("nameserver 127.0.0.11\nnameserver 192.0.2.53\n")
                 self.assertIsNone(adapter.host_resolver_source())
-                resolver.write_text("nameserver 10.1.2.3\nnameserver 2001:db8::53\n")
+                resolver.write_text("nameserver 192.0.2.53\nnameserver 2001:db8::53\n")
                 self.assertEqual(adapter.host_resolver_source(), resolver)
                 resolver.unlink()
                 resolver.symlink_to(stub)
                 stub.write_text("nameserver 127.0.0.53\n")
-                upstream.write_text("nameserver 10.1.2.4\n")
+                upstream.write_text("nameserver 198.51.100.53\n")
                 self.assertEqual(adapter.host_resolver_source(), upstream)
                 upstream.write_text("nameserver ::1\n")
                 self.assertIsNone(adapter.host_resolver_source())
                 other = Path(directory, "unexpected")
-                other.write_text("nameserver 10.1.2.4\n")
+                other.write_text("nameserver 198.51.100.53\n")
                 resolver.unlink()
                 resolver.symlink_to(other)
                 self.assertIsNone(adapter.host_resolver_source())
