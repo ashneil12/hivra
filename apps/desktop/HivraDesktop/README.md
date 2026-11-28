@@ -20,7 +20,11 @@ The app adds what a browser tab can't:
   with email in this window instead** keeps the website's page.
 - **hivra:// links**, delivered to the running app (one copy at a time). The
   installed packages declare the handler, and the app also registers it at
-  runtime so development builds and portable AppImages can receive it.
+  runtime so development builds and portable AppImages can receive it. Linux's
+  generic `xdg-open` fallback mishandles the spec-compliant quoted `Exec` path
+  written by Tauri's runtime registration, so the app rewrites simple safe
+  paths unquoted and reapplies the MIME default; unusual paths keep the
+  specification-compliant form.
 - **Updates** through Tauri's updater, only in builds made with
   `HIVRA_UPDATER_PUBKEY` (the public key update files are signed with). Windows
   and Linux use separate `windows-updates` and `linux-updates` GitHub release
@@ -65,9 +69,10 @@ require a newer glibc than intended.
 time makes either platform's build open Canary. The **Windows app** and
 **Linux app** GitHub workflows run the tests and build unsigned artifacts on
 every pull request that touches this folder, and on demand. The Linux workflow
-also starts the built app under Xvfb and checks that a real `Hivra` window is
-created and painted; that smoke test proves the native shell starts, not the
-interactive sign-in journey.
+also starts the built AppImage and installed Debian package under Xvfb, checks
+that a real `Hivra` window is created and painted, and verifies registration as
+the default `hivra://` handler. That smoke test proves the native shell and
+operating-system registration, not the interactive sign-in journey.
 
 ## Before a public release
 

@@ -76,6 +76,11 @@ jobs:
           Start-Sleep -Seconds 10
           $process.Refresh()
           if ($process.HasExited) { throw "Hivra exited during startup with code $($process.ExitCode)" }
+          $command = (Get-ItemProperty -Path "HKCU:\Software\Classes\hivra\shell\open\command" -ErrorAction Stop).'(default)'
+          if (-not $command.ToLowerInvariant().Contains($application.FullName.ToLowerInvariant()) -or -not $command.Contains('"%1"')) {
+            throw "hivra:// registration does not pass the URL to the installed app: $command"
+          }
+          Write-Host "Hivra registered hivra:// with the installed executable and URL argument"
           Write-Host "Hivra stayed running for 10 seconds after installation"
           Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

@@ -63,6 +63,93 @@ fn connection() -> Url {
     Url::parse(raw).unwrap_or_else(|_| Url::parse(DEFAULT_CONNECTION).expect("default connection"))
 }
 
+/// Whether an executable path can safely be written without quotes in a desktop
+/// Exec key. This deliberately conservative subset covers normal install and
+/// AppImage paths; unusual paths keep the plugin's spec-compliant quoting even
+/// though xdg-utils' generic opener mishandles that quoting.
+fn can_use_unquoted_desktop_exec(exec: &str) -> bool {
+    !exec.is_empty()
+        && exec
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-' | b'+' | b'@'))
+}
+
+fn repair_desktop_entry(contents: &str, exec: &str) -> Option<String> {
+    let can_unquote_exec = can_use_unquoted_desktop_exec(exec);
+    let quoted = format!("\"{exec}\" %u");
+    let replacement = format!("Exec={exec} %u");
+    let mut repaired = String::with_capacity(contents.len());
+    let mut changed = false;
+
+    for line in contents.split_inclusive('\n') {
+        let (body, newline) = line.strip_suffix('\n').map_or((line, ""), |body| (body, "\n"));
+        let (body, carriage_return) = body.strip_suffix('\r').map_or((body, ""), |body| (body, "\r"));
+        let mut output = body.to_string();
+        if let Some((key, value)) = body.split_once('=') {
+            if can_unquote_exec && key.trim() == "Exec" && value.trim() == quoted {
+                output = replacement.clone();
+                changed = true;
+            } else if key.trim() == "MimeType" {
+                let value = value.trim();
+                if !value.is_empty() && !value.ends_with(';') {
+                    output = format!("MimeType={value};");
+                    changed = true;
+                }
+            }
+        }
+        repaired.push_str(&output);
+        repaired.push_str(carriage_return);
+        repaired.push_str(newline);
+    }
+
+    changed.then_some(repaired)
+}
+
+/// tauri-plugin-deep-link writes a spec-compliant quoted Exec path, but the
+/// generic xdg-open fallback used by several Linux desktops does not implement
+/// Exec quoting and then sends the callback to a browser instead of the app.
+/// Rewrite simple paths to the compatible unquoted form after registration.
+#[cfg(target_os = "linux")]
+fn repair_linux_handler_exec(app: &AppHandle) -> Result<(), String> {
+    let binary = tauri::utils::platform::current_exe().map_err(|error| error.to_string())?;
+    let file_name = format!(
+        "{}-handler.desktop",
+        binary.file_name().and_then(|name| name.to_str()).ok_or("the executable has no UTF-8 file name")?
+    );
+    let exec = app
+        .env()
+        .appimage
+        .clone()
+        .unwrap_or_else(|| binary.into_os_string())
+        .to_string_lossy()
+        .into_owned();
+    let target = app
+        .path()
+        .data_dir()
+        .map_err(|error| error.to_string())?
+        .join("applications")
+        .join(&file_name);
+    let contents = std::fs::read_to_string(&target).map_err(|error| error.to_string())?;
+    let Some(repaired) = repair_desktop_entry(&contents, &exec) else { return Ok(()) };
+    std::fs::write(&target, repaired).map_err(|error| error.to_string())?;
+    if let Some(applications) = target.parent() {
+        let _ = std::process::Command::new("update-desktop-database").arg(applications).status();
+    }
+
+    // Newer xdg-utils validates the executable before writing the default. The
+    // plugin invokes xdg-mime before this repair, so repeat the association now
+    // that the desktop entry is in the compatible form.
+    let status = std::process::Command::new("xdg-mime")
+        .args(["default", &file_name, "x-scheme-handler/hivra"])
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("xdg-mime exited with {status}"))
+    }
+}
+
 /// An address of the app's own pages, for navigating back to them.
 fn local_page(page: &str) -> Url {
     let base = if cfg!(windows) { "http://tauri.localhost/" } else { "tauri://localhost/" };
@@ -296,8 +383,12 @@ pub fn run() {
                 // Installed builds register hivra:// at install; this covers
                 // development and portable runs. A registration failure must not
                 // take the app down, but it also must not be invisible.
-                if let Err(error) = handle.deep_link().register_all() {
+                if let Err(error) = handle.deep_link().register("hivra") {
                     eprintln!("hivra: couldn't register the hivra:// browser handoff: {error}");
+                }
+                #[cfg(target_os = "linux")]
+                if let Err(error) = repair_linux_handler_exec(&handle) {
+                    eprintln!("hivra: couldn't repair the hivra:// browser handoff: {error}");
                 }
             }
             let links = handle.clone();
@@ -349,5 +440,50 @@ mod tests {
             Some((current, sign_in::Intent::SignIn))
         );
         assert_eq!(pending, None);
+    }
+
+    #[test]
+    fn simple_desktop_exec_paths_are_made_xdg_open_compatible() {
+        let exec = "/home/ubuntu/Applications/Hivra_0.1.0_amd64.AppImage";
+        let contents = format!("[Desktop Entry]\nExec=\"{exec}\" %u\nTerminal=false\n");
+        assert_eq!(
+            repair_desktop_entry(&contents, exec),
+            Some(format!("[Desktop Entry]\nExec={exec} %u\nTerminal=false\n"))
+        );
+    }
+
+    #[test]
+    fn desktop_mime_type_lists_are_given_their_required_terminator() {
+        let exec = "/opt/hivra/hivra-desktop";
+        let contents = "[Desktop Entry]\nMimeType=x-scheme-handler/hivra\n";
+        assert_eq!(
+            repair_desktop_entry(contents, exec),
+            Some("[Desktop Entry]\nMimeType=x-scheme-handler/hivra;\n".to_string())
+        );
+    }
+
+    #[test]
+    fn rewritten_desktop_exec_keys_are_repaired_again() {
+        let exec = "/opt/hivra/hivra-desktop";
+        let contents = format!("[Desktop Entry]\nExec = \"{exec}\" %u\n");
+        assert_eq!(repair_desktop_entry(&contents, exec), Some(format!("[Desktop Entry]\nExec={exec} %u\n")));
+    }
+
+    #[test]
+    fn unusual_desktop_exec_paths_still_get_valid_mime_type_lists() {
+        let exec = "/tmp/Hivra with spaces.AppImage";
+        let contents = format!("Exec=\"{exec}\" %u\nMimeType=x-scheme-handler/hivra\n");
+        assert_eq!(
+            repair_desktop_entry(&contents, exec),
+            Some(format!("Exec=\"{exec}\" %u\nMimeType=x-scheme-handler/hivra;\n"))
+        );
+    }
+
+    #[test]
+    fn unusual_desktop_exec_paths_keep_spec_compliant_quoting() {
+        for exec in ["/tmp/Hivra with spaces.AppImage", "/tmp/Hivra%100.AppImage", "/tmp/Hivra\\path.AppImage", "/tmp/Hivra\"quoted\".AppImage"] {
+            let contents = format!("Exec=\"{exec}\" %u");
+            assert_eq!(repair_desktop_entry(&contents, exec), None);
+        }
     }
 }
