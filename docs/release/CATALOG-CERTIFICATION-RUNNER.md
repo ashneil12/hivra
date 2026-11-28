@@ -22,14 +22,14 @@ user or invitation.
 
 The implementation lives in `dashboard/scripts/catalog-certification/`:
 
-- `served-canary-revision.mjs` — uses the operator's authenticated Vercel CLI
-  read-only to prove which READY Git-sourced production deployment holds
-  `canary.hermesos.cloud`, then validates repo, branch and exact commit SHA.
+- `served-canary-revision.mjs` — uses scoped Vercel REST GETs to prove which
+  READY Git-sourced deployment holds `canary.hermesos.cloud`, then validates
+  the configured Canary project, public repo, branch and exact commit SHA.
 - `canary-test-env.mjs` — reads the Canary project's production-scoped test
-  env through the Vercel v8 API and exports only `LAUNCH_SWEEP_SUPABASE_URL` and
-  `LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY` to the runner process. Standing
-  sign-in doesn't need a Clerk key. Values aren't written to an env file or
-  printed in logs.
+  env through the Vercel v8 API after rechecking the alias binding. It
+  passes only the two Supabase settings to the fixed launch-sweep command;
+  it does not pass through the Vercel credential. Standing sign-in doesn't
+  need a Clerk key. Values aren't written to an env file or printed in logs.
 - `certification-plan.mjs` — chooses one due target. New entries come first,
   with the runtime pilot matrix first of all. Passed entries are recertified
   when the manifest or provisioner changes and otherwise on a periodic
@@ -115,12 +115,14 @@ The export never changes a project setting or promotes a deployment.
 The LaunchAgents need only non-secret configuration:
 
 - `HIVRA_CANARY_VERCEL_PROJECT_ID` — the Canary Vercel project id
-- `HIVRA_VERCEL_SCOPE` — the Vercel team scope used by the operator CLI
+- `HIVRA_VERCEL_SCOPE` — the Vercel team slug or team ID used for every REST read
 
 The machine must already have:
 
 - macOS with launchd, Node 22, npm, Git, Docker for curator verification;
-- `vercel` CLI signed in with read access to the Canary project;
+- Vercel API read access to the Canary alias and project environment through
+  `HIVRA_VERCEL_TOKEN` or the existing owner-only local Vercel auth file.
+  The runner doesn't invoke the Vercel CLI;
 - `gh` signed in for the public repository;
 - `codex` signed in through ChatGPT for the cheap remediation/curator agent;
 - Playwright Chromium (`run-once.sh` installs/validates it after dependency
@@ -172,7 +174,16 @@ tail -f ~/.local/state/hivra-catalog-certification/logs/fixer-launchd.out.log
 
 ## Manual bounded operation
 
-Run one certification target selection and launch without starting the loop:
+Check exact deployment and test-env access without starting a browser:
+
+```bash
+HIVRA_CANARY_VERCEL_PROJECT_ID=<id> HIVRA_VERCEL_SCOPE=<scope> \
+  dashboard/scripts/catalog-certification/run-once.sh --verify-only
+```
+
+Run one certification target selection and launch without starting the loop.
+For an approved bounded trial, add `--target <catalog-slug>`; it must be in
+the exact served registry, and the serial lock and cleanup guards still apply:
 
 ```bash
 HIVRA_CANARY_VERCEL_PROJECT_ID=<id> HIVRA_VERCEL_SCOPE=<scope> \

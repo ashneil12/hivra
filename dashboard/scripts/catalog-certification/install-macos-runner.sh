@@ -36,7 +36,7 @@ if [ -z "$SCOPE" ]; then
   echo "HIVRA_VERCEL_SCOPE or --scope is required" >&2
   exit 2
 fi
-for file in run-continuous.sh run-once.sh run-fixer-continuous.sh run-fixer-once.sh served-canary-revision.mjs canary-test-env.mjs certification-plan.mjs append-certification-result.mjs catalog-remediation.mjs; do
+for file in run-continuous.sh run-once.sh run-fixer-continuous.sh run-fixer-once.sh served-canary-revision.mjs canary-test-env.mjs vercel-rest.mjs certification-plan.mjs append-certification-result.mjs catalog-remediation.mjs; do
   [ -f "$SCRIPT_DIR/$file" ] || { echo "missing $SCRIPT_DIR/$file" >&2; exit 2; }
 done
 skill_source="$(cd "$SCRIPT_DIR/../../.." && pwd)/.devin/skills/catalog-certification-fixer/SKILL.md"

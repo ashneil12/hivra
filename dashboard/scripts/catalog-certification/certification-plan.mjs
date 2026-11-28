@@ -329,6 +329,11 @@ function cli(argv = process.argv.slice(2)) {
   const canarySha = options.get("--canary-sha");
   if (!dashboardDir || !ledger || !canarySha) throw planError("--dashboard, --ledger and --canary-sha are required");
   const catalog = loadCatalog(dashboardDir);
+  if (options.has("--target")) {
+    const target = catalog.find((entry) => entry.id === options.get("--target"));
+    if (!target) throw planError("requested target is not in the served catalog");
+    return target.id;
+  }
   const provisionerVersion = options.get("--provisioner-version") ?? readProvisionerVersion(dashboardDir);
   const ledgerRows = readCertificationLedger(ledger);
   if (options.get("--report")) return report(catalog, ledgerRows, canarySha, provisionerVersion);

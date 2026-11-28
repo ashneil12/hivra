@@ -7,13 +7,20 @@ umask 077
 REPO="${CERT_REPO:-$HOME/Projects/Hivra-public-canary}"
 WORKTREE="${CERT_WORKTREE:-$HOME/Worktrees/hivra/catalog-certification-runner}"
 STATE="${CERT_STATE:-$HOME/.local/state/hivra-catalog-certification}"
-HOST="${CERT_CANARY_HOST:-canary.hermesos.cloud}"
-OWNER="${CERT_GH_OWNER:-ashneil12}"
-GH_REPO="${CERT_GH_REPO:-hivra}"
-REF="${CERT_GH_REF:-canary}"
-SCOPE="${HIVRA_VERCEL_SCOPE:-${VERCEL_SCOPE:-}}"
-PROJECT_ID="${HIVRA_CANARY_VERCEL_PROJECT_ID:-}"
+HOST=canary.hermesos.cloud
+REF=canary
 IDLE_MINUTES="${CERT_IDLE_MINUTES:-0}"
+mode=launch
+requested_target=""
+case "${1:-}" in
+  "") ;;
+  --verify-only) [ "$#" -eq 1 ] || exit 2; mode=verify ;;
+  --target)
+    if [ "$#" -ne 2 ] || ! [[ "$2" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then exit 2; fi
+    requested_target="$2"
+    ;;
+  *) echo "[certify] expected --verify-only, --target <catalog-slug>, or no arguments" >&2; exit 2 ;;
+esac
 
 mkdir -p "$STATE/results"
 LOCK="$STATE/certification-lock.d"
@@ -28,13 +35,6 @@ if [ -e "$hold_file" ]; then
   exit 77
 fi
 
-account_file="$STATE/certification-account-email"
-if [ ! -f "$account_file" ] || [ -L "$account_file" ] || [ ! -O "$account_file" ] || [ "$(stat -f %Lp "$account_file")" != 600 ]; then
-  echo "[certify] configure the existing dedicated standing account in the runner's owner-only account file" >&2
-  exit 76
-fi
-export CERTIFICATION_ACCOUNT_EMAIL="$(cat "$account_file")"
-
 export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -42,25 +42,25 @@ need() { command -v "$1" >/dev/null 2>&1 || { echo "missing required command: $1
 need git
 need node
 need npm
-need vercel
-
-scope_args=()
-if [ -n "$SCOPE" ]; then scope_args=(--scope "$SCOPE"); fi
-if [ -z "$PROJECT_ID" ]; then
-  echo "[certify] HIVRA_CANARY_VERCEL_PROJECT_ID is required" >&2
-  exit 2
-fi
 
 echo "[certify] resolving served Canary revision"
-served_json="$(node "$SCRIPT_DIR/served-canary-revision.mjs" --host "$HOST" --owner "$OWNER" --repo "$GH_REPO" --ref "$REF" "${scope_args[@]}")"
+served_json="$(node "$SCRIPT_DIR/served-canary-revision.mjs")" || exit 2
 sha="$(printf '%s' "$served_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);process.stdout.write(j.sha)})')"
 deployment="$(printf '%s' "$served_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const j=JSON.parse(s);process.stdout.write(j.deploymentId)})')"
-served_project="$(printf '%s' "$served_json" | node -p 'JSON.parse(require("fs").readFileSync(0,"utf8")).projectId')"
-if [ "$served_project" != "$PROJECT_ID" ]; then
-  echo "[certify] configured project does not match the resolved deployment" >&2
-  exit 2
-fi
+export CERT_VERCEL_DEPLOYMENT_ID="$deployment"
 echo "[certify] $HOST is $deployment at $sha"
+if [ "$mode" = verify ]; then
+  node "$SCRIPT_DIR/canary-test-env.mjs" --verify-only || exit 2
+  echo "[certify] verified Canary test env availability without starting a browser"
+  exit 0
+fi
+
+account_file="$STATE/certification-account-email"
+if [ ! -f "$account_file" ] || [ -L "$account_file" ] || [ ! -O "$account_file" ] || [ "$(stat -f %Lp "$account_file")" != 600 ]; then
+  echo "[certify] configure the existing dedicated standing account in the runner's owner-only account file" >&2
+  exit 76
+fi
+export CERTIFICATION_ACCOUNT_EMAIL="$(cat "$account_file")"
 
 git -C "$REPO" fetch -q origin "$REF"
 if ! git -C "$REPO" cat-file -e "$sha^{commit}" 2>/dev/null; then
@@ -98,12 +98,10 @@ if [ ! -x node_modules/.bin/playwright ] || [ ! -f "$hash_file" ] || [ "$(cat "$
   npx playwright install chromium >/dev/null
 fi
 
-HELPER_DIR="$SCRIPT_DIR"
-if [ -f "$WORKTREE/dashboard/scripts/catalog-certification/certification-plan.mjs" ]; then
-  HELPER_DIR="$WORKTREE/dashboard/scripts/catalog-certification"
-fi
 ledger="$STATE/certification-ledger.jsonl"
-target="$(node "$HELPER_DIR/certification-plan.mjs" --dashboard "$WORKTREE/dashboard" --ledger "$ledger" --canary-sha "$sha" --choose)"
+plan_args=(--dashboard "$WORKTREE/dashboard" --ledger "$ledger" --canary-sha "$sha" --choose)
+if [ -n "$requested_target" ]; then plan_args+=(--target "$requested_target"); fi
+target="$(node "$SCRIPT_DIR/certification-plan.mjs" "${plan_args[@]}")" || exit 2
 target="$(printf '%s' "$target" | tr -d '[:space:]')"
 if [ -z "$target" ] || [ "$target" = "null" ]; then
   echo "[certify] no catalog entry is due"
@@ -120,12 +118,6 @@ out_dir="$STATE/results/$run_id"
 mkdir -p "$out_dir"
 echo "[certify] target=$target run=$run_id provisioner=$provisioner output=$out_dir"
 
-if ! env_exports="$(node "$HELPER_DIR/canary-test-env.mjs" --project-id "$PROJECT_ID" "${scope_args[@]}")"; then
-  echo "[certify] could not load Canary test secrets from Vercel" >&2
-  exit 2
-fi
-eval "$env_exports"
-unset env_exports
 export HIVRA_LIVE_AUDIT_AUTH=clerk-test-otp
 export LAUNCH_SWEEP_CERTIFICATION=1
 export LAUNCH_SWEEP_BASE_URL="https://$HOST"
@@ -136,12 +128,16 @@ export LAUNCH_SWEEP_OUT_DIR="$out_dir"
 export LAUNCH_SWEEP_RUN_ID="$run_id"
 
 set +e
-npm run test:launch-sweep >"$out_dir/runner.log" 2>&1
+node "$SCRIPT_DIR/canary-test-env.mjs" --launch-sweep >"$out_dir/runner.log" 2>&1
 sweep_status=$?
 set -e
+if [ "$sweep_status" -eq 74 ]; then
+  echo "[certify] could not verify Canary test env; no browser started" >&2
+  exit 2
+fi
 
 set +e
-node "$HELPER_DIR/append-certification-result.mjs" \
+node "$SCRIPT_DIR/append-certification-result.mjs" \
   --ledger "$ledger" \
   --out-dir "$out_dir" \
   --target "$target" \
