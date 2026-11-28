@@ -35,7 +35,7 @@ import { maxDuration, POST } from "../route";
 const ID = "00000000-0000-4000-8000-000000001022";
 const params = { params: Promise.resolve({ id: ID }) };
 
-function request(headers: Record<string, string> = {}) {
+function request(headers: Record<string, string> = {}, body: Record<string, unknown> = {}) {
   return new NextRequest(`https://canary.hermesos.cloud/api/hivra/agents/${ID}/wake`, {
     method: "POST",
     headers: {
@@ -45,7 +45,7 @@ function request(headers: Record<string, string> = {}) {
       "content-type": "application/json",
       ...headers,
     },
-    body: "{}",
+    body: JSON.stringify(body),
   });
 }
 
@@ -79,6 +79,15 @@ describe("POST /api/hivra/agents/[id]/wake", () => {
     expect(response.status).toBe(200);
     expect((await response.json()).data).toEqual({ state: "awake", wakeMs: 1400 });
     expect(mockEnsure).toHaveBeenCalledWith(ID, expect.objectContaining({ trigger: "open", waitMs: 45_000, portableOwnerId: "user-1" }));
+  });
+
+  it("distinguishes a signed-in owner’s chat send from an owner-open wake", async () => {
+    expect((await POST(request({}, { source: "chat" }), params)).status).toBe(200);
+    expect(mockEnsure).toHaveBeenCalledWith(ID, expect.objectContaining({ trigger: "action", portableOwnerId: "user-1" }));
+    mockEnsure.mockClear();
+    mockMaybeSingle.mockResolvedValueOnce({ data: null, error: null });
+    expect((await POST(request({}, { source: "chat" }), params)).status).toBe(404);
+    expect(mockEnsure).not.toHaveBeenCalled();
   });
 
   it("hands unfinished wake work to after()", async () => {
