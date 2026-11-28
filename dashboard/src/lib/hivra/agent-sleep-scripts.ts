@@ -386,7 +386,7 @@ export const INTERRUPTED_SAVE_SHELL = String.raw`recover_interrupted_save() {
   return 0
 }`.replaceAll("\\${", "${");
 
-function stateShell(fastConfig: boolean, classic = false): string {
+function stateShell(fastConfig: boolean, classic = false, wake = false): string {
   const config = fastConfig ? "hivra_fast_qm" : "qm";
   return `# One config read serves the binding check and the first state read.
 read_state() {
@@ -398,7 +398,16 @@ read_state() {
     CONFIG="$(${config} config "$VMID" 2>/dev/null)" || { CONFIG=""; return 1; }
   fi
   LOCK="$(printf '%s\\n' "$CONFIG" | awk '$1=="lock:" {print $2; exit}')"
-  if ! qmp_fast; then
+${fastConfig && wake ? `  if [ "$LOCK" = suspended ] && grep -Eq '^vmstate:[[:space:]]+[^[:space:]]+' <<<"$CONFIG" \\
+    && [ -d "$QEMU_RUN_DIR" ] && [ -r "$QEMU_RUN_DIR" ] && [ -x "$QEMU_RUN_DIR" ] \\
+    && [ ! -e "$QEMU_RUN_DIR/$VMID.pid" ] && [ ! -L "$QEMU_RUN_DIR/$VMID.pid" ] \\
+    && [ ! -e "$QEMU_RUN_DIR/$VMID.qmp" ] && [ ! -L "$QEMU_RUN_DIR/$VMID.qmp" ] \\
+    && [ ! -e "$QEMU_RUN_DIR/$VMID.qga" ] && [ ! -L "$QEMU_RUN_DIR/$VMID.qga" ]; then
+    ST=stopped
+    QMP=none
+    return 0
+  fi
+` : ""}  if ! qmp_fast; then
     out="$(qm status "$VMID" --verbose 2>/dev/null)" || return 1
     ST="$(printf '%s\\n' "$out" | awk '$1=="status:" {print $2; exit}')"
     QMP="$(printf '%s\\n' "$out" | awk '$1=="qmpstatus:" {print $2; exit}')"
@@ -1695,7 +1704,7 @@ qm() { command timeout -k 5 30 qm "$@" </dev/null; }
 ${receiptShell("wake")}
 ${ctlShell(input.killStaleSockets === true, input.hostIngress === true)}
 ${input.fastConfigRead === true ? `${FAST_QM_SHELL}
-` : ""}${stateShell(input.fastConfigRead === true)}
+` : ""}${stateShell(input.fastConfigRead === true, false, true)}
 ${wakeAdmissionShell(input.admission, input.fastConfigRead === true, input.batchQemuAdmission === true)}
 ${input.hostIngress === true ? `${ingressShell()}
 ` : ""}install -d -m 0755 /run/lock
