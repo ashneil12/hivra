@@ -56,6 +56,15 @@ function safeReason(value) {
     .slice(0, 500);
 }
 
+export function certificationRunDisposition(row) {
+  if (!row.evidenceFile || (row.sweepPassed && !row.teardown) || row.teardown && (
+    row.teardown.error || row.teardown.agentsLeft !== 0 ||
+    row.teardown.instancesLeft !== 0 || row.teardown.accountDeleted !== false
+  )) return "hold";
+  if (row.failure?.stage === "account") return "account";
+  return row.passed ? "pass" : "fail";
+}
+
 export function certificationRowFromSweep({ result, file, target, canarySha, provisionerVersion, runId, sweepExitCode, now = () => new Date() }) {
   if (!result) {
     return {
@@ -85,7 +94,7 @@ export function certificationRowFromSweep({ result, file, target, canarySha, pro
       }
     : null;
   const cleanupLeaked = Boolean(teardown && (teardown.agentsLeft > 0 || teardown.instancesLeft > 0));
-  const cleanupVerified = Boolean(teardown && !teardown.error &&
+  const cleanupVerified = Boolean(teardown && !teardown.error && result.teardown.accountDeleted === false &&
     result.teardown.agentsLeft === 0 && result.teardown.instancesLeft === 0);
   let passed = Boolean(result.passed) && revisionMatches && cleanupVerified && sweepExitCode === 0;
   let failure = result.failure
@@ -113,7 +122,7 @@ export function certificationRowFromSweep({ result, file, target, canarySha, pro
     failure = {
       stage: "teardown",
       category: "harness_environment",
-      reason: "teardown did not verify an empty certification account",
+      reason: "teardown did not verify an empty and preserved certification account",
     };
   } else if (result.passed && sweepExitCode !== 0) {
     failure = {
