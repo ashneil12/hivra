@@ -78,10 +78,27 @@ fn repair_desktop_exec(contents: &str, exec: &str) -> Option<String> {
     if !can_use_unquoted_desktop_exec(exec) {
         return None;
     }
-    let quoted = format!("Exec=\"{exec}\" %u");
-    contents
-        .contains(&quoted)
-        .then(|| contents.replacen(&quoted, &format!("Exec={exec} %u"), 1))
+    let quoted = format!("\"{exec}\" %u");
+    let replacement = format!("Exec={exec} %u");
+    let mut repaired = String::with_capacity(contents.len());
+    let mut changed = false;
+
+    for line in contents.split_inclusive('\n') {
+        let (body, newline) = line.strip_suffix('\n').map_or((line, ""), |body| (body, "\n"));
+        let (body, carriage_return) = body.strip_suffix('\r').map_or((body, ""), |body| (body, "\r"));
+        let mut output = body.to_string();
+        if let Some((key, value)) = body.split_once('=') {
+            if key.trim() == "Exec" && value.trim() == quoted {
+                output = replacement.clone();
+                changed = true;
+            }
+        }
+        repaired.push_str(&output);
+        repaired.push_str(carriage_return);
+        repaired.push_str(newline);
+    }
+
+    changed.then_some(repaired)
 }
 
 /// tauri-plugin-deep-link writes a spec-compliant quoted Exec path, but the
@@ -426,6 +443,13 @@ mod tests {
             repair_desktop_exec(&contents, exec),
             Some(format!("[Desktop Entry]\nExec={exec} %u\nTerminal=false\n"))
         );
+    }
+
+    #[test]
+    fn rewritten_desktop_exec_keys_are_repaired_again() {
+        let exec = "/opt/hivra/hivra-desktop";
+        let contents = format!("[Desktop Entry]\nExec = \"{exec}\" %u\n");
+        assert_eq!(repair_desktop_exec(&contents, exec), Some(format!("[Desktop Entry]\nExec={exec} %u\n")));
     }
 
     #[test]
