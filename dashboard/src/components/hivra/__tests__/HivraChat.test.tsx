@@ -873,6 +873,18 @@ describe("HivraChat", () => {
       mockComposerInput?.({ isTrusted: true, nativeEvent: { inputType }, currentTarget: composer } as unknown as React.FormEvent<HTMLTextAreaElement>);
     }
 
+    it("wakes on the first trusted input after the chat pauses, before an owner row poll changes its generation", async () => {
+      (wakeAgent as jest.Mock).mockResolvedValue({ state: "awake" });
+      (inspectChatReadiness as jest.Mock).mockResolvedValue("provider_configured");
+      const { rerender } = render(typingChat(false, 6));
+      await act(async () => { typeDraft("H"); });
+      expect(wakeAgent).not.toHaveBeenCalled();
+      rerender(typingChat(true, 6));
+      await act(async () => { typeDraft("He"); });
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
+      expect(wakeAgent).toHaveBeenCalledWith("agent-1", expect.any(AbortSignal), "chat-typing");
+    });
+
     it("does not pre-wake on draft restoration, focus, synthetic input, paste or deletion", () => {
       window.localStorage.setItem("hivra_sessions_typingwake", JSON.stringify([{
         id: "stored-session", title: "Draft", messages: [], createdAt: 1, loaded: true,

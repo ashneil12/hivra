@@ -2937,7 +2937,9 @@ describe("AgentPage", () => {
       render(<AgentPage />);
       const composer = await screen.findByText("Chat panel");
       expect(composer).toHaveAttribute("data-guest-paused", "false");
-      expect(composer).not.toHaveAttribute("data-typing-wake-generation");
+      if (capability) expect(composer).toHaveAttribute("data-typing-wake-generation", "6");
+      else expect(composer).not.toHaveAttribute("data-typing-wake-generation");
+      expect(mockWakeAgent).not.toHaveBeenCalled();
       mockGetAgent.mockResolvedValue({ ...kvm, owner_chat_prewake: capability, sleep_state: "hibernated", sleep_generation: 7 });
       fireEvent(document, new Event("visibilitychange"));
       await waitFor(() => expect(composer).toHaveAttribute("data-guest-paused", "true"));
