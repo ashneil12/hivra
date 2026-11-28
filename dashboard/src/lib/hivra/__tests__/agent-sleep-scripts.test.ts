@@ -11,6 +11,7 @@ import {
 import { HOST_VM_CONTROL_PROGRAM, HOST_VM_CONTROL_SOCKETS_PROGRAM } from "../sleep/host-vm-control-program";
 import { IDLE_PROBE_PROGRAM } from "../sleep/idle-probe-program";
 import { shellQuote } from "../proxmox-target";
+import { CANARY_MEMORY_OVERCOMMIT_PROVISIONER } from "@/lib/infrastructure/host-capacity-policy";
 import {
   AWAKE, COLD, HIBERNATED, NAPPING, TAG, VMID, makeHostHarness, probeLine, type HostHarness, type HostState,
 } from "./sleep-stub-host.fixtures";
@@ -805,6 +806,59 @@ host("wake script against a stub host", () => {
         expect(result.calls).toContain(`qm start ${VMID}`);
         expect(result.state.status).toBe("running");
       }
+    } finally {
+      fixture.cleanup();
+    }
+  });
+
+  it("requires the exact admission helper and holds the allocation lock across a pilot restore", () => {
+    const fixture = makeHostHarness();
+    try {
+      const helper = path.join(fixture.provisionerDir, "hivra-host-capacity-admission");
+      const intentDir = path.join(fixture.dir, "provision-operations");
+      mkdirSync(intentDir);
+      const intent = path.join(intentDir, `wake-${VMID}.selected`);
+      const bindingTag = `hivra-bind-${"a".repeat(32)}`;
+      const env = { STUB_WAKE_INTENT: "1" };
+      const grant = {
+        ratioMilli: 1100, validUntilEpoch: Math.floor(Date.now() / 1000) + 60, measuredGuests: [],
+        pressureBaseline: "00000000-0000-4000-8000-000000000042:0:17:0:24", hostId: "fixture-node-a", qaTemplateVmid: null,
+      };
+      const scriptBody = `#!/bin/bash
+set -eu
+[ -e /proc/$$/fd/8 ]
+[ "$HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI" = "1100" ]
+[ "$1 $2 $3" = "${VMID} 1024 2048" ]
+printf '%s\\n' pilot_admission >&2
+`;
+      writeFileSync(helper, scriptBody);
+      const script = buildWakeHostScript({
+        vmid: VMID, bindingTag,
+        admission: {
+          ...ADMISSION(fixture.provisionerDir),
+          overcommit: { grant, helperSha256: createHash("sha256").update(scriptBody).digest("hex") },
+        },
+      });
+      const state = { ...HIBERNATED, tags: bindingTag, memory: 2048, balloon: 1024 };
+      writeFileSync(path.join(fixture.provisionerDir, "VERSION"), "2026.11.28.1\n");
+      expect(receipt(fixture.run(script, state, env))).toMatchObject({ ok: false, reason: "capacity_pilot" });
+      writeFileSync(path.join(fixture.provisionerDir, "VERSION"), `${CANARY_MEMORY_OVERCOMMIT_PROVISIONER}\n`);
+      const admitted = fixture.run(script, state, env);
+      expect(receipt(admitted)).toMatchObject({ ok: true, reason: "restored" });
+      expect(admitted.stderr).toContain("pilot_admission");
+      expect(admitted.calls).toContain("wake intent present at start");
+      expect(existsSync(intent)).toBe(false);
+      const uncertain = fixture.run(script, { ...state, startFail: true }, env);
+      expect(receipt(uncertain)).toMatchObject({ ok: false, reason: "pilot_start_unconfirmed" });
+      expect(readFileSync(intent, "utf8")).toBe(`v1 ${VMID} ${bindingTag} 2048\n`);
+      const pending = fixture.run(script, state, env);
+      expect(receipt(pending)).toMatchObject({ ok: false, reason: "capacity_pilot" });
+      expect(pending.calls).not.toContain(`qm start ${VMID}`);
+      rmSync(intent);
+      writeFileSync(helper, scriptBody + "\n");
+      const changed = fixture.run(script, state, env);
+      expect(receipt(changed)).toMatchObject({ ok: false, reason: "capacity_pilot" });
+      expect(changed.calls).not.toContain(`qm start ${VMID}`);
     } finally {
       fixture.cleanup();
     }

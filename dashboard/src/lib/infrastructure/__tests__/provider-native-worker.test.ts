@@ -37,6 +37,17 @@ const previousRecovery = () => {
 const encodedRequest = (script: string) => JSON.parse(Buffer.from(script.match(/base64.b64decode\("([A-Za-z0-9+/=]+)"/)![1], "base64").toString());
 
 describe("staged private native provider controller", () => {
+  it("keeps .28.1 recovery on its sealed worker", () => {
+    const request = recovery();
+    const bundle = { ...request.identity.bundle, provisionerVersion: "2026.11.28.1",
+      bundleSha256: "0b8a869f7690b010cf92033f8947ee625f311883677f9e8a63690e4733511b50" };
+    const prior = parseProviderNativeWorkerIdentity({ ...request.identity, bundle });
+    expect(buildProviderNativeWorkerPlan({ ...request, identity: prior }, clock).script)
+      .toContain("3e6f9d451d2f62e22ccfb71caf98621acc371860f7e2398e7b0d4bc14c72e832");
+    expect(() => parseProviderNativeWorkerIdentity({ ...prior, bundle: { ...bundle,
+      bundleSha256: request.identity.bundle.bundleSha256 } })).toThrow();
+  });
+
   it("keeps .06.3 recovery on its sealed worker after prepared-image release", () => {
     const request = recovery(), prior = parseProviderNativeWorkerIdentity({ ...request.identity, bundle: { ...request.identity.bundle,
       provisionerVersion: "2026.09.06.3", bundleSha256: "5ea99797e6a1f7b105d1af07c191585c386df5590bd65a3389f045a41466dbef" } });

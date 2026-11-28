@@ -30,6 +30,11 @@ import { hibernationDiscardBody } from "./agent-power-scripts";
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
+  CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  canaryMemoryOvercommitShell,
+  type CanaryMemoryOvercommit,
+} from "@/lib/infrastructure/host-capacity-policy";
+import {
   HOST_VM_CONTROL_INGRESS_PROGRAM,
   HOST_VM_CONTROL_PREFIX,
   HOST_VM_CONTROL_PROGRAM,
@@ -1435,6 +1440,7 @@ export interface WakeAdmission {
   enforceCeilings: boolean;
   cpuDensityMilli: number;
   memoryDensityMilli: number;
+  overcommit?: { grant: CanaryMemoryOvercommit; helperSha256: string };
 }
 
 export interface WakeHostScriptInput {
@@ -1473,6 +1479,8 @@ function assertAdmission(admission: WakeAdmission): void {
 
 /** fastQmDefined: FAST_QM_SHELL already came earlier in the script, so it is not repeated here. */
 function wakeAdmissionShell(admission: WakeAdmission, fastQmDefined: boolean): string {
+  const overcommit = admission.overcommit;
+  if (overcommit && !/^[0-9a-f]{64}$/.test(overcommit.helperSha256)) throw new Error("Invalid Canary admission helper digest.");
   return `PROVISIONER_DIR=${shellQuote(admission.provisionerDirectory)}
 HOST_RESERVE_MB=${admission.hostReserveMb}
 ENFORCE_CEILINGS=${admission.enforceCeilings ? 1 : 0}
@@ -1484,7 +1492,9 @@ ${fastQmDefined ? "" : `${ADMISSION_FAST_QM_SHELL}
     qm() { hivra_fast_qm "$@"; }
     export -f qm hivra_fast_qm
     export PVE_QEMU_CONF_DIR QEMU_RUN_DIR
-    bash "$PROVISIONER_DIR/hivra-host-capacity-admission" "$@"
+${overcommit ? `    [ "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(CANARY_MEMORY_OVERCOMMIT_PROVISIONER)} ] || return 1
+    [ "$(sha256sum "$PROVISIONER_DIR/hivra-host-capacity-admission" | cut -d ' ' -f1)" = ${shellQuote(overcommit.helperSha256)} ] || return 1
+` : ""}    ${canaryMemoryOvercommitShell(overcommit?.grant)}bash "$PROVISIONER_DIR/hivra-host-capacity-admission" "$@"
   )
 }
 # The same reading of the VM's own config as the start helper.
@@ -1506,9 +1516,13 @@ capacity_inputs() {
 }`;
 }
 
-function wakeBody(hostIngress = false, coldStart = false, classic = false): string {
+function wakeBody(hostIngress = false, coldStart = false, classic = false, overcommit = false): string {
   // What the restore branch expects to find: saved memory, or (cold start) whichever of the two it saw first.
   const expect = coldStart ? '"$EXPECT"' : "hibernated";
+  const readCapacity = `    capacity_inputs || finish false capacity_inputs ${expect}
+${coldStart ? `    # A disk boot needs startup memory before the balloon can reclaim it.
+    if [ "$EXPECT" = cold ]; then TARGET_FLOOR_MB="$TARGET_MAX_MB"; fi
+` : ""}`;
   return `STEP="$(now_ms)"
 read_state || finish false state_unreadable
 mark read_state "$STEP"
@@ -1545,36 +1559,44 @@ ${coldStart ? `    EXPECT=hibernated
       AGENT_WAIT=${COLD_START_AGENT_WAIT_SECONDS}
       EXPECT=cold
     fi
-` : ""}    capacity_inputs || finish false capacity_inputs ${expect}
-${coldStart ? `    # A disk boot needs startup memory before the balloon can reclaim it.
-    if [ "$EXPECT" = cold ]; then TARGET_FLOOR_MB="$TARGET_MAX_MB"; fi
-` : ""}    install -d -m 0755 /run/lock
+` : ""}${overcommit ? "" : readCapacity}    install -d -m 0755 /run/lock
     exec 8>/run/lock/hivra-allocation.lock
     phase_clock PHASE
     flock -w 60 8 || { phase_mark allocation_lock "$PHASE"; finish false lock_timeout ${expect}; }
     phase_mark allocation_lock "$PHASE"
     # The state may have changed while this waited for the lock.
     phase_clock PHASE
-    read_state || { phase_mark locked_recheck "$PHASE"; finish false state_unreadable; }
+${overcommit ? "    require_binding\n" : ""}    read_state || { phase_mark locked_recheck "$PHASE"; finish false state_unreadable; }
     [ "$(tier_of)" = ${expect} ] || { phase_mark locked_recheck "$PHASE"; finish false state_changed "$(tier_of)"; }
-${classic ? `    grep -Eq '^vmstate:[[:space:]]+[^[:space:]]+' <<<"$CONFIG" || { phase_mark locked_recheck "$PHASE"; finish false memory_missing unknown; }
+${overcommit ? readCapacity : ""}${classic ? `    grep -Eq '^vmstate:[[:space:]]+[^[:space:]]+' <<<"$CONFIG" || { phase_mark locked_recheck "$PHASE"; finish false memory_missing unknown; }
 ` : ""}    phase_mark locked_recheck "$PHASE"
     ADMIT="$(now_ms)"
     if ! run_admission "$VMID" "$TARGET_FLOOR_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \\
         "$HOST_RESERVE_MB" "$ENFORCE_CEILINGS" "$CPU_DENSITY_MILLI" "$MEMORY_DENSITY_MILLI" 0 </dev/null >&2; then
       phase_mark hard_admission "$ADMIT"
-      finish false capacity ${expect}
+      finish false ${overcommit ? "capacity_pilot" : "capacity"} ${expect}
     fi
     phase_mark hard_admission "$ADMIT"
     mark admission "$ADMIT"
-    # The VM process outlives this script, so it must not inherit the lock descriptors.
+${overcommit ? `    WAKE_INTENT_DIR=/var/lib/hivra/provision-operations
+    WAKE_INTENT="$WAKE_INTENT_DIR/wake-$VMID.selected"
+    [[ "$EXPECTED_BINDING_TAG" =~ ^hivra-bind-[a-f0-9]{32}$ ]] && [ -d "$WAKE_INTENT_DIR" ] && [ ! -L "$WAKE_INTENT_DIR" ] \\
+      || finish false capacity_pilot ${expect}
+    WAKE_INTENT_TMP="$(mktemp "$WAKE_INTENT_DIR/.wake-$VMID.XXXXXX")" || finish false capacity_pilot ${expect}
+    if ! printf 'v1 %s %s %s\\n' "$VMID" "$EXPECTED_BINDING_TAG" "$TARGET_MAX_MB" >"$WAKE_INTENT_TMP" \\
+      || ! ln -T -- "$WAKE_INTENT_TMP" "$WAKE_INTENT"; then
+      rm -f -- "$WAKE_INTENT_TMP"
+      finish false capacity_pilot ${expect}
+    fi
+    rm -f -- "$WAKE_INTENT_TMP"
+` : ""}    # The VM process outlives this script, so it must not inherit the lock descriptors.
     START="$(now_ms)"
     # Nor its stderr: the start leaves processes behind that held it, and with it
     # the SSH session, open for about 25 s after the computer was already up.
     if ! command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} qm start "$VMID" 7>&- 8>&- 9>&- >/dev/null 2>"$START_ERR" </dev/null; then
       phase_mark start_running "$START"
       observe
-      finish false start_failed "$OBS"
+      finish false ${overcommit ? "pilot_start_unconfirmed" : "start_failed"} "$OBS"
     fi
     mark start "$START"
     # The lock stays held until the computer is counted as running.
@@ -1585,8 +1607,20 @@ ${classic ? `    grep -Eq '^vmstate:[[:space:]]+[^[:space:]]+' <<<"$CONFIG" || {
       sleep 1
     done
     phase_mark start_running "$START"
-    [ "$OBS" = awake ] || finish false start_unconfirmed "$OBS"
-    flock -u 8
+    [ "$OBS" = awake ] || finish false ${overcommit ? "pilot_start_unconfirmed" : "start_unconfirmed"} "$OBS"
+${overcommit ? `    require_binding
+    read_state && [ "$(tier_of)" = awake ] || finish false pilot_start_unconfirmed "$OBS"
+    PID_FILE="$QEMU_RUN_DIR/$VMID.pid"
+    [ -f "$PID_FILE" ] && [ ! -L "$PID_FILE" ] || finish false pilot_start_unconfirmed "$OBS"
+    WAKE_PID="$(cat "$PID_FILE")" || finish false pilot_start_unconfirmed "$OBS"
+    [[ "$WAKE_PID" =~ ^[1-9][0-9]*$ ]] \\
+      && tr '\\0' '\\n' <"/proc/$WAKE_PID/cmdline" | awk -v vmid="$VMID" '
+        ($0 "x") == (vmid "x") && previous == "-id" {matches++}
+        {previous=$0}
+        END {exit !(matches == 1)}
+      ' && [ "$(cat "$PID_FILE")" = "$WAKE_PID" ] || finish false pilot_start_unconfirmed "$OBS"
+    rm -- "$WAKE_INTENT" || finish false pilot_start_unconfirmed "$OBS"
+` : ""}    flock -u 8
     exec 8>&-
     # Autostart comes back only if the hibernate turned it off.
     if [ -e "$ONBOOT_MARK" ]; then
@@ -1672,7 +1706,7 @@ flock -x -w ${WAKE_LOCK_WAIT_SECONDS} 9 || { require_binding; observe; finish fa
 phase_clock PHASE
 require_binding
 phase_mark binding "$PHASE"
-${wakeBody(input.hostIngress === true, input.coldStart === true)}
+${wakeBody(input.hostIngress === true, input.coldStart === true, false, Boolean(input.admission.overcommit))}
 `;
 }
 

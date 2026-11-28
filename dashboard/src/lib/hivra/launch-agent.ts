@@ -64,8 +64,12 @@ import { isGvisorDeploymentTarget, isProxmoxDeploymentTarget } from "@/lib/infra
 import type { ProxmoxHostCapacityPolicy } from "@/lib/infrastructure/contracts";
 import {
   buildHostCapacityAdmissionCommand,
+  CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  canaryMemoryOvercommitShell,
   DEFAULT_PROXMOX_HOST_CAPACITY_POLICY,
+  type CanaryMemoryOvercommit,
 } from "@/lib/infrastructure/host-capacity-policy";
+import { readCanaryMemoryOvercommit } from "@/lib/hivra/canary-memory-overcommit";
 import { launchProviderAgent, ProviderAgentLaunchError, type ProviderAgentLaunchInput } from "@/lib/hivra/provider-agent-launch";
 import { findGvisorComputerByLaunchRequest, GvisorComputerError, launchGvisorComputer, reserveAndDispatchManagedGvisor } from "@/lib/hivra/gvisor-computer-service";
 import { checkManagedGvisorLaunchAuthority } from "@/lib/hivra/managed-gvisor-authority";
@@ -317,6 +321,7 @@ export function phase1Script(params: {
   computerId?: string;
   controlOrigin?: string;
   capacityPolicy: ProxmoxHostCapacityPolicy;
+  memoryOvercommit?: CanaryMemoryOvercommit | null;
   // Travels only in the root-only secret handoff file, never argv or logs.
   activityTelemetry?: ActivityCollectorCredential | null;
   /** Validated manifest runtime spec for agentKind === "catalog-app". */
@@ -399,7 +404,8 @@ fi`
   const batchQemuAdmission = !runtime
     && ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", ...HERMES_STANDBY_PROVISIONER_VERSIONS, PREPARED_RUNTIME_BUNDLE_VERSION].includes(params.canaryProvisionerVersion ?? "")
     && ["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(params.agentKind);
-  const hostCapacityAdmission = (batchQemuAdmission ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : "") + buildHostCapacityAdmissionCommand({
+  const hostCapacityAdmission = canaryMemoryOvercommitShell(params.memoryOvercommit)
+    + (batchQemuAdmission ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : "") + buildHostCapacityAdmissionCommand({
     provisionerDirectory: runtimePaths.provisionerDirectory,
     floorMemoryMb: params.guaranteedMemMb,
     maximumMemoryMb: params.memMb,
@@ -2400,6 +2406,11 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
         controlOriginConfigured: activityControlOrigin() !== null,
       });
     }
+    const memoryOvercommit = managedGitCanary && canaryProvisionerVersion === CANARY_MEMORY_OVERCOMMIT_PROVISIONER && seatFunding === "paid"
+      && !hermesStandby && !qaHolderDeadline && !options?.moveFromInstanceId && !portableRuntime
+      && (type === "hermes" || type === "claude-code")
+      ? await readCanaryMemoryOvercommit({ host, ownerId: userId, channel: managedProvisionerChannel, bundleVersion: canaryProvisionerVersion })
+      : null;
     checkpointLaunchTiming("allocationStartedMs");
     const result = await runProxmoxHostScript(phase1Script({
       cpu: provisionCores,
@@ -2417,7 +2428,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
       gateway: networkConfig.gateway,
       vmidStart,
       vmidEnd,
-      reservedVmids,
+      reservedVmids: memoryOvercommit ? [...reservedVmids, 9302] : reservedVmids,
       vmidLedger,
       ipLastOctetStart,
       operationId: provisionOperationId,
@@ -2433,6 +2444,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
       capacityPolicy,
       activityTelemetry,
       catalogAppSpec,
+      memoryOvercommit,
     }), env, { earlyFinishMarker: "HIVRA_PROVISION_RESULT" });
     checkpointLaunchTiming("allocationReturnedMs");
     const activityCredentialStaged = activityTelemetry !== null
