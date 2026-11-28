@@ -8,7 +8,8 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { resolveHivraLifecycleTarget, type HivraLifecycleAgentRow } from "../agent-lifecycle-host";
 import { buildBackupPollScript, buildBackupStartScript, parseBackupPoll, parseBackupStartReceipt } from "../computer-backups/scripts";
 import { computerBackupPassword } from "../computer-backups/sweep";
-import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence } from "./source-fence";
+import { buildPortableKvmSourceFenceScript, parsePortableKvmSourceFence, type PortableKvmSourceFence } from "./source-fence";
+import type { PortableKvmDestinationPrepareInput } from "./destination-prepare";
 import { portableKvmPlacement, resolvePortableKvmPilotPlacement, type PortableKvmPilot } from "./pilot";
 
 const uuid = z.string().uuid();
@@ -23,7 +24,21 @@ export function portableKvmCheckpointPassword(agentId: string, operationId: stri
   return backupKey ? createHmac("sha256", backupKey).update(`hivra-kvm-portable-v1:${operationId}`).digest("hex") : null;
 }
 
-export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent: HivraLifecycleAgentRow, pilot: PortableKvmPilot) {
+export function portableKvmCheckpointDigest(
+  fence: PortableKvmSourceFence,
+  { sha256, snapshotId }: { sha256: string; snapshotId: string },
+  disk: { key: string; sha256: string; snapshotId: string; bytes: number },
+) {
+  return createHash("sha256").update(JSON.stringify({
+    fence, configuration: { sha256, snapshotId },
+    disk: { key: disk.key, sha256: disk.sha256, snapshotId: disk.snapshotId, bytes: disk.bytes },
+  })).digest("hex");
+}
+
+export async function advancePortableKvmSourceCheckpoint(
+  ownerId: string, agent: HivraLifecycleAgentRow, pilot: PortableKvmPilot,
+  managed?: PortableKvmDestinationPrepareInput["profile"]["managed"],
+) {
   const placement = resolvePortableKvmPilotPlacement(ownerId, agent, pilot);
   if (!placement) return null;
   if (!supabaseAdmin) throw new Error("Portable KVM checkpoint store unavailable");
@@ -55,7 +70,7 @@ export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent:
   const { env } = resolved.target;
   const fenceScope = { agentId: lease.agent_id, generation: lease.generation, operationId: lease.operation_id,
     hostId: source.hostId, vmid: source.vmid, bindingTag: source.bindingTag };
-  const fenced = await runProxmoxHostScript(buildPortableKvmSourceFenceScript(fenceScope), env, 75_000);
+  const fenced = await runProxmoxHostScript(buildPortableKvmSourceFenceScript(fenceScope, "acquire", managed), env, 75_000);
   const fence = fenced.ok && parsePortableKvmSourceFence(fenced.stdout, fenceScope);
   if (!fence) throw new Error("The portable KVM source could not be fenced");
 
@@ -65,11 +80,12 @@ export async function advancePortableKvmSourceCheckpoint(ownerId: string, agent:
   if (!job) throw new Error("Portable KVM checkpoint job status could not be confirmed");
   if (job.state === "finished") {
     if (job.status !== "succeeded" || job.reason !== "portable_checkpointed"
-      || job.configuration?.sha256 !== fence.configurationSha256 || job.disks.length !== 1 || job.disks[0].key !== "scsi0") {
+      || job.configuration?.sha256 !== fence.configurationSha256 || job.rawConfigurationSha256 !== fence.rawConfigurationSha256
+      || job.disks.length !== 1 || job.disks[0].key !== "scsi0") {
       throw new Error("Portable KVM checkpoint evidence did not match the fenced source");
     }
     const proof = { fence, configuration: job.configuration, disk: job.disks[0] };
-    const checkpointSha256 = createHash("sha256").update(JSON.stringify(proof)).digest("hex");
+    const checkpointSha256 = portableKvmCheckpointDigest(fence, job.configuration, job.disks[0]);
     return { state: "checkpoint_verified" as const, checkpointSha256, ...proof };
   }
   if (job.state === "running") return { state: "checkpointing" as const };

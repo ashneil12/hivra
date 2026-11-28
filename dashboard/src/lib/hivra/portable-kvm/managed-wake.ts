@@ -5,11 +5,12 @@ import { isDeepStrictEqual } from "node:util";
 import { z } from "zod";
 import { getTunnelConfig, listTunnelConnections } from "@/lib/services/cloudflare-tunnel";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { priorityToCpuUnits } from "@/lib/proxmox/cpu-priority";
 import { supabaseAdmin } from "@/lib/supabase";
 import { resolveHivraLifecycleTarget } from "../agent-lifecycle-host";
 import { isStartBlockedForLapse } from "../lapse-gate";
 import { shellQuote } from "../proxmox-target";
-import { advancePortableKvmSourceCheckpoint, portableKvmCheckpointPassword } from "./checkpoint";
+import { advancePortableKvmSourceCheckpoint, portableKvmCheckpointDigest, portableKvmCheckpointPassword } from "./checkpoint";
 import {
   bootPortableKvmDestination, enablePortableKvmDestinationNetwork, releasePortableKvmDestinationLock, serializePortableKvmDestinationBootProfile,
   verifyPortableKvmQuarantinedDestination, type PortableKvmDestinationBootAdapter,
@@ -39,19 +40,28 @@ const profileSchema = z.object({
   hosts: z.record(z.string(), hostProfile),
 }).strict();
 
-function pilotProfile(pilot: PortableKvmPilot, agent: Record<string, unknown>, placement: PortableKvmPlacement) {
+function pilotProfile(pilot: PortableKvmPilot, agent: Record<string, unknown>, placement: PortableKvmPlacement, cpuUnits: number) {
   const config = profileSchema.parse(pilot.profile);
   const host = config.hosts[placement.hostId];
-  const cores = z.number().int().min(1).max(8).parse(agent.cpu);
+  const cores = z.number().int().min(1).max(8).parse(Number(agent.cpu));
   const memoryMb = z.number().int().min(1024).max(16384).parse(Number(agent.ram) * 1024);
   const allocationOperationId = portableKvmAllocationOperationId.parse(agent.allocation_operation_id);
+  if (Number(agent.ram_max) * 1024 !== memoryMb || Math.ceil(Number(agent.cpu_max)) !== cores
+    || Number(agent.cpu_max) !== config.managed.cpuLimit) throw new Error("Portable KVM pilot does not match the fixed allocation envelope");
   if (!Object.hasOwn(config.hosts, placement.hostId) || !host) throw new Error("Portable KVM host profile is missing");
   const { bridge, ...storage } = host;
   return { storage, machineId: config.machineId, profile: {
     machine: config.machine, cores, memoryMb,
     attachment: config.attachment, network: { bridge, macAddress: config.macAddress },
-    managed: { ...config.managed, allocationOperationId },
+    managed: { ...config.managed, allocationOperationId, resources: { balloonMb: memoryMb, cpuUnits } },
   } };
+}
+
+async function readPilotCpuUnits(poolId: string) {
+  if (!supabaseAdmin) throw new Error("Portable KVM allocation store unavailable");
+  const { data, error } = await supabaseAdmin.from("pools").select("priority").eq("id", poolId).maybeSingle();
+  if (error || !data) throw new Error("Portable KVM allocation priority unavailable");
+  return priorityToCpuUnits(z.number().int().min(0).max(2).parse(data.priority));
 }
 
 async function pinnedTarget(ownerId: string, agent: Record<string, unknown>, placement: PortableKvmPlacement, preflight = false) {
@@ -65,9 +75,9 @@ async function pinnedTarget(ownerId: string, agent: Record<string, unknown>, pla
   return result.target;
 }
 
-function destinationPlan(pilot: PortableKvmPilot, agent: Record<string, unknown>, lease: PortableKvmHandoff, disk: PortableKvmCheckpointReceipt["disk"]):
+function destinationPlan(pilot: PortableKvmPilot, agent: Record<string, unknown>, lease: PortableKvmHandoff, disk: PortableKvmCheckpointReceipt["disk"], cpuUnits: number):
   PortableKvmDestinationPrepareInput {
-  const { storage, profile } = pilotProfile(pilot, agent, lease.destination);
+  const { storage, profile } = pilotProfile(pilot, agent, lease.destination, cpuUnits);
   if (!lease.checkpoint_sha256) throw new Error("Portable KVM checkpoint authority is missing");
   return { ...lease.destination, ...storage, profile, disk, agentId: lease.agent_id, operationId: lease.operation_id,
     generation: lease.generation, checkpointSha256: lease.checkpoint_sha256, expiresAt: new Date(lease.expires_at).toISOString() };
@@ -128,8 +138,10 @@ export async function resumeManagedPortableKvmOwnerWake(options: { ownerId?: str
   }
 }
 
-function advanceManagedPortableKvmHandoff(pilot: PortableKvmPilot, agent: Record<string, unknown>, options: { restoreOnly: boolean; deadline: number }) {
+async function advanceManagedPortableKvmHandoff(pilot: PortableKvmPilot, agent: Record<string, unknown>, options: { restoreOnly: boolean; deadline: number }) {
   const { ownerId } = pilot;
+  const poolId = z.string().uuid().parse(agent.pool_id);
+  const cpuUnits = await readPilotCpuUnits(poolId);
   async function connectors() {
     const id = z.string().uuid().parse(agent.cf_tunnel_id);
     return (await listTunnelConnections(id)).filter(connector => connector.connections > 0);
@@ -143,7 +155,7 @@ function advanceManagedPortableKvmHandoff(pilot: PortableKvmPilot, agent: Record
         requirePortableHost(ownerId, lease.agent_id, lease.destination),
       ]);
     }
-    const plan = destinationPlan(pilot, agent, lease, lease.storage_evidence.disk);
+    const plan = destinationPlan(pilot, agent, lease, lease.storage_evidence.disk, cpuUnits);
     const target = await pinnedTarget(ownerId, agent, lease.destination);
     let reservation = await readReservation(plan, target.env);
     let newlyPrepared = false;
@@ -153,18 +165,20 @@ function advanceManagedPortableKvmHandoff(pilot: PortableKvmPilot, agent: Record
       newlyPrepared = reservation !== null;
     }
     if (!reservation) throw new Error("Portable KVM destination reservation not confirmed");
-    const approved = pilotProfile(pilot, agent, lease.destination);
+    const approved = pilotProfile(pilot, agent, lease.destination, cpuUnits);
     const profile = { reservation, ip: lease.destination.ip, machineId: approved.machineId,
       managed: approved.profile.managed };
     const adapter: PortableKvmDestinationBootAdapter = {
       async readAuthority({ ownerId: owner, agentId }) {
         if (!supabaseAdmin || owner !== ownerId || agentId !== lease.agent_id) return null;
-        const [current, { data, error }, currentLease] = await Promise.all([
+        const [current, { data, error }, currentLease, currentCpuUnits] = await Promise.all([
           readPortableKvmPilot(rpc, { ownerId, agentId }),
           supabaseAdmin.from("hivra_agents").select("*").eq("id", agentId).eq("user_id", ownerId).maybeSingle(),
           rpc("read_hivra_kvm_portable_handoff", { p_owner_id: ownerId, p_agent_id: agentId }),
+          readPilotCpuUnits(poolId),
         ]);
-        if (error || !data || !current || !isDeepStrictEqual(current.profile, pilot.profile)) return null;
+        if (error || !data || data.pool_id !== poolId || !current || !isDeepStrictEqual(current.profile, pilot.profile)
+          || !isDeepStrictEqual(pilotProfile(current, data, lease.destination, currentCpuUnits).profile.managed, profile.managed)) return null;
         return { agent: data, lease: currentLease, pilot: current };
       },
       runHostScript({ hostId, script, timeoutMs }) {
@@ -188,7 +202,7 @@ function advanceManagedPortableKvmHandoff(pilot: PortableKvmPilot, agent: Record
     rpc,
     async preflight(row, placement) {
       if (placement.current.ip !== placement.alternate.ip || !getTunnelConfig()) return false;
-      pilotProfile(pilot, row, placement.alternate);
+      pilotProfile(pilot, row, placement.alternate, cpuUnits);
       await Promise.all([
         requirePortableHost(ownerId, row.id, placement.current),
         requirePortableHost(ownerId, row.id, placement.alternate),
@@ -196,7 +210,7 @@ function advanceManagedPortableKvmHandoff(pilot: PortableKvmPilot, agent: Record
       const [source, target] = await Promise.all([
         pinnedTarget(ownerId, row, placement.current, true), pinnedTarget(ownerId, row, placement.alternate, true),
       ]);
-      const { profile } = pilotProfile(pilot, row, placement.current);
+      const { profile } = pilotProfile(pilot, row, placement.current, cpuUnits);
       const [sourceProfile, sourceCpu, targetCpu, targetSlot] = await Promise.all([
         runProxmoxHostScript(buildPortableKvmSourceProfileCheck(placement.current, profile), source.env, 40_000),
         runProxmoxHostScript(buildPortableKvmHostCpuCompatibilityProbeScript(placement.current.hostId), source.env, 20_000),
@@ -217,7 +231,8 @@ function advanceManagedPortableKvmHandoff(pilot: PortableKvmPilot, agent: Record
         requirePortableHost(ownerId, lease.agent_id, lease.source),
         requirePortableHost(ownerId, lease.agent_id, lease.destination),
       ]);
-      const result = await advancePortableKvmSourceCheckpoint(ownerId, row, pilot);
+      const { profile } = pilotProfile(pilot, row, lease.source, cpuUnits);
+      const result = await advancePortableKvmSourceCheckpoint(ownerId, row, pilot, profile.managed);
       return result?.state === "checkpoint_verified" && result.disk.key === "scsi0"
         ? { checkpointSha256: result.checkpointSha256, configuration: result.configuration,
           disk: { ...result.disk, key: "scsi0" } } : null;
@@ -226,9 +241,11 @@ function advanceManagedPortableKvmHandoff(pilot: PortableKvmPilot, agent: Record
       const target = await pinnedTarget(ownerId, row, lease.source);
       const scope = { agentId: lease.agent_id, operationId: lease.operation_id, generation: lease.generation,
         hostId: lease.source.hostId, vmid: lease.source.vmid, bindingTag: lease.source.bindingTag };
-      const result = await runProxmoxHostScript(buildPortableKvmSourceFenceScript(scope, "verify"), target.env, 45_000);
+      const { profile } = pilotProfile(pilot, row, lease.source, cpuUnits);
+      const result = await runProxmoxHostScript(buildPortableKvmSourceFenceScript(scope, "verify", profile.managed), target.env, 45_000);
       const proof = result.ok && parsePortableKvmSourceFence(result.stdout, scope);
-      if (!proof || (lease.storage_evidence && lease.storage_evidence.configuration.sha256 !== proof.configurationSha256)) return false;
+      if (!proof || (lease.storage_evidence && (lease.storage_evidence.configuration.sha256 !== proof.configurationSha256
+        || portableKvmCheckpointDigest(proof, lease.storage_evidence.configuration, lease.storage_evidence.disk) !== lease.checkpoint_sha256))) return false;
       return lease.phase === "placement_committed" || lease.phase === "connector_verified" || (await connectors()).length === 0;
     },
     async restoreAndColdBoot(_row, lease) {

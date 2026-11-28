@@ -68,6 +68,16 @@ not replay a captured Proxmox configuration, copy cloud-init credentials, or
 use source vendor snippets. The destination regenerates its seed with one
 operation-owned metadata line preserving the source instance ID.
 
+For the ordinary paid launch this pilot requires a fixed memory envelope. The
+stored allocation supplies the matching memory floor and ceiling, and its
+pool priority supplies the CPU weight. Both values are verified against the
+source and carried through restore. The only permitted raw-only section is a
+single Proxmox cloud-init cache entry for this VM's original allocation-scoped
+QGA vendor reference, after that reference has been removed from the current
+configuration. The checkpoint binds both raw and current hashes, but stores
+only the effective configuration. It never replays that cache or the source
+vendor data; the destination generates its own NoCloud seed.
+
 ## Signed-in wake and acceptance
 
 The existing sleep cron stages the encrypted checkpoint during cooled

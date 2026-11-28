@@ -13,7 +13,7 @@ jest.mock("../../agent-lifecycle-host", () => ({ resolveHivraLifecycleTarget: (.
 jest.mock("../../computer-backups/sweep", () => ({ computerBackupPassword: () => "test-fixture-root" }));
 jest.mock("@/lib/cold-storage-ssh", () => ({ buildColdStorageInstallScriptOrExit: () => "true" }));
 
-import { advancePortableKvmSourceCheckpoint } from "../checkpoint";
+import { advancePortableKvmSourceCheckpoint, portableKvmCheckpointDigest } from "../checkpoint";
 
 const owner = "user_fixture";
 const agentId = "11111111-1111-4111-8111-111111111111";
@@ -24,7 +24,7 @@ const agent = { id: agentId, user_id: owner, vmid: source.vmid, ip: source.ip, p
   infrastructure_binding_token_hash: "a".repeat(64), infrastructure_binding_token_enforced: true };
 const configurationSha256 = "b".repeat(64);
 const fence = { agentId, operationId, generation: 2, hostId: source.hostId, vmid: source.vmid,
-  bindingTag: source.bindingTag, configurationSha256, state: "fenced" };
+  bindingTag: source.bindingTag, configurationSha256, rawConfigurationSha256: "f".repeat(64), state: "fenced" as const };
 const saved = process.env;
 const pilot = () => ({ ownerId: owner, agentId, placements: [source, destination] as [typeof source, typeof destination],
   profile: {}, expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
@@ -56,17 +56,33 @@ it("fails closed before SSH when the leased physical placement differs", async (
   expect(run).not.toHaveBeenCalled();
 });
 
-it("accepts only the config and disk readback under the existing exact source fence", async () => {
+it.each([true, false])("checks the config and disk readback with an exact raw source match of %s", async rawMatches => {
   run.mockResolvedValueOnce({ ok: true, stdout: `HIVRA_KVM_PORTABLE_FENCE_V1 ${JSON.stringify(fence)}\n` })
     .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_BACKUP_JOB ${operationId} ${JSON.stringify({
       job: operationId, state: "finished", status: "succeeded", reason: "portable_checkpointed",
       configuration: { sha256: configurationSha256, snapshotId: "c".repeat(64) },
+      rawConfigurationSha256: rawMatches ? fence.rawConfigurationSha256 : "e".repeat(64),
       disks: [{ key: "scsi0", sha256: "d".repeat(64), bytes: 4096, snapshotId: "e".repeat(64) }],
     })}\n` });
-  await expect(advancePortableKvmSourceCheckpoint(owner, agent, pilot())).resolves.toMatchObject({
+  const result = advancePortableKvmSourceCheckpoint(owner, agent, pilot());
+  if (rawMatches) await expect(result).resolves.toMatchObject({
     state: "checkpoint_verified", checkpointSha256: expect.stringMatching(/^[0-9a-f]{64}$/),
     configuration: { sha256: configurationSha256 }, disk: { key: "scsi0" },
   });
+  else await expect(result).rejects.toThrow("did not match the fenced source");
   expect(rpc).toHaveBeenCalledTimes(1);
   expect(runWithStdin).not.toHaveBeenCalled();
+});
+
+it("binds both source digests to the checkpoint across a JSONB receipt round trip", () => {
+  const configuration = { sha256: configurationSha256, snapshotId: "c".repeat(64) };
+  const disk = { key: "scsi0", bytes: 4096, sha256: "d".repeat(64), snapshotId: "e".repeat(64) };
+  const checkpoint = portableKvmCheckpointDigest(fence, configuration, disk);
+  const reopened = JSON.parse(JSON.stringify({
+    configuration: { snapshotId: configuration.snapshotId, sha256: configuration.sha256 },
+    disk: { snapshotId: disk.snapshotId, sha256: disk.sha256, key: disk.key, bytes: disk.bytes },
+  }));
+  expect(portableKvmCheckpointDigest(fence, reopened.configuration, reopened.disk)).toBe(checkpoint);
+  expect(portableKvmCheckpointDigest({ ...fence, rawConfigurationSha256: "1".repeat(64) },
+    reopened.configuration, reopened.disk)).not.toBe(checkpoint);
 });

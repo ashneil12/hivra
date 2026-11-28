@@ -6,6 +6,10 @@ const sha256 = z.string().regex(/^[a-f0-9]{64}$/);
 const uuid = z.string().regex(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/);
 const bytes = z.number().int().positive().max(40 * 1024 ** 3).refine(value => value % 512 === 0);
 const diskSchema = z.object({ key: z.literal("scsi0"), snapshotId: sha256, bytes, sha256 }).strict();
+export const portableKvmManagedResourcesSchema = z.object({
+  balloonMb: z.number().int().min(1024).max(16384),
+  cpuUnits: z.number().int().min(1).max(10000),
+}).strict();
 const reservationSchema = z.object({
   agentId: uuid,
   operationId: uuid,
@@ -21,6 +25,7 @@ const reservationSchema = z.object({
   volumeGroup: z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/),
   deviceMapperUuid: z.string().regex(/^LVM-[a-zA-Z0-9]{64}$/),
   disk: diskSchema,
+  resources: portableKvmManagedResourcesSchema.optional(),
 }).strict().refine(value => value.volumeName.startsWith(`vm-${value.vmid}-disk-`));
 
 /**
@@ -44,6 +49,19 @@ const receiptSchema = z.object({
 
 export type PortableKvmDestinationDiskReceipt = z.infer<typeof receiptSchema>;
 
+export const portableKvmResourceValidationPython = String.raw`
+def require_resource_configuration(fields, raw, resources):
+    keys = {"balloon", "cpuunits"}
+    if resources is None:
+        require(not keys.intersection(fields) and not re.search(rb"^(?:balloon|cpuunits):", raw, re.M),
+                "unexpected_destination_resources")
+        return
+    balloon = str(resources["balloonMb"])
+    for key, value in (("memory", balloon), ("balloon", balloon), ("cpuunits", str(resources["cpuUnits"]))):
+        require(fields.get(key) == value and re.findall(rb"^" + key.encode("ascii") + rb":(.*)$", raw, re.M)
+                == [b" " + value.encode("ascii")], "destination_resource_mismatch")
+`;
+
 const restore = String.raw`
 import fcntl
 import hashlib
@@ -62,6 +80,8 @@ from pathlib import Path
 def require(condition, reason):
     if not condition:
         raise RuntimeError(reason)
+
+${portableKvmResourceValidationPython}
 
 def output(*args):
     return subprocess.check_output(args, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
@@ -102,11 +122,12 @@ def check_vm():
                  "nameserver", "serial0", "vga"}
     allowed = {"agent", "arch", "bios", "boot", "cores", "cpu", "description", "lock", "machine",
                "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsihw",
-               "smbios1", "sockets", "tags", "vcpus", "vmgenid"} | seed_keys
+               "smbios1", "sockets", "tags", "vcpus", "vmgenid", "balloon", "cpuunits"} | seed_keys
     for line in current.decode("utf-8").splitlines():
         key, sep, value = line.partition(": ")
         require(sep and key in allowed and key not in fields, "unsupported_destination_configuration")
         fields[key] = value
+    require_resource_configuration(fields, raw, r.get("resources"))
     require(fields.get("lock") == "backup" and fields.get("onboot", "0") == "0", "destination_not_locked")
     tags = fields.get("tags", "").split(";")
     require([tag for tag in tags if tag.startswith("hivra-bind-")] == [r["bindingTag"]], "destination_binding_mismatch")
@@ -116,7 +137,7 @@ def check_vm():
             and fields.get("boot") == "order=scsi0"
             and re.fullmatch(r"pc-i440fx-[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:\+pve[0-9]+)?", fields.get("machine", "")),
             "unsupported_destination_boot")
-    if seed_keys.intersection(fields):
+    if seed_keys.intersection(fields) or "resources" in r:
         seed = r["storageId"] + ":vm-" + vmid + "-cloudinit"
         require(seed_keys <= fields.keys() and fields["ide2"] in {seed + ",media=cdrom", seed + ",media=cdrom,size=4M"}
                 and fields["cicustom"] == "meta=local:snippets/hivra-portable-meta-" + r["operationId"] + ".yaml"

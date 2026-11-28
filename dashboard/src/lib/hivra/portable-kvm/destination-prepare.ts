@@ -3,6 +3,7 @@ import { portableKvmSlotPython } from "./slot-claim";
 import { isIPv4 } from "node:net";
 import { z } from "zod";
 import {
+  portableKvmManagedResourcesSchema,
   serializePortableKvmDestinationReservation,
   type PortableKvmDestinationReservation,
 } from "./destination-disk";
@@ -41,6 +42,7 @@ export const portableKvmAllocationOperationId = z.string()
   .transform(value => value.toLowerCase());
 export const portableKvmManagedAllocationProfileSchema = portableKvmManagedDestinationProfileSchema.extend({
   allocationOperationId: portableKvmAllocationOperationId,
+  resources: portableKvmManagedResourcesSchema.optional(),
 });
 const planSchema = z.object({
   agentId: z.string().uuid(),
@@ -76,6 +78,7 @@ const planSchema = z.object({
   if (!managed) return true;
   const gateway = managed.cloudInit.gateway;
   return managed.cpuLimit <= plan.profile.cores && gateway !== plan.ip
+    && (!managed.resources || managed.resources.balloonMb === plan.profile.memoryMb)
     && gateway.split(".").slice(0, 3).join(".") === plan.ip.split(".").slice(0, 3).join(".")
     && [gateway, plan.ip].every(ip => !/\.(?:0|255)$/.test(ip));
 });
@@ -424,7 +427,8 @@ def measure_destination():
             "configurationSha256": hashlib.sha256(current).hexdigest(),
             "rawConfigurationSha256": hashlib.sha256(raw).hexdigest(),
             "storageId": plan["storageId"], "volumeName": volume_name, "volumeGroup": plan["volumeGroup"],
-            "deviceMapperUuid": dm_uuid, "disk": plan["disk"]}
+            "deviceMapperUuid": dm_uuid, "disk": plan["disk"],
+            **({"resources": resources} if resources else {})}
 
 def run():
     require(os.geteuid() == 0 and output("hostname", "-s").strip() == plan["hostId"].encode("ascii"), "wrong_host")
@@ -494,6 +498,7 @@ plan = json.loads(expected)
 vmid = str(plan["vmid"])
 profile = plan["profile"]
 managed = profile.get("managed")
+resources = managed.get("resources") if managed else None
 attach = profile["attachment"]
 gib = 1024 ** 3
 size_gib = plan["disk"]["bytes"] // gib
@@ -533,6 +538,8 @@ try:
             "nameserver": " ".join(cloudinit["nameservers"]),
             "cicustom": "meta=local:snippets/" + metadata.name,
         })
+        if resources:
+            requested.update({"balloon": str(resources["balloonMb"]), "cpuunits": str(resources["cpuUnits"])})
     expires = datetime.fromisoformat(plan["expiresAt"].replace("Z", "+00:00"))
     run()
 except RuntimeError as error:
@@ -560,12 +567,15 @@ export function parsePortableKvmDestinationPrepareReceipt(
   try {
     const reservation: PortableKvmDestinationReservation = JSON.parse(receipts[0].slice(prefix.length));
     serializePortableKvmDestinationReservation(reservation);
+    const resources = plan.profile.managed?.resources;
     if (reservation.agentId !== plan.agentId || reservation.operationId !== plan.operationId
       || reservation.generation !== plan.generation || reservation.checkpointSha256 !== plan.checkpointSha256
       || reservation.hostId !== plan.hostId || reservation.vmid !== plan.vmid || reservation.bindingTag !== plan.bindingTag
       || reservation.storageId !== plan.storageId || reservation.volumeGroup !== plan.volumeGroup
       || reservation.volumeName !== `vm-${plan.vmid}-disk-0` || reservation.disk.bytes !== plan.disk.bytes
-      || reservation.disk.sha256 !== plan.disk.sha256 || reservation.disk.snapshotId !== plan.disk.snapshotId) return null;
+      || reservation.disk.sha256 !== plan.disk.sha256 || reservation.disk.snapshotId !== plan.disk.snapshotId
+      || reservation.resources?.balloonMb !== resources?.balloonMb
+      || reservation.resources?.cpuUnits !== resources?.cpuUnits) return null;
     return reservation;
   } catch { return null; }
 }

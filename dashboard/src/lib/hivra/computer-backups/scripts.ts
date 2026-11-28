@@ -354,6 +354,12 @@ cleanup() {
   for lv in $ACTIVE_LVS; do lvchange -an "$lv" >/dev/null 2>&1 || true; done
   ACTIVE_LVS=""
 }
+check_raw_configuration() {
+  local raw_config="/etc/pve/qemu-server/$VMID.conf" raw_sha
+  [ -f "$raw_config" ] && [ ! -L "$raw_config" ] &&
+    raw_sha="$(sha256sum 2>/dev/null < "$raw_config" | cut -d' ' -f1)" &&
+    [ "$raw_sha" = "$PORTABLE_RAW_CONFIG_SHA" ] || done_with skipped raw_configuration_changed
+}
 check_storable() {
   if [ "$KIND" = portable_checkpoint ]; then
     CONFIG="$(qm config "$VMID" --current 1 2>/dev/null)" || done_with failed unreachable
@@ -376,6 +382,7 @@ check_storable() {
     fi
     [ "$(printf '%s\n' "$CONFIG" | sha256sum | cut -d' ' -f1)" = "$PORTABLE_CONFIG_SHA" ] ||
       done_with skipped configuration_changed
+    check_raw_configuration
     awk '$1=="full" && $2 ~ /^avg10=[0-9]+(\.[0-9]+)?$/ {
       split($2,a,"="); safe=a[2]<=1; events++
     } END { exit !(events==1 && safe) }' /proc/pressure/io || done_with skipped io_pressure
@@ -410,6 +417,7 @@ fi
 if [ "$KIND" != portable_checkpoint ]; then restic unlock >/dev/null 2>&1 || true; fi
 BACKUP_ARGS=(--host "hivra-$AGENT_ID" --tag hivra-computer --tag hivra-stored --tag "job-$JOB_ID" --json --quiet)
 [ "$UPLOAD_LIMIT_KIB" -gt 0 ] && BACKUP_ARGS+=(--limit-upload "$UPLOAD_LIMIT_KIB")
+if [ "$KIND" = portable_checkpoint ]; then check_raw_configuration; fi
 restic backup "$#{BACKUP_ARGS[@]}" --stdin-from-command --stdin-filename vm.conf -- cat "$JOBDIR/vm.conf" \
   > "$JOBDIR/conf.json" 2>"$JOBDIR/restic.err" || done_with failed upload_failed
 if [ "$KIND" = portable_checkpoint ]; then
@@ -418,7 +426,7 @@ if [ "$KIND" = portable_checkpoint ]; then
   config_readback="$(restic dump --quiet "$config_snapshot" /vm.conf 2>>"$JOBDIR/restic.err" | sha256sum | cut -d' ' -f1)" ||
     done_with failed download_failed
   [ "$config_readback" = "$PORTABLE_CONFIG_SHA" ] || done_with failed hash_mismatch
-  CONFIG_JSON=",\"configuration\":{\"sha256\":\"$PORTABLE_CONFIG_SHA\",\"snapshotId\":\"$config_snapshot\"}"
+  CONFIG_JSON=",\"configuration\":{\"sha256\":\"$PORTABLE_CONFIG_SHA\",\"snapshotId\":\"$config_snapshot\"},\"rawConfigurationSha256\":\"$PORTABLE_RAW_CONFIG_SHA\""
 fi
 COUNT=0
 : > "$JOBDIR/stored-disks"
@@ -433,6 +441,7 @@ while read -r key volid; do
   if [ "$KIND" = portable_checkpoint ]; then
     [[ "$bytes" =~ ^[0-9]{1,12}$ ]] && (( bytes > 0 && bytes <= 40 * 1024**3 )) ||
       done_with skipped unsupported_portable_size
+    check_raw_configuration
   fi
   ionice -c3 nice -n 10 restic backup "$#{BACKUP_ARGS[@]}" --stdin-from-command --stdin-filename "$key.raw" \
     -- /bin/bash "$JOBDIR/read-disk.sh" "$dev" "$JOBDIR/$key.sha256" \
@@ -554,6 +563,7 @@ export function buildBackupStartScript(input: BackupStartInput): string {
   if (kind === "portable_checkpoint") {
     if (!portable || portable.agentId !== agentId || portable.vmid !== vmid || portable.bindingTag !== tag
       || portable.state !== "fenced" || !SHA256_RE.test(portable.configurationSha256)
+      || typeof portable.rawConfigurationSha256 !== "string" || !SHA256_RE.test(portable.rawConfigurationSha256)
       || !UUID_RE.test(portable.operationId) || !Number.isSafeInteger(portable.generation) || portable.generation < 1
       || vmid < 100 || vmid > 999_999_999 || vmid === 9302 || !/^[a-z][a-z0-9-]{0,62}$/.test(portable.hostId)) {
       throw new Error("Portable checkpoint requires the exact fenced QA source");
@@ -581,6 +591,7 @@ export function buildBackupStartScript(input: BackupStartInput): string {
     `REPO_FOLDER=${shellQuote(portableFolder ?? BACKUP_REPO_FOLDER)}`,
     ...(portable ? [
       `PORTABLE_CONFIG_SHA=${shellQuote(portable.configurationSha256)}`,
+      `PORTABLE_RAW_CONFIG_SHA=${shellQuote(portable.rawConfigurationSha256)}`,
       `PORTABLE_FENCE=${shellQuote(JSON.stringify({ agentId, operationId: portable.operationId,
         generation: portable.generation, hostId: portable.hostId, vmid, bindingTag: tag }))}`,
     ] : []),
@@ -681,6 +692,7 @@ export type PolledJob =
     disks: BackupDisk[];
     finishedAt: string | null;
     configuration?: { sha256: string; snapshotId: string };
+    rawConfigurationSha256?: string;
   };
 
 export function parseBackupPoll(stdout: string): PolledJob[] {
@@ -719,6 +731,8 @@ export function parseBackupPoll(stdout: string): PolledJob[] {
         addedBytes: Number.isSafeInteger(added) && added >= 0 ? added : 0,
         disks,
         ...(configurationProof ? { configuration: configurationProof } : {}),
+        ...(typeof row.rawConfigurationSha256 === "string" && SHA256_RE.test(row.rawConfigurationSha256)
+          ? { rawConfigurationSha256: row.rawConfigurationSha256 } : {}),
         finishedAt: typeof row.finishedAt === "string" && !Number.isNaN(Date.parse(row.finishedAt)) ? row.finishedAt : null,
       });
     } catch {

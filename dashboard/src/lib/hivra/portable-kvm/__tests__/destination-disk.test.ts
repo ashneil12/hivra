@@ -7,6 +7,7 @@ import {
   buildPortableKvmDestinationDiskScript,
   parsePortableKvmDestinationDiskReceipt,
   serializePortableKvmDestinationReservation,
+  type PortableKvmDestinationReservation,
 } from "../destination-disk";
 
 jest.mock("server-only", () => ({}));
@@ -28,6 +29,14 @@ const baseReservation = {
   storageId: "local-lvm", volumeName: "vm-9344-disk-0", volumeGroup: "pve", deviceMapperUuid: "LVM-" + "A".repeat(64),
   disk: { key: "scsi0" as const, snapshotId: "4".repeat(64), sha256: digest(image), bytes: image.length },
 };
+const resources = { balloonMb: 2048, cpuUnits: 200 };
+const managedConfig = config +
+  "cpu: host\ncpulimit: 2\nserial0: socket\nvga: serial0\n" +
+  "ide2: local-lvm:vm-9344-cloudinit,media=cdrom,size=4M\nciuser: ubuntu\ncitype: nocloud\nciupgrade: 0\n" +
+  "ipconfig0: ip=192.0.2.44/24,gw=192.0.2.1\nnameserver: 192.0.2.53\n" +
+  "net0: virtio=02:11:22:33:44:55,bridge=vmbr27,firewall=1,link_down=1\n" +
+  `cicustom: meta=local:snippets/hivra-portable-meta-${baseReservation.operationId}.yaml\n`;
+const resourceConfig = managedConfig + "memory: 2048\nballoon: 2048\ncpuunits: 200\n";
 const roots = new Set<string>();
 const fakePassword = "a".repeat(64);
 
@@ -36,13 +45,13 @@ afterEach(() => {
   roots.clear();
 });
 
-function fakeHost(current = config, raw = current, capacity = blank) {
+function fakeHost(current = config, raw = current, capacity = blank, resources?: PortableKvmDestinationReservation["resources"]) {
   const root = mkdtempSync(join(tmpdir(), "hivra-kvm-destination-"));
   roots.add(root);
   for (const dir of ["bin", "state/portable-kvm-destinations", "stage", "dev/pve", "pve", "run", "lock", "sys/0:0/dm"]) {
     mkdirSync(join(root, dir), { mode: 0o700, recursive: true });
   }
-  const reservation = { ...baseReservation, configurationSha256: digest(current), rawConfigurationSha256: digest(raw) };
+  const reservation = { ...baseReservation, configurationSha256: digest(current), rawConfigurationSha256: digest(raw), resources };
   const path = join(root, "dev/dm-0");
   const marker = join(root, "state/portable-kvm-destinations/9344");
   writeFileSync(marker, serializePortableKvmDestinationReservation(reservation), { mode: 0o600 });
@@ -137,21 +146,51 @@ it("writes the complete verified image, including zero extents, then reads it se
 });
 
 it("writes only scsi0 with a qualified ordinary generated NoCloud seed and serial console present", () => {
-  const candidate = config +
-    "cpu: host\ncpulimit: 2\nserial0: socket\nvga: serial0\n" +
-    "ide2: local-lvm:vm-9344-cloudinit,media=cdrom,size=4M\nciuser: ubuntu\ncitype: nocloud\nciupgrade: 0\n" +
-    "ipconfig0: ip=192.0.2.44/24,gw=192.0.2.1\nnameserver: 192.0.2.53\n" +
-    "net0: virtio=02:11:22:33:44:55,bridge=vmbr27,firewall=1,link_down=1\n" +
-    `cicustom: meta=local:snippets/hivra-portable-meta-${baseReservation.operationId}.yaml\n`;
-  const host = fakeHost(candidate);
+  const host = fakeHost(managedConfig);
   const observed = host.run();
   expect(observed.stderr).toBe("");
   expect(parsePortableKvmDestinationDiskReceipt(observed.stdout, host.reservation)).toMatchObject({
     state: "disk_restored_verified",
   });
   expect(readFileSync(host.path)).toEqual(image);
-  const bad = fakeHost(candidate.replace("meta=", "vendor="));
+  const bad = fakeHost(managedConfig.replace("meta=", "vendor="));
   refused(bad, bad.run());
+});
+
+it("restores only the reserved disk with the exact authorized managed resource envelope", () => {
+  const host = fakeHost(resourceConfig, resourceConfig, blank, resources);
+  const result = host.run();
+  expect(result.stderr).toBe("");
+  expect(parsePortableKvmDestinationDiskReceipt(result.stdout, host.reservation)?.reservation.resources).toEqual(resources);
+  expect(parsePortableKvmDestinationDiskReceipt(result.stdout, { ...host.reservation, resources: undefined })).toBeNull();
+  expect(readFileSync(host.path)).toEqual(image);
+});
+
+it.each([
+  ["maximum memory", resourceConfig.replace("memory: 2048", "memory: 4096")],
+  ["balloon floor", resourceConfig.replace("balloon: 2048", "balloon: 1024")],
+  ["CPU weight", resourceConfig.replace("cpuunits: 200", "cpuunits: 100")],
+  ["omitted CPU weight", resourceConfig.replace("cpuunits: 200\n", "")],
+])("refuses a mismatched %s in either resource readback even if the hashes match", (_, candidate) => {
+  for (const [current, raw] of [[candidate, resourceConfig], [resourceConfig, candidate]]) {
+    const host = fakeHost(current, raw, blank, resources);
+    const result = host.run();
+    refused(host, result);
+    expect(result.stderr).toContain("destination_resource_mismatch");
+    expect(host.events()).toBe("");
+  }
+});
+
+it.each([
+  [resourceConfig, resourceConfig],
+  [managedConfig, resourceConfig],
+  [config + "cpuunits: 200\n", config + "cpuunits: 200\n"],
+])("rejects resource fields without reservation authority", (current, raw) => {
+  const host = fakeHost(current, raw);
+  const result = host.run();
+  refused(host, result);
+  expect(result.stderr).toContain("unexpected_destination_resources");
+  expect(host.events()).toBe("");
 });
 
 it.each(["wrong host", "wrong generation", "wrong checkpoint", "symlink reservation", "public reservation", "running", "pid",

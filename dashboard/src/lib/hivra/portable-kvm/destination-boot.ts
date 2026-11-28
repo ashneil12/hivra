@@ -6,6 +6,7 @@ import { z } from "zod";
 import { isCanonicalGitCanaryDeployment } from "../canonical-git-canary";
 import { shellQuote } from "../proxmox-target";
 import {
+  portableKvmResourceValidationPython,
   serializePortableKvmDestinationReservation,
   type PortableKvmDestinationDiskReceipt,
   type PortableKvmDestinationReservation,
@@ -75,12 +76,17 @@ export type PortableKvmDestinationBootProfile = {
 export function serializePortableKvmDestinationBootProfile(profile: PortableKvmDestinationBootProfile): string {
   const managed = portableKvmManagedAllocationProfileSchema.optional().parse(profile.managed);
   const ip = (managed ? privateIpv4 : z.string().refine(isIPv4)).parse(profile.ip);
+  const reservation: PortableKvmDestinationReservation = JSON.parse(serializePortableKvmDestinationReservation(profile.reservation));
+  if (reservation.resources?.balloonMb !== managed?.resources?.balloonMb
+    || reservation.resources?.cpuUnits !== managed?.resources?.cpuUnits) {
+    throw new Error("Portable KVM managed resources do not match the destination reservation");
+  }
   if (managed && (![ip, managed.cloudInit.gateway].every(value => !/\.(?:0|255)$/.test(value)) || ip === managed.cloudInit.gateway
     || ip.split(".").slice(0, 3).join(".") !== managed.cloudInit.gateway.split(".").slice(0, 3).join("."))) {
     throw new Error("Portable KVM managed seed gateway does not match the leased subnet");
   }
   return JSON.stringify({
-    reservation: JSON.parse(serializePortableKvmDestinationReservation(profile.reservation)),
+    reservation,
     ip,
     machineId: machineId.parse(profile.machineId),
     managed,
@@ -205,6 +211,7 @@ def require(ok, reason):
         raise RuntimeError(reason)
 
 ${portableKvmHostCpuValidationPython}
+${portableKvmResourceValidationPython}
 
 def output(*args, timeout=12):
     return subprocess.check_output(args, timeout=timeout, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -307,7 +314,7 @@ def check_config():
     current = output("qm", "config", vmid, "--current", "1").rstrip(b"\n") + b"\n"
     allowed = {"agent", "arch", "bios", "boot", "cores", "cpu", "description", "lock", "machine",
                "memory", "meta", "name", "net0", "numa", "onboot", "ostype", "scsi0", "scsihw",
-               "smbios1", "sockets", "tags", "vcpus", "vmgenid"}
+               "smbios1", "sockets", "tags", "vcpus", "vmgenid", "balloon", "cpuunits"}
     if managed:
         allowed.update({"cicustom", "citype", "ciupgrade", "ciuser", "cpulimit", "ide2", "ipconfig0", "nameserver",
                         "serial0", "vga"})
@@ -316,6 +323,7 @@ def check_config():
         key, sep, value = line.partition(": ")
         require(sep and key in allowed and key not in fields, "unsupported_configuration")
         fields[key] = value
+    require_resource_configuration(fields, raw, r.get("resources"))
     lock_state = fields.get("lock")
     release = json.loads(private_bytes(release_marker)) if os.path.lexists(release_marker) else None
     require(release is None or (mode == "release" and release["bootId"] == expected_boot
