@@ -1639,6 +1639,7 @@ describe("POST /api/hivra/agents", () => {
 
   it.each([
     ["canary", "fixture-node-a", PORTABLE_HIVRA_PROVISIONER_VERSION, true, true],
+    ["canary", "fixture-node-a", "2026.11.28.2", true, true],
     ["canary", "fixture-node-a", "2026.11.28.1", false, false],
     ["canary", "fixture-node-b", PORTABLE_HIVRA_PROVISIONER_VERSION, true, false],
     ["main", "fixture-node-a", PORTABLE_HIVRA_PROVISIONER_VERSION, false, false],
