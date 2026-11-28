@@ -631,6 +631,24 @@ host("wake script against a stub host", () => {
       expect(changed.calls.some(c => c.startsWith("admission ") || c.startsWith("qm start"))).toBe(false);
     });
 
+    it("skips verbose status only for a saved VM with no runtime artifacts", () => {
+      const host = makeHostHarness({ socketless: true });
+      const pathToRun = "/var/run/qemu-server";
+      try {
+        const script = buildWakeHostScript({ vmid: VMID, bindingTag: TAG, admission: ADMISSION(host.provisionerDir), fastConfigRead: true });
+        const env = { STUB_ADMISSION_REFUSES: "1" };
+        const statusCall = `qm status ${VMID} --verbose`;
+        const stopped = host.run(`mkdir -p ${pathToRun}\n${script}`, HIBERNATED, env);
+        expect(receipt(stopped)).toMatchObject({ ok: false, reason: "capacity", to: "hibernated" });
+        expect(stopped.calls).not.toContain(statusCall);
+        expect(stopped.calls).toContain("flock -w 60 8");
+        expect(host.run(script, { ...HIBERNATED, vmstate: false }, env).calls).toContain(statusCall);
+        expect(host.run(`ln -s missing ${pathToRun}/${VMID}.qmp\n${script}`, HIBERNATED, env).calls).toContain(statusCall);
+      } finally {
+        host.cleanup();
+      }
+    });
+
     it("asks the CLI when there is no config file, and says unreachable when the CLI fails too", () => {
       const viaCli = h.run(fastWake(), NAPPING);
       expect(receipt(viaCli)).toMatchObject({ ok: true, reason: "resumed" });
