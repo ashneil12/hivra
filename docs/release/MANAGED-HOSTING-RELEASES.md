@@ -192,6 +192,16 @@ it reports those hosts and failed syncs to the ops feed. Off by default; with
 it off, every host still needs that operator route after each release.
 `?dryRun=1` reports which hosts are behind without changing any.
 
+Before booking a Canary fixture that needs an unchanged installed bundle, an
+authorized operator can record the exact host, installed version and expiry in
+`hivra_canary_bundle_sync_holds`. The table is empty by default. Automatic
+Canary sync checks it immediately before applying each bundle; a read failure
+blocks the automatic apply. A matching unexpired hold skips that host, including
+when its installed version cannot be read. A different known installed version
+is outside that hold. Verify any pending sync has settled before using the
+fixture, and do not use the manual operator route during the hold unless you
+intend to override it. Manual sync and the default channel are unchanged.
+
 Last pair: #124 (persistent sessions, 2026.09.24.2) merged first, so the
 attach release (`claude/agent-computer`) is sealed again as 2026.09.24.3 on top
 of it. Had the attach release merged first, #124 would have become 2026.09.24.4.

@@ -47,10 +47,11 @@ type AgentRow = {
   managed_provisioner_channel: string | null;
 };
 
-/** Just enough PostgREST for the two reads the convergence makes. */
+/** Just enough PostgREST for convergence inventory and the Canary hold check. */
 function fakeSupabase(
   agents: AgentRow[],
   hosts: Array<{ id: string; status: string; decommissioned_at?: string | null }>,
+  rpc = jest.fn().mockResolvedValue({ data: false, error: null }),
 ) {
   // Rows default to a live VMID-bound computer; tests that exercise the
   // "holds computers" predicate pass explicit vmid/status overrides.
@@ -68,7 +69,7 @@ function fakeSupabase(
     };
     return builder;
   });
-  return { from } as never;
+  return { from, rpc } as never;
 }
 
 function present(targetId: string, observedVersion: string | null, current = false): ManagedProvisionerBundleProbe {
@@ -301,6 +302,73 @@ describe("managed provisioner bundle convergence", () => {
     expect(summary.hosts.find((host) => host.targetId === "fixturenode11")).toMatchObject({
       status: "stale", placementHost: true, liveComputers: 1,
     });
+  });
+
+  it("holds an exact Canary host/version without spending the run's sync attempt", async () => {
+    const rpc = jest.fn().mockResolvedValueOnce({ data: true, error: null })
+      .mockResolvedValueOnce({ data: false, error: null });
+    const sync = jest.fn(async (_channel: string, targetId: string) => synced("canary", targetId));
+    const summary = await runManagedProvisionerBundleConvergence({
+      supabase: fakeSupabase([], [
+        { id: "fixturenode11", status: "active" }, { id: "fixturenode12", status: "active" },
+      ], rpc),
+      env: { HIVRA_MANAGED_BUNDLE_SYNC_ENABLED: "true" },
+      channel: "canary",
+      dependencies: {
+        loadBundle: jest.fn().mockResolvedValue(bundle()),
+        probe: jest.fn(async (_channel: string, targetId: string) => present(targetId, "2026.09.30.1")),
+        sync,
+      },
+    });
+    expect(rpc.mock.calls).toEqual(["fixturenode11", "fixturenode12"].map(targetId => [
+      "get_hivra_canary_bundle_sync_held", { p_host_id: targetId, p_installed_version: "2026.09.30.1" },
+    ]));
+    expect(sync.mock.calls).toEqual([["canary", "fixturenode12"]]);
+    expect(rpc.mock.invocationCallOrder[1]).toBeLessThan(sync.mock.invocationCallOrder[0]);
+    expect(summary.pending).toEqual(["fixturenode11"]);
+    expect(summary.hosts[0]).toMatchObject({ status: "held", observedVersion: "2026.09.30.1" });
+  });
+
+  it.each([
+    { data: null, error: { message: "not available" } },
+    { data: null, error: null },
+  ])("refuses automatic Canary sync without a conclusive hold read (%j)", async (result) => {
+    const rpc = jest.fn().mockResolvedValue(result);
+    const sync = jest.fn();
+    await expect(runManagedProvisionerBundleConvergence({
+      supabase: fakeSupabase([], [{ id: "fixturenode11", status: "active" }], rpc),
+      env: { HIVRA_MANAGED_BUNDLE_SYNC_ENABLED: "true" },
+      channel: "canary",
+      dependencies: {
+        loadBundle: jest.fn().mockResolvedValue(bundle()),
+        probe: jest.fn().mockResolvedValue(present("fixturenode11", "unreadable")),
+        sync,
+      },
+    })).rejects.toThrow("Could not verify Canary automatic bundle sync hold");
+    expect(rpc).toHaveBeenCalledWith("get_hivra_canary_bundle_sync_held", {
+      p_host_id: "fixturenode11", p_installed_version: null,
+    });
+    expect(sync).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["canary", false, false],
+    ["canary", true, true],
+    ["default", false, true],
+  ] as const)("probes a maintenance fallback on %s with live rows %s: %s", async (channel, live, eligible) => {
+    const rpc = jest.fn();
+    const probe = jest.fn().mockResolvedValue(present("fixturenode11", "2026.09.30.1"));
+    const summary = await runManagedProvisionerBundleConvergence({
+      supabase: fakeSupabase(live ? [{ id: "fixture", proxmox_host: "fixturenode11", managed_provisioner_channel: channel }] : [],
+        [{ id: "fixturenode11", status: "maintenance" }], rpc),
+      env: { HIVRA_CLAUDE_CODE_PROXMOX_HOST: "fixturenode11" },
+      dryRun: true,
+      channel,
+      dependencies: { loadBundle: jest.fn().mockResolvedValue(bundle()), probe },
+    });
+    expect(summary.hosts.map(host => host.targetId)).toEqual(eligible ? ["fixturenode11"] : []);
+    expect(probe).toHaveBeenCalledTimes(eligible ? 1 : 0);
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("does not let one failing host starve the next", async () => {
