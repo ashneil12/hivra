@@ -52,7 +52,7 @@ describe("script construction", () => {
     expect(digest(withoutProbe(buildSleepHostScript({ ...target, tier: "hibernate", manual: false }))))
       .toBe("6afca6eae86892fd2115fe862baa9f475e1dc777f6cc2d699bc5aa4b3b87314e");
     expect(digest(buildWakeHostScript({ ...target, admission })))
-      .toBe("92e1752d8ec949c9f36f161452f994471c3f90d117f5d8ce16564f8eb484742b");
+      .toBe("8ec80fd373f88f038fc366471b5b84ae486d51391b759fdb4f486abecf179524");
   });
 
   it("trims memory only when asked, and only for a computer that is running", () => {
