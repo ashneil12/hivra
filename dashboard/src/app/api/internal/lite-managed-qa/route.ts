@@ -18,8 +18,17 @@ export const maxDuration = 60;
 const MAX_BODY_BYTES = 8 * 1024;
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
-const respond = (status: number, body: { error: string } | { text: string }) =>
+const respond = (status: number, body: {
+  error: string;
+} | {
+  text: string;
+  receipt: { requestedModel: string; returnedModel: string | null; inputTokens: number | null; outputTokens: number | null };
+}) =>
   Response.json(body, { status, headers: { "cache-control": "no-store" } });
+
+function usageCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
 
 async function readBody(request: Request): Promise<string | null> {
   if (!request.body || Number(request.headers.get("content-length") ?? 0) > MAX_BODY_BYTES) return null;
@@ -103,7 +112,13 @@ export async function POST(request: Request) {
     const reply = await managed.json().catch(() => null);
     const text: unknown = reply?.choices?.[0]?.message?.content;
     if (typeof text !== "string" || !text.trim()) return respond(502, { error: "managed_reply_failed" });
-    return respond(200, { text: text.trim() });
+    const returnedModel: unknown = reply?.model;
+    return respond(200, { text: text.trim(), receipt: {
+      requestedModel: config.model,
+      returnedModel: typeof returnedModel === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(returnedModel) ? returnedModel : null,
+      inputTokens: usageCount(reply?.usage?.prompt_tokens),
+      outputTokens: usageCount(reply?.usage?.completion_tokens),
+    } });
   } catch {
     log.warn("Lite managed Canary QA request failed", {
       source: "lite-canary-qa", failureType: "lite_managed_qa_request_failed",

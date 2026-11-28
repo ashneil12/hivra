@@ -262,7 +262,9 @@ test("explicit managed and own-key sends never silently use sponsored models", a
   let managedStatus = 200;
   const { call, calls } = await worker(t, {
     script: (host) => host === 'canary.hermesos.cloud'
-      ? { status: managedStatus, body: { text: 'paid reply' }, headers: { location: 'https://redirect.example.test/' } }
+      ? { status: managedStatus, body: { text: 'paid reply', receipt: {
+        requestedModel: 'deepseek-v4-1-flash', returnedModel: 'provider-model', inputTokens: 8, outputTokens: null, ignored: 'internal',
+      } }, headers: { location: 'https://redirect.example.test/' } }
       : reply('must not call legacy providers'),
   });
   const { agentId, sessionId } = await agentWithSession(call);
@@ -279,6 +281,9 @@ test("explicit managed and own-key sends never silently use sponsored models", a
   assert.equal(answer.status, 200);
   assert.equal(answer.body.reply.content, 'paid reply');
   assert.equal(answer.body.allowance, null);
+  assert.deepEqual(answer.body.receipt, {
+    requestedModel: 'deepseek-v4-1-flash', returnedModel: 'provider-model', inputTokens: 8, outputTokens: null,
+  });
   managedStatus = 402;
   const empty = await send(crypto.randomUUID());
   assert.equal(empty.status, 402);
@@ -296,4 +301,32 @@ test("explicit managed and own-key sends never silently use sponsored models", a
   assert.equal(me.body.allowance.used, 0);
   const history = await call('user_alice', 'GET', endpoint);
   assert.deepEqual(history.body.messages.map(({ content }) => content), ['only this prompt', 'paid reply']);
+});
+
+test('explicit own-key QA returns bounded provider evidence without fallback or tools', async (t) => {
+  let status = 200;
+  let usage;
+  const { call, calls } = await worker(t, {
+    script: () => ({ status, body: { ...reply('own-key reply').body, model: 'provider-model', usage } }),
+  });
+  const { agentId, sessionId } = await agentWithSession(call);
+  const agent = `/v1/agents/${agentId}`;
+  const endpoint = `${agent}/sessions/${sessionId}/own-key-messages`;
+  const model = 'deepseek-v4-1-flash';
+  assert.equal((await call('user_alice', 'PATCH', agent, { ownKey: {
+    baseUrl: 'https://byok.example.test/v1', model, apiKey: 'fixture-byok',
+  } })).status, 200);
+  const first = await call('user_alice', 'POST', endpoint, { content: 'first controlled prompt' });
+  assert.equal(first.status, 200);
+  assert.deepEqual(first.body.receipt, { requestedModel: model, returnedModel: 'provider-model', inputTokens: null, outputTokens: null });
+  usage = { prompt_tokens: 7, completion_tokens: 3 };
+  const second = await call('user_alice', 'POST', endpoint, { content: 'next controlled prompt' });
+  assert.deepEqual(second.body.receipt, { requestedModel: model, returnedModel: 'provider-model', inputTokens: 7, outputTokens: 3 });
+  assert.deepEqual(calls[1].body, {
+    model, max_tokens: 128, stream: false, messages: [{ role: 'user', content: 'next controlled prompt' }],
+  });
+  status = 502;
+  assert.deepEqual((await call('user_alice', 'POST', endpoint, { content: 'failed prompt' })).body, { error: 'own_key_failed' });
+  assert.deepEqual(calls.map(({ host }) => host), Array(3).fill('byok.example.test'));
+  assert.equal((await call('user_alice', 'GET', '/v1/me')).body.allowance.used, 0);
 });

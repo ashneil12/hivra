@@ -93,6 +93,7 @@ beforeEach(() => {
   mockPricing.mockResolvedValue({ map: new Map(), source: "fallback", liveModelCount: 0 });
   mockReserve.mockResolvedValue({ reservationId: "fixture-reservation", reservedMicroUsd: 11 });
   fetchFixture = jest.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({
+    model: "provider-reported-model",
     choices: [{ message: { content: "Hello" } }],
     usage: { prompt_tokens: 4, completion_tokens: 3 }, internal: "must-not-be-relayed",
   }));
@@ -140,7 +141,10 @@ it("empty card credits fail before pricing, hold, grants or provider", async () 
 it("uses one bounded managed completion and one settlement across concurrent replays", async () => {
   const responses = await Promise.all([POST(request()), POST(request())]);
   expect(responses.map((res) => res.status).sort()).toEqual([200, 409]);
-  expect(await responses.find((res) => res.ok)!.json()).toEqual({ text: "Hello" });
+  expect(await responses.find((res) => res.ok)!.json()).toEqual({
+    text: "Hello",
+    receipt: { requestedModel: MODEL, returnedModel: "provider-reported-model", inputTokens: 4, outputTokens: 3 },
+  });
   expect((await POST(request({ content: "changed" }))).status).toBe(409);
   expect(mockReserve).toHaveBeenCalledTimes(1);
   expect(mockCapture).toHaveBeenCalledTimes(1);

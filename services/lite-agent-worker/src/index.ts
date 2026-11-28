@@ -188,29 +188,59 @@ const TOOLS = [
 interface CompletionChoice {
   content: string | null;
   toolCalls: ToolCall[];
+  receipt?: QaReceipt;
 }
 
-async function callModel(provider: ModelProvider, messages: ChatMessage[], withTools: boolean): Promise<CompletionChoice> {
+interface QaReceipt {
+  requestedModel: string;
+  returnedModel: string | null;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
+function qaModel(value: unknown): string | null {
+  return typeof value === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}$/.test(value) ? value : null;
+}
+
+function qaTokens(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
+}
+
+async function callModel(provider: ModelProvider, messages: ChatMessage[], withTools: boolean, qa = false): Promise<CompletionChoice> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), MODEL_TIMEOUT_MS);
   try {
     const response = await fetch(`${provider.baseUrl}/chat/completions`, {
       method: "POST",
       signal: controller.signal,
+      ...(qa ? { redirect: "manual" } : {}),
       headers: { "content-type": "application/json", authorization: `Bearer ${provider.apiKey}` },
       body: JSON.stringify({
         model: provider.model,
         messages,
         ...(withTools ? { tools: TOOLS, tool_choice: "auto" } : {}),
-        max_tokens: 1500,
+        max_tokens: qa ? 128 : 1500,
         stream: false,
       }),
     });
     if (!response.ok) throw new Error(`model ${provider.id} answered ${response.status}`);
-    const body = (await response.json()) as { choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] } }> };
+    const body = (await response.json()) as {
+      model?: unknown;
+      usage?: { prompt_tokens?: unknown; completion_tokens?: unknown };
+      choices?: Array<{ message?: { content?: string | null; tool_calls?: ToolCall[] } }>;
+    };
     const message = body.choices?.[0]?.message;
     if (!message) throw new Error(`model ${provider.id} sent no message`);
-    return { content: message.content ?? null, toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls : [] };
+    return {
+      content: message.content ?? null,
+      toolCalls: Array.isArray(message.tool_calls) ? message.tool_calls : [],
+      ...(qa ? { receipt: {
+        requestedModel: provider.model,
+        returnedModel: qaModel(body.model),
+        inputTokens: qaTokens(body.usage?.prompt_tokens),
+        outputTokens: qaTokens(body.usage?.completion_tokens),
+      } } : {}),
+    };
   } finally {
     clearTimeout(timer);
   }
@@ -482,7 +512,7 @@ export class LiteAgent extends DurableObject<Env> {
     sessionId: string,
     content: string,
     settings: { dailyMessages: number; managedRequestId?: string; requireOwnKey?: boolean },
-  ): Promise<{ reply: MessageView; model: string; allowance: Allowance | null }> {
+  ): Promise<{ reply: MessageView; model: string; allowance: Allowance | null; receipt?: QaReceipt }> {
     this.assertOwner(owner);
     this.assertSession(sessionId);
 
@@ -524,9 +554,20 @@ export class LiteAgent extends DurableObject<Env> {
     let lastError: unknown = null;
     for (const provider of managedRequestId ? [null] : providers) {
       try {
-        const reply = managedRequestId
-          ? await callManagedQa(this.env, owner, managedRequestId, content)
-          : await this.converse(provider!, history);
+        let reply: string;
+        let receipt: QaReceipt | undefined;
+        if (managedRequestId) {
+          ({ text: reply, receipt } = await callManagedQa(this.env, owner, managedRequestId, content));
+        } else if (settings.requireOwnKey) {
+          if (!provider) throw new HttpError(409, "own_key_required");
+          const choice = await callModel(provider, [{ role: "user", content }], false, true);
+          const text = choice.content;
+          if (typeof text !== "string" || !text.trim()) throw new HttpError(502, "own_key_failed");
+          reply = text.trim();
+          receipt = choice.receipt;
+        } else {
+          reply = await this.converse(provider!, history);
+        }
         const createdAt = new Date().toISOString();
         const row = this.sql
           .exec<{ id: number }>(
@@ -539,10 +580,10 @@ export class LiteAgent extends DurableObject<Env> {
         const title = this.sql.exec<{ title: string }>(`SELECT title FROM sessions WHERE id = ?`, sessionId).one().title;
         const nextTitle = title === "New chat" ? content.replace(/\s+/g, " ").slice(0, 60) : title;
         this.sql.exec(`UPDATE sessions SET updated_at = ?, title = ? WHERE id = ?`, createdAt, nextTitle, sessionId);
-        return { reply: { id: row.id, role: "assistant", content: reply, createdAt }, model: provider?.id ?? "hivra-credits-qa", allowance };
+        return { reply: { id: row.id, role: "assistant", content: reply, createdAt }, model: provider?.id ?? "hivra-credits-qa", allowance, ...(receipt ? { receipt } : {}) };
       } catch (error) {
         lastError = error;
-        if (provider) console.warn(JSON.stringify({ event: "lite_model_failed", provider: provider.id, error: String(error) }));
+        if (provider && !settings.requireOwnKey) console.warn(JSON.stringify({ event: "lite_model_failed", provider: provider.id, error: String(error) }));
       }
     }
 
@@ -551,6 +592,7 @@ export class LiteAgent extends DurableObject<Env> {
     if (managedRequestId) {
       throw asHttpError(lastError) ?? new HttpError(502, "managed_reply_failed");
     }
+    if (settings.requireOwnKey) throw new HttpError(502, "own_key_failed");
     if (!ownKey) await account.refund(day);
     throw new HttpError(502, ownKey ? "own_key_failed" : "model_unavailable", { detail: String(lastError) });
   }
@@ -597,7 +639,7 @@ export function signedMessage(method: string, path: string, account: string, tim
   return `lite|v1|${method.toUpperCase()}|${path}|${account}|${timestamp}|${bodySha256}`;
 }
 
-async function callManagedQa(env: Env, owner: string, requestId: string, content: string): Promise<string> {
+async function callManagedQa(env: Env, owner: string, requestId: string, content: string): Promise<{ text: string; receipt?: QaReceipt }> {
   const secret = env.LITE_AGENT_SECRET;
   if (typeof secret !== "string" || secret.length < MIN_SECRET_LENGTH) throw new HttpError(503, "not_configured");
   const body = JSON.stringify({ requestId, content });
@@ -620,9 +662,18 @@ async function callManagedQa(env: Env, owner: string, requestId: string, content
   if (response.status === 402) throw new HttpError(402, "managed_credits_required");
   if (response.status === 409) throw new HttpError(409, "managed_request_already_used");
   if (!response.ok) throw new HttpError(502, "managed_reply_failed");
-  const data = await response.json() as { text?: unknown };
+  const data = await response.json() as { text?: unknown; receipt?: Partial<QaReceipt> | null };
   if (typeof data.text !== "string" || !data.text.trim()) throw new HttpError(502, "managed_reply_failed");
-  return data.text.trim();
+  const requestedModel = qaModel(data.receipt?.requestedModel);
+  return {
+    text: data.text.trim(),
+    ...(requestedModel ? { receipt: {
+      requestedModel,
+      returnedModel: qaModel(data.receipt?.returnedModel),
+      inputTokens: qaTokens(data.receipt?.inputTokens),
+      outputTokens: qaTokens(data.receipt?.outputTokens),
+    } } : {}),
+  };
 }
 
 function parseOwnKey(value: unknown): OwnKey | null {
@@ -743,8 +794,9 @@ async function route(request: Request, env: Env): Promise<Response> {
       }));
     }
     if (parts.length === 6 && (parts[5] === "messages" || parts[5] === "own-key-messages") && method === "POST") {
-      const content = cleanText(input.content, MAX_MESSAGE_CHARS, "content");
-      return json(200, await agent.send(owner, sessionId, content, { dailyMessages: limits.dailyMessages, requireOwnKey: parts[5] === "own-key-messages" }));
+      const requireOwnKey = parts[5] === "own-key-messages";
+      const content = cleanText(input.content, requireOwnKey ? MAX_MANAGED_QA_MESSAGE_CHARS : MAX_MESSAGE_CHARS, "content");
+      return json(200, await agent.send(owner, sessionId, content, { dailyMessages: limits.dailyMessages, requireOwnKey }));
     }
   }
 
