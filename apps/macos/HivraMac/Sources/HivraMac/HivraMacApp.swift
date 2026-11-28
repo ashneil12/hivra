@@ -35,7 +35,7 @@ struct HivraMacApp: App {
         }
 
         WindowGroup("Hivra Surface", for: HivraDetachedSurface.self) { $surface in
-            HivraDetachedSurfaceView(surface: surface)
+            HivraDetachedSurfaceView(surface: surface, allowsDeveloperConnections: profileStore.allowsDeveloperConnections)
                 .preferredColorScheme(HivraAppearance(rawValue: appearance)?.colorScheme)
                 .frame(minWidth: 760, minHeight: 520)
         }

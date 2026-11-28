@@ -12,6 +12,20 @@ struct HivraDetachedSurfaceTests {
         #expect(restored == window)
         #expect(restored.url == url)
         #expect(restored.title == "Agent One · Canary")
+        #expect(restored.canOpen(allowsDeveloperConnections: true))
+        #expect(!restored.canOpen(allowsDeveloperConnections: false))
+    }
+
+    @Test("public builds only open detached windows on the production origin", arguments: [
+        ("https://hivra.cloud/dashboard/activity", true),
+        ("https://hivra.cloud:443/dashboard/activity", true),
+        ("https://hivra.cloud:8443/dashboard/activity", false),
+        ("http://hivra.cloud/dashboard/activity", false),
+        ("file:///tmp/surface", false),
+    ])
+    func publicOrigin(url: String, allowed: Bool) throws {
+        let window = HivraDetachedSurface(url: try #require(URL(string: url)), title: "Activity")
+        #expect(window.canOpen(allowsDeveloperConnections: false) == allowed)
     }
 
     @Test("different agents and surfaces have independent window identities")

@@ -147,6 +147,7 @@ its resource views. Tabs and pop-outs are not restored across app exits.
 **Open in Separate Window** on a page that is not a resource (Launch, Activity,
 Account) opens an ordinary web window for that address: it has no native
 workspace metadata or desktop hand-off, and only HTTP(S) addresses are restored.
+Public builds only open these separate windows on the Hivra origin.
 Terminal connections and desktop controllers keep their existing session/lease
 rules. Focus mode hides the sidebar and resource tab strip.
 
