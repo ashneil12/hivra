@@ -12,6 +12,10 @@ fi
 exe=$(readlink -f "$1")
 outdir=$(mkdir -p "$2" && cd "$2" && pwd)
 export HIVRA_SMOKE_EXE="$exe" HIVRA_SMOKE_OUT="$outdir" HIVRA_SMOKE_RUNTIME_HANDLER="${3:-}"
+# Each packaged shell gets an isolated XDG home so one smoke target cannot
+# satisfy the next target's registration check by accident.
+export XDG_CONFIG_HOME="$outdir/xdg-config" XDG_DATA_HOME="$outdir/xdg-data"
+mkdir -p "$XDG_CONFIG_HOME" "$XDG_DATA_HOME"
 
 dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -c '
   # Xvfb has no GPU compositor; these are smoke-test environment workarounds,
