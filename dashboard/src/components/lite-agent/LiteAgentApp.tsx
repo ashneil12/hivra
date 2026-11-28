@@ -45,6 +45,12 @@ const ERRORS: Record<string, string> = {
   daily_limit: "You've used today's free messages. They come back at midnight UTC, or add your own model key in Settings.",
   model_unavailable: "The model didn't answer. Your free message was given back, so try again in a moment.",
   own_key_failed: "Your own model key didn't answer. Check it in Settings.",
+  own_key_required: "Add your own model key in Settings before choosing it here.",
+  inference_selection_required: "Choose an inference mode before sending.",
+  invalid_managed_request: "This managed QA reply needs a short message.",
+  managed_credits_required: "Available Hivra credits do not cover this reply. Top up credits or explicitly choose your own key.",
+  managed_request_already_used: "This managed request was already submitted. Check the chat before sending it again.",
+  managed_reply_failed: "The managed model didn't return a reply. Check the chat before submitting a new request.",
   no_model_configured: "Free agents aren't switched on here yet.",
   not_configured: "Free agents aren't switched on here yet.",
   agent_limit: "You already have your free agent.",
@@ -311,18 +317,23 @@ function SettingsPanel({
   );
 }
 
-function Chat({ agent, allowance, setAllowance, onAgent }: {
+function Chat({ agent, allowance, setAllowance, onAgent, explicitInference }: {
   agent: Agent;
   allowance: Allowance | null;
   setAllowance: (a: Allowance | null) => void;
   onAgent: (agent: Agent) => void;
+  explicitInference: boolean;
 }) {
   const [sessionId, setSessionId] = useState<string | null>(agent.sessions[0]?.id ?? null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [inference, setInference] = useState<"" | "byok" | "managed">("");
+  const managedAttempt = useRef<{ id: string; sessionId: string; content: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
+  const managed = explicitInference && inference === "managed";
+  const canSend = !explicitInference || (managed ? draft.trim().length <= 1000 : inference === "byok" && agent.usesOwnKey);
 
   const refreshAgent = useCallback(async () => {
     const { agent: next } = await api<{ agent: Agent }>("GET", `/agents/${agent.id}`);
@@ -361,7 +372,7 @@ function Chat({ agent, allowance, setAllowance, onAgent }: {
   const send = async (event?: React.FormEvent) => {
     event?.preventDefault();
     const content = draft.trim();
-    if (!content || sending) return;
+    if (!content || sending || !canSend) return;
     setError(null);
     setSending(true);
     let target = sessionId;
@@ -373,11 +384,16 @@ function Chat({ agent, allowance, setAllowance, onAgent }: {
       }
       setMessages((list) => [...list, { id: `pending-${Date.now()}`, role: "user", content }]);
       setDraft("");
+      const path = managed ? "managed-messages" : explicitInference ? "own-key-messages" : "messages";
+      if (managed && (managedAttempt.current?.sessionId !== target || managedAttempt.current?.content !== content)) {
+        managedAttempt.current = { id: crypto.randomUUID(), sessionId: target, content };
+      }
       const result = await api<{ reply: Message; allowance: Allowance | null }>(
         "POST",
-        `/agents/${agent.id}/sessions/${target}/messages`,
-        { content },
+        `/agents/${agent.id}/sessions/${target}/${path}`,
+        managed ? { content, requestId: managedAttempt.current?.id } : { content },
       );
+      if (managed) managedAttempt.current = null;
       setMessages((list) => [...list, result.reply]);
       if (result.allowance) setAllowance(result.allowance);
       await refreshAgent();
@@ -385,6 +401,11 @@ function Chat({ agent, allowance, setAllowance, onAgent }: {
       const err = e as Error & { code?: string; data?: { allowance?: Allowance } };
       setMessages((list) => list.filter((m) => !(typeof m.id === "string" && m.id.startsWith("pending-"))));
       setDraft(content);
+      if (err.code === "managed_credits_required") managedAttempt.current = null;
+      if (err.code === "managed_request_already_used" && target) {
+        const history = await api<{ messages: Message[] }>("GET", `/agents/${agent.id}/sessions/${target}`).catch(() => null);
+        if (history) setMessages(history.messages);
+      }
       if (err.data?.allowance) setAllowance(err.data.allowance);
       setError(err.message);
     } finally {
@@ -456,6 +477,18 @@ function Chat({ agent, allowance, setAllowance, onAgent }: {
         </div>
         <form onSubmit={send} style={{ borderTop: "1px solid var(--etched-border)", padding: 12, display: "grid", gap: 8 }}>
           {error && <p style={{ margin: 0, fontSize: 13, color: "var(--danger, #c0392b)" }}>{error}</p>}
+          {explicitInference && (
+            <label style={{ display: "grid", gap: 4, fontSize: 13 }}>
+              Inference for this chat
+              <select style={INPUT} value={inference} disabled={sending} onChange={(e) => {
+                setInference(e.target.value === "managed" ? "managed" : e.target.value === "byok" ? "byok" : "");
+              }}>
+                <option value="">Choose an inference mode</option>
+                <option value="byok" disabled={!agent.usesOwnKey}>My own model key</option>
+                <option value="managed">Hivra credits (Canary QA)</option>
+              </select>
+            </label>
+          )}
           <div style={{ display: "flex", gap: 8, alignItems: "flex-end" }}>
             <textarea
               value={draft}
@@ -466,17 +499,19 @@ function Chat({ agent, allowance, setAllowance, onAgent }: {
                   void send();
                 }
               }}
-              maxLength={8000}
+              maxLength={managed ? 1000 : 8000}
               rows={1}
               placeholder={`Message ${agent.name}`}
               style={{ ...INPUT, minHeight: 44, maxHeight: 160, resize: "none" }}
             />
-            <button type="submit" aria-label="Send" style={{ ...PRIMARY, minHeight: 44, width: 44, padding: 0 }} disabled={sending || !draft.trim()}>
+            <button type="submit" aria-label="Send" style={{ ...PRIMARY, minHeight: 44, width: 44, padding: 0 }} disabled={sending || !draft.trim() || !canSend}>
               <ArrowUp size={18} />
             </button>
           </div>
           <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-            <AllowanceLine allowance={allowance} ownKey={agent.usesOwnKey} />
+            {explicitInference ? (
+              inference === "managed" ? "One reply on Hivra credits. No tools or memory." : null
+            ) : <AllowanceLine allowance={allowance} ownKey={agent.usesOwnKey} />}
           </span>
         </form>
       </section>
@@ -484,7 +519,7 @@ function Chat({ agent, allowance, setAllowance, onAgent }: {
   );
 }
 
-export function LiteAgentApp() {
+export function LiteAgentApp({ explicitInference = false }: { explicitInference?: boolean }) {
   const [me, setMe] = useState<Me | null>(null);
   const [agent, setAgent] = useState<Agent | null>(null);
   const [allowance, setAllowance] = useState<Allowance | null>(null);
@@ -555,14 +590,14 @@ export function LiteAgentApp() {
           </button>
         </div>
       </header>
-      {!me.modelsConfigured && !agent.usesOwnKey && (
+      {!explicitInference && !me.modelsConfigured && !agent.usesOwnKey && (
         <p style={{ ...PANEL, margin: 0, padding: "0.75rem 1rem", fontSize: 13, color: "var(--text-secondary)" }}>
           Free messages aren&apos;t switched on here yet. Add your own model key in Settings to start chatting.
         </p>
       )}
       <div style={{ display: "grid", gridTemplateColumns: showSettings ? "minmax(0, 1fr) minmax(260px, 340px)" : "minmax(0, 1fr)", gap: 16 }} className="lite-agent-layout">
         <style>{`@media (max-width: 900px) { .lite-agent-layout { grid-template-columns: minmax(0, 1fr) !important; } }`}</style>
-        <Chat agent={agent} allowance={allowance} setAllowance={setAllowance} onAgent={setAgent} />
+        <Chat agent={agent} allowance={allowance} setAllowance={setAllowance} onAgent={setAgent} explicitInference={explicitInference} />
         {showSettings && (
           <SettingsPanel
             agent={agent}

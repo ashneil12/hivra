@@ -33,6 +33,9 @@ const MIN_SECRET_LENGTH = 32;
 const CLOCK_SKEW_SECONDS = 300;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_MESSAGE_CHARS = 8000;
+const MAX_MANAGED_QA_MESSAGE_CHARS = 1000;
+const MANAGED_QA_CALLBACK = "https://canary.hermesos.cloud/api/internal/lite-managed-qa";
+const MANAGED_QA_SIGNATURE_VERSION = "lite-managed-qa|v1";
 const MAX_NAME_CHARS = 60;
 const MAX_PERSONA_CHARS = 4000;
 const MAX_NOTES = 100;
@@ -478,21 +481,23 @@ export class LiteAgent extends DurableObject<Env> {
     owner: string,
     sessionId: string,
     content: string,
-    settings: { dailyMessages: number },
+    settings: { dailyMessages: number; managedRequestId?: string; requireOwnKey?: boolean },
   ): Promise<{ reply: MessageView; model: string; allowance: Allowance | null }> {
     this.assertOwner(owner);
     this.assertSession(sessionId);
 
-    const ownKey = this.ownKey();
-    const providers: ModelProvider[] = ownKey
+    const managedRequestId = settings.managedRequestId;
+    const ownKey = managedRequestId ? null : this.ownKey();
+    if (settings.requireOwnKey && !ownKey) throw new HttpError(409, "own_key_required");
+    const providers: ModelProvider[] = managedRequestId ? [] : ownKey
       ? [{ id: "own-key", baseUrl: ownKey.baseUrl, model: ownKey.model, apiKey: ownKey.apiKey }]
       : configuredModels(this.env);
-    if (providers.length === 0) throw new HttpError(503, "no_model_configured");
+    if (!managedRequestId && providers.length === 0) throw new HttpError(503, "no_model_configured");
 
     const account = this.env.LITE_ACCOUNT.get(this.env.LITE_ACCOUNT.idFromName(owner));
     const day = utcDay();
     let allowance: Allowance | null = null;
-    if (!ownKey) {
+    if (!ownKey && !managedRequestId) {
       const taken = await account.consume(day, settings.dailyMessages);
       if (!taken.ok) throw new HttpError(429, "daily_limit", { allowance: { day: taken.day, used: taken.used, limit: taken.limit } });
       allowance = { day: taken.day, used: taken.used, limit: taken.limit };
@@ -517,9 +522,11 @@ export class LiteAgent extends DurableObject<Env> {
       .toArray();
 
     let lastError: unknown = null;
-    for (const provider of providers) {
+    for (const provider of managedRequestId ? [null] : providers) {
       try {
-        const reply = await this.converse(provider, history);
+        const reply = managedRequestId
+          ? await callManagedQa(this.env, owner, managedRequestId, content)
+          : await this.converse(provider!, history);
         const createdAt = new Date().toISOString();
         const row = this.sql
           .exec<{ id: number }>(
@@ -532,15 +539,18 @@ export class LiteAgent extends DurableObject<Env> {
         const title = this.sql.exec<{ title: string }>(`SELECT title FROM sessions WHERE id = ?`, sessionId).one().title;
         const nextTitle = title === "New chat" ? content.replace(/\s+/g, " ").slice(0, 60) : title;
         this.sql.exec(`UPDATE sessions SET updated_at = ?, title = ? WHERE id = ?`, createdAt, nextTitle, sessionId);
-        return { reply: { id: row.id, role: "assistant", content: reply, createdAt }, model: provider.id, allowance };
+        return { reply: { id: row.id, role: "assistant", content: reply, createdAt }, model: provider?.id ?? "hivra-credits-qa", allowance };
       } catch (error) {
         lastError = error;
-        console.warn(JSON.stringify({ event: "lite_model_failed", provider: provider.id, error: String(error) }));
+        if (provider) console.warn(JSON.stringify({ event: "lite_model_failed", provider: provider.id, error: String(error) }));
       }
     }
 
     // No model answered: undo the user's message and give the free message back.
     this.sql.exec(`DELETE FROM messages WHERE id = ?`, userRow.id);
+    if (managedRequestId) {
+      throw asHttpError(lastError) ?? new HttpError(502, "managed_reply_failed");
+    }
     if (!ownKey) await account.refund(day);
     throw new HttpError(502, ownKey ? "own_key_failed" : "model_unavailable", { detail: String(lastError) });
   }
@@ -585,6 +595,34 @@ async function verify(request: Request, env: Env, body: string): Promise<string>
 /** What Hivra signs. Restated on the dashboard side in lib/lite-agents/client.ts. */
 export function signedMessage(method: string, path: string, account: string, timestamp: string, bodySha256: string): string {
   return `lite|v1|${method.toUpperCase()}|${path}|${account}|${timestamp}|${bodySha256}`;
+}
+
+async function callManagedQa(env: Env, owner: string, requestId: string, content: string): Promise<string> {
+  const secret = env.LITE_AGENT_SECRET;
+  if (typeof secret !== "string" || secret.length < MIN_SECRET_LENGTH) throw new HttpError(503, "not_configured");
+  const body = JSON.stringify({ requestId, content });
+  const timestamp = String(Math.floor(Date.now() / 1000));
+  const path = new URL(MANAGED_QA_CALLBACK).pathname;
+  const digest = await sha256Hex(body);
+  const signature = await hmacHex(secret, `${MANAGED_QA_SIGNATURE_VERSION}|POST|${path}|${owner}|${timestamp}|${digest}`);
+  const response = await fetch(MANAGED_QA_CALLBACK, {
+    method: "POST",
+    body,
+    headers: {
+      "content-type": "application/json",
+      "x-hivra-account": owner,
+      "x-hivra-timestamp": timestamp,
+      "x-hivra-signature": signature,
+    },
+    redirect: "manual",
+    signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+  });
+  if (response.status === 402) throw new HttpError(402, "managed_credits_required");
+  if (response.status === 409) throw new HttpError(409, "managed_request_already_used");
+  if (!response.ok) throw new HttpError(502, "managed_reply_failed");
+  const data = await response.json() as { text?: unknown };
+  if (typeof data.text !== "string" || !data.text.trim()) throw new HttpError(502, "managed_reply_failed");
+  return data.text.trim();
 }
 
 function parseOwnKey(value: unknown): OwnKey | null {
@@ -695,9 +733,18 @@ async function route(request: Request, env: Env): Promise<Response> {
       await agent.deleteSession(owner, sessionId);
       return json(200, { deleted: true });
     }
-    if (parts.length === 6 && parts[5] === "messages" && method === "POST") {
+    if (parts.length === 6 && parts[5] === "managed-messages" && method === "POST") {
+      if (typeof input.requestId !== "string" || !OBJECT_ID.test(input.requestId)) {
+        throw new HttpError(400, "invalid_managed_request");
+      }
+      const content = cleanText(input.content, MAX_MANAGED_QA_MESSAGE_CHARS, "content");
+      return json(200, await agent.send(owner, sessionId, content, {
+        dailyMessages: limits.dailyMessages, managedRequestId: input.requestId,
+      }));
+    }
+    if (parts.length === 6 && (parts[5] === "messages" || parts[5] === "own-key-messages") && method === "POST") {
       const content = cleanText(input.content, MAX_MESSAGE_CHARS, "content");
-      return json(200, await agent.send(owner, sessionId, content, { dailyMessages: limits.dailyMessages }));
+      return json(200, await agent.send(owner, sessionId, content, { dailyMessages: limits.dailyMessages, requireOwnKey: parts[5] === "own-key-messages" }));
     }
   }
 
