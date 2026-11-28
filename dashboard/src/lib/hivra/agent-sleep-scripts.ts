@@ -1488,6 +1488,31 @@ function assertAdmission(admission: WakeAdmission): void {
   if (!ok) throw new Error("Invalid wake admission policy.");
 }
 
+const EMPTY_LOCAL_LXC_PROGRAM = String.raw`import json, os, socket, sys
+
+node = socket.gethostname().split(".")[0]
+root = "/etc/pve"
+if os.path.realpath(root + "/lxc") != root + "/nodes/" + node + "/lxc":
+    sys.exit(1)
+with os.scandir(root + "/lxc") as entries:
+    if next(entries, None) is not None:
+        sys.exit(1)
+with open(root + "/.vmlist", "rb") as f:
+    raw = f.read(1048577)
+if len(raw) > 1048576:
+    sys.exit(1)
+index = json.loads(raw)
+ids = index.get("ids")
+if type(index.get("version")) is not int or index["version"] < 0 or not isinstance(ids, dict):
+    sys.exit(1)
+for entry in ids.values():
+    if not isinstance(entry, dict) or not isinstance(entry.get("node"), str) or entry.get("type") not in ("lxc", "qemu"):
+        sys.exit(1)
+    if entry["node"] == node and entry["type"] == "lxc":
+        sys.exit(1)
+target = ids.get(sys.argv[1], {})
+sys.exit(not (target.get("node") == node and target.get("type") == "qemu"))`;
+
 /** fastQmDefined: FAST_QM_SHELL already came earlier in the script, so it is not repeated here. */
 function wakeAdmissionShell(admission: WakeAdmission, fastQmDefined: boolean, batchQemuAdmission = false): string {
   const overcommit = admission.overcommit;
@@ -1503,7 +1528,18 @@ ${fastQmDefined ? "" : `${ADMISSION_FAST_QM_SHELL}
     qm() { hivra_fast_qm "$@"; }
     export -f qm hivra_fast_qm
     export PVE_QEMU_CONF_DIR QEMU_RUN_DIR
-${overcommit ? `    case "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" in
+${batchQemuAdmission && !overcommit ? `    if type -P pct >/dev/null; then
+      pct() {
+        if [ "$#" = 1 ] && [ "$1" = list ] && command python3 -I -B -c ${shellQuote(EMPTY_LOCAL_LXC_PROGRAM)} "$VMID" </dev/null 2>/dev/null; then
+          printf 'VMID\\n'
+        else
+          command pct "$@"
+        fi
+      }
+      export VMID
+      export -f pct
+    fi
+` : ""}${overcommit ? `    case "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" in
       ${CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS.map(shellQuote).join("|")}) ;;
       *) return 1 ;;
     esac

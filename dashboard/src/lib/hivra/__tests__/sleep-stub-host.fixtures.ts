@@ -290,6 +290,9 @@ if [ -n "\${STUB_ADMISSION_QM:-}" ]; then
   echo "admission-qm-config $(qm config "$1" | tr '\\n' ';')" >> "$STUB_DIR/calls.log"
   echo "admission-qm-status $(qm status "$1")" >> "$STUB_DIR/calls.log"
 fi
+if [ -n "\${STUB_ADMISSION_PCT:-}" ]; then
+  echo "admission-pct $(pct list)" >> "$STUB_DIR/calls.log"
+fi
 [ -z "\${STUB_ADMISSION_REFUSES:-}" ] || { echo "not enough memory" >&2; exit 1; }
 exit 0
 `;
@@ -372,6 +375,7 @@ if [ "$1" = -c ]; then wc -c < "$3"; else exec /usr/bin/stat "$@"; fi
         .replaceAll("/var/lib/hivra-sleep", "@@MARK@@")
         .replaceAll("/var/lib/hivra/provision-operations", "@@INTENTS@@")
         .replaceAll("/etc/pve/qemu-server", "@@PVECONF@@")
+        .replaceAll('"/etc/pve"', JSON.stringify(path.join(dir, "pve")))
         .replaceAll("/run/", `${runDir}/`)
         .replaceAll("@@QEMU@@", qemuDir)
         .replaceAll("@@LOCK@@", path.join(runDir, "lock"))

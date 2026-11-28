@@ -485,7 +485,7 @@ function Chat({ agent, allowance, setAllowance, onAgent, explicitInference }: {
               }}>
                 <option value="">Choose an inference mode</option>
                 <option value="byok" disabled={!agent.usesOwnKey}>My own model key</option>
-                <option value="managed">Hivra credits (Canary QA)</option>
+                <option value="managed">Hivra credits (Preview)</option>
               </select>
             </label>
           )}
