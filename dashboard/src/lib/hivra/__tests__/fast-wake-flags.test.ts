@@ -38,4 +38,9 @@ describe("fast wake flags", () => {
       else process.env.HIVRA_FAST_WAKE = previous;
     }
   });
+
+  it("requires naming SSH session reuse even when all standard flags act", () => {
+    expect(isFastWakeEnabled("ssh_session", "all")).toBe(false);
+    expect(isFastWakeEnabled("ssh_session", "all,ssh_session")).toBe(true);
+  });
 });

@@ -3,6 +3,7 @@
 // DELETE route and the Hermes move (which removes the new computer on failure
 // and on undo) share it, so there is one deletion path.
 
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { randomUUID } from "node:crypto";
 
 import { HivraAgentDeleteCleanupError } from "@/lib/hivra/agent-delete-cleanup";
@@ -64,6 +65,7 @@ install -d -m 0755 /run/lock
 ${COMPUTER_BACKUP_DELETE_LOCKS}
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for Hivra deletion lock" >&2; exit 1; }
+${allocationLockAcquired("agent-delete")}
 PIDFILE="/run/hivra-provision/$VMID.pid"
 if [ -r "$PIDFILE" ]; then
   PID="$(tr -dc '0-9' < "$PIDFILE")"

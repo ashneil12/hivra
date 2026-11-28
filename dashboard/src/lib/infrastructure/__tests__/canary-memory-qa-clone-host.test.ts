@@ -1,4 +1,5 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -11,7 +12,7 @@ const HOST_ID = "fixture-node-a";
 const QEMU_CONFIGS = `pve/nodes/${HOST_ID}/qemu-server`;
 const TAG = `hivra-qa-mem-${"a".repeat(32)}`;
 const BOOT = "00000000-0000-4000-8000-000000000002";
-const PID = "1428";
+const OWNER = "user_fixtureClone";
 const START = "72300";
 const PRESSURE_BASELINE = `${BOOT}:0:6017:0:23`;
 const TEMPLATE = `template: 1\nostype: l26\nonboot: 0\nnet0: virtio=AA:BB:CC:DD:EE:FF,bridge=fixturebr0\nnet7: virtio=AA:BB:CC:DD:EE:11,bridge=fixturebr0\nscsi0: local-lvm:base-${TEMPLATE_VMID}-disk-0,size=12G\n`;
@@ -114,15 +115,47 @@ elif name == "qm":
     elif action == "guest":
         held()
         assert target == "cmd" and options == [vmid, "ping"] and pidfile.exists()
+        if mode == "slow-boot":
+            sys.exit("guest agent not ready")
+        if mode == "pid-recycled":
+            (root / f"proc/{pid}/stat").write_text(f"{pid} (kvm) S " + "0 " * 18 + f"{int(start)+1} 0\n")
     else:
         sys.exit("unexpected qm command")
 else:
     sys.exit("unexpected network or host command")
 `;
 
+const QMP = String.raw`
+import json
+import socket
+import sys
+from pathlib import Path
+
+with socket.socket(socket.AF_UNIX) as server:
+    server.bind(sys.argv[1])
+    server.listen()
+    print("ready", flush=True)
+    while True:
+        client, _ = server.accept()
+        with client, client.makefile("rb") as requests:
+            try:
+                client.sendall(b'{"QMP":{}}\n')
+                for command in requests:
+                    request = json.loads(command)
+                    reply = {}
+                    if request["execute"] == "query-status":
+                        running = not Path(sys.argv[2]).exists()
+                        reply = {"running": running, "status": "running" if running else "paused"}
+                    client.sendall(json.dumps({"id": request["id"], "return": reply}).encode() + b"\n")
+            except (BrokenPipeError, ConnectionResetError):
+                pass
+`;
+
 describe("Canary memory QA clone host wrapper", () => {
   let dir: string;
   let script: string;
+  let qmp: ChildProcess;
+  let pid: string;
 
   function put(file: string, contents: string, mode = 0o600) {
     writeFileSync(path.join(dir, file), contents, { mode });
@@ -142,12 +175,12 @@ describe("Canary memory QA clone host wrapper", () => {
 
   function run({
     env = {}, vmid = VMID, tag = TAG, digest = createHash("sha256").update(text("template")).digest("hex"), cpuBudget = "40000",
-    lockFile = "locks/hivra-allocation.lock", templateVmid = TEMPLATE_VMID,
+    lockFile = "locks/hivra-allocation.lock", templateVmid = TEMPLATE_VMID, action = "start", owner = OWNER,
   } = {}) {
     const runner = lockFile
       ? ["-euc", 'exec 8>>"$1"; flock -nx 8; shift; exec bash "$@"', "stub-route", path.join(dir, lockFile)]
       : [];
-    return spawnSync("bash", [...runner, script, vmid, tag, digest, cpuBudget, templateVmid], {
+    return spawnSync("bash", [...runner, script, action, owner, vmid, tag, templateVmid, ...(action === "start" ? [digest, cpuBudget] : [])], {
       encoding: "utf8",
       timeout: 10_000,
       env: {
@@ -165,7 +198,7 @@ describe("Canary memory QA clone host wrapper", () => {
         MOCK_TEMPLATE_VMID: TEMPLATE_VMID,
         MOCK_VMID: VMID,
         MOCK_TAG: TAG,
-        MOCK_PID: PID,
+        MOCK_PID: pid,
         MOCK_START: START,
         ...env,
       },
@@ -176,10 +209,11 @@ describe("Canary memory QA clone host wrapper", () => {
     expect(callLog().filter(([cmd, action]) => cmd === "qm" && ["clone", "set", "start", "stop", "destroy"].includes(action))).toEqual([]);
     expect(exists(`references/qa-memory-${VMID}.operator.list`)).toBe(false);
     expect(exists(`ops/wake-${VMID}.selected`)).toBe(false);
+    expect(exists(`ops/qa-memory-${VMID}.started`)).toBe(false);
     expect(exists(`ops/qa-memory-${VMID}.enrolled`)).toBe(false);
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     dir = mkdtempSync(path.join(tmpdir(), "hivra-qa-clone-"));
     for (const name of ["bin", "bundle", "proc/sys/kernel/random", QEMU_CONFIGS, `pve/nodes/${HOST_ID}/lxc`, "locks", "run/qemu-server", "run/hivra-provision", "ops", "references", "results"]) {
       mkdirSync(path.join(dir, name), { recursive: true });
@@ -217,9 +251,25 @@ describe("Canary memory QA clone host wrapper", () => {
     }
     put("bundle/hivra-host-capacity-admission", '#!/bin/bash\nexec "$MOCK_ROOT/bin/hivra-host-capacity-admission" "$@"\n');
     symlinkSync("mock-host", path.join(dir, "bin/hivra-host-capacity-admission"));
+    qmp = spawn("python3", ["-c", QMP, path.join(dir, "run/qemu-server", `${VMID}.qmp`), path.join(dir, "qmp-paused")], {
+      stdio: ["ignore", "pipe", "inherit"],
+    });
+    const [ready] = await Promise.race([
+      once(qmp.stdout!, "data"),
+      once(qmp, "exit").then(([code]) => Promise.reject(new Error(`QMP fixture exited with ${code}`))),
+    ]);
+    expect(ready.toString()).toBe("ready\n");
+    pid = String(qmp.pid);
   });
 
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(async () => {
+    if (qmp && qmp.exitCode === null && qmp.signalCode === null) {
+      const finished = once(qmp, "exit");
+      qmp.kill();
+      await finished;
+    }
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   it("requires an exact permit and excludes VM 9302 before consulting the host", () => {
     expect(run({ env: { HIVRA_CAPACITY_CANARY_MEASURED_GUESTS: `${VMID}:${TAG}e` } })).toMatchObject({
@@ -293,17 +343,35 @@ describe("Canary memory QA clone host wrapper", () => {
     noMutation();
   });
 
-  it("claims the exact VMID under FD8, strips network and autostart, and publishes the PID-bound receipt", () => {
-    expect(run()).toMatchObject({ status: 0, stdout: expect.stringContaining(`HIVRA_CANARY_MEMORY_QA_RUNNING ${VMID} ${TAG}`) });
+  it("acknowledges a running full-charge clone without waiting for a slow guest agent and qualifies it separately", () => {
+    expect(run({ env: { MOCK_MODE: "slow-boot" } })).toMatchObject({
+      status: 0, stdout: expect.stringContaining(`HIVRA_CANARY_MEMORY_QA_RUNNING_FULL_CHARGE ${VMID} ${TAG}`),
+    });
     const config = text(`${QEMU_CONFIGS}/${VMID}.conf`);
     expect(config).not.toMatch(/^net[0-9]+:/m);
     expect(config).toMatch(/^onboot: 0$/m);
     expect(config).toMatch(/^cpulimit: 0\.25$/m);
     expect(text(`references/qa-memory-${VMID}.operator.list`)).toBe(`${VMID}\n`);
     const enrolled = `ops/qa-memory-${VMID}.enrolled`;
-    expect(text(enrolled)).toBe(`v1 ${VMID} ${TAG} ${BOOT} ${PID} ${START}\n`);
-    expect(statSync(path.join(dir, enrolled)).mode & 0o777).toBe(0o600);
+    expect(text(`ops/qa-memory-${VMID}.started`)).toBe(`v1 ${VMID} ${TAG} ${BOOT} ${pid} ${START} ${OWNER} ${TEMPLATE_VMID}\n`);
+    expect(exists(enrolled)).toBe(false);
     expect(exists(`ops/wake-${VMID}.selected`)).toBe(false);
+    expect(callLog().some(([, action]) => action === "guest")).toBe(false);
+    expect(run({ action: "qualify", env: { MOCK_MODE: "slow-boot" } })).toMatchObject({
+      status: 1, stderr: expect.stringContaining("fixture guest health is unconfirmed"),
+    });
+    expect(exists(enrolled)).toBe(false);
+    expect(exists(`ops/wake-${VMID}.selected`)).toBe(false);
+    expect(run({ action: "qualify" })).toMatchObject({
+      status: 0, stdout: expect.stringContaining(`HIVRA_CANARY_MEMORY_QA_QUALIFIED ${VMID} ${TAG}`),
+    });
+    expect(text(enrolled)).toBe(`v1 ${VMID} ${TAG} ${BOOT} ${pid} ${START}\n`);
+    expect(statSync(path.join(dir, enrolled)).mode & 0o777).toBe(0o600);
+    expect(run({ action: "qualify" }).status).toBe(0);
+    chmodSync(path.join(dir, enrolled), 0o644);
+    expect(run({ action: "qualify" })).toMatchObject({
+      status: 1, stderr: expect.stringContaining("fixture enrollment identity changed"),
+    });
     expect(callLog().filter(([cmd, action]) => cmd === "hivra-host-capacity-admission" || (cmd === "qm" && ["clone", "start"].includes(action))).map(([cmd, action]) => [cmd, action])).toEqual([
       ["hivra-host-capacity-admission", "-"], ["qm", "clone"], ["hivra-host-capacity-admission", VMID], ["qm", "start"],
     ]);
@@ -313,11 +381,31 @@ describe("Canary memory QA clone host wrapper", () => {
   it.each([
     ["start-timeout", "start not confirmed"],
     ["pid-mismatch", "fixture VMID and QEMU PID do not match"],
+    ["qmp-paused", "not confirmed running by its QMP peer"],
+    ["qmp-peer-mismatch", "not confirmed running by its QMP peer"],
   ])("keeps the full startup fence when the process proof is ambiguous (%s)", (mode, error) => {
-    expect(run({ env: { MOCK_MODE: mode } })).toMatchObject({ status: 1, stderr: expect.stringContaining(error) });
+    if (mode === "qmp-paused") put("qmp-paused", "");
+    expect(run({ env: { MOCK_MODE: mode, ...(mode === "qmp-peer-mismatch" ? { MOCK_PID: "9876" } : {}) } })).toMatchObject({
+      status: 1, stderr: expect.stringContaining(error),
+    });
     expect(text(`ops/wake-${VMID}.selected`)).toBe(`v1 ${VMID} ${TAG} 4096\n`);
+    expect(run({ action: "qualify" })).toMatchObject({ status: 1, stderr: expect.stringContaining("fixture start is still fenced") });
+    expect(exists(`ops/qa-memory-${VMID}.started`)).toBe(false);
     expect(exists(`ops/qa-memory-${VMID}.enrolled`)).toBe(false);
     expect(exists(`references/qa-memory-${VMID}.operator.list`)).toBe(true);
     expect(exists(`run/qemu-server/${VMID}.pid`)).toBe(true);
+  });
+
+  it("refuses qualification for a different owner or changed PID, including a change during the guest probe", () => {
+    expect(run()).toMatchObject({ status: 0 });
+    expect(run({ action: "qualify", owner: "user_otherFixture" })).toMatchObject({
+      status: 1, stderr: expect.stringContaining("fixture start identity changed"),
+    });
+    expect(callLog().some(([, action]) => action === "guest")).toBe(false);
+    expect(run({ action: "qualify", env: { MOCK_MODE: "pid-recycled" } })).toMatchObject({
+      status: 1, stderr: expect.stringContaining("fixture changed during guest health proof"),
+    });
+    expect(exists(`ops/qa-memory-${VMID}.enrolled`)).toBe(false);
+    expect(exists(`ops/wake-${VMID}.selected`)).toBe(false);
   });
 });

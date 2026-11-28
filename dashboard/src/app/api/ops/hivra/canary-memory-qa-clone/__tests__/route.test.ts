@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { NextRequest } from "next/server";
 
-import release from "../../../../../../../provisioner-releases/2026.11.28.2.json";
-import { CANARY_MEMORY_OVERCOMMIT_PROVISIONER } from "@/lib/infrastructure/host-capacity-policy";
+import release from "../../../../../../../provisioner-releases/2026.11.28.3.json";
+import { CANARY_MEMORY_QA_CLONE_PROVISIONER } from "@/lib/infrastructure/host-capacity-policy";
 
 const mockGrant = jest.fn();
 const mockGrantRpc = jest.fn();
@@ -42,6 +42,7 @@ const body = {
   tag: `hivra-qa-mem-${"a".repeat(32)}`,
   templateConfigSha256: "b".repeat(64),
 };
+const qualification = { action: "qualify", apply: true, ownerId: body.ownerId, vmid: body.vmid, tag: body.tag };
 
 function request(payload: unknown = body, token: string | null = TOKEN) {
   return new NextRequest("https://canary.hermesos.cloud/api/ops/hivra/canary-memory-qa-clone", {
@@ -126,7 +127,7 @@ it.each([null, undefined, "9051", 9390, 9051.5])("fails closed without a valid D
   } });
   expect((await POST(request())).ok).toBe(false);
   expect(mockGrant).toHaveBeenCalledWith({
-    host: null, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+    host: null, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_QA_CLONE_PROVISIONER,
   });
   expect(mockGrantRpc).toHaveBeenCalledWith("get_hivra_canary_memory_overcommit", {
     p_host_id: null, p_owner_id: body.ownerId,
@@ -141,7 +142,7 @@ it.each([
   [{ vmid: 9299 }], [{ vmid: 9302 }], [{ vmid: 9400 }],
   [{ tag: "hivra-bind-" + "a".repeat(32) }], [{ templateConfigSha256: "not-a-digest" }],
   [{ ratioMilli: 1250 }], [{ validUntilEpoch: 5000000000 }], [{ host: "fixture-node-b" }], [{ measuredGuests: [] }],
-  [{ cpuBudgetMilli: 100000 }], [{ templateVmid: 9052 }],
+  [{ cpuBudgetMilli: 100000 }], [{ templateVmid: 9052 }], [{ action: "wake" }], [{ action: "qualify" }],
 ])("rejects noncanonical bodies or client-supplied authority: %j", async change => {
   expect((await POST(request({ ...body, ...change }))).status).toBe(400);
   expect(mockGrant).not.toHaveBeenCalled();
@@ -157,7 +158,7 @@ it.each<[string[] | null]>([
   mockGrant.mockResolvedValue(entries ? grant(entries) : null);
   expect((await POST(request())).ok).toBe(false);
   expect(mockGrant).toHaveBeenCalledWith({
-    host: null, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+    host: null, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_QA_CLONE_PROVISIONER,
   });
   expect(mockHostTable).not.toHaveBeenCalled();
   expect(mockRunHostScript).not.toHaveBeenCalled();
@@ -180,11 +181,11 @@ it("does not dispatch without an active CPU policy row for the DB-authorized hos
 it("binds the exact sealed Canary wrapper to the host and template from the DB grant", async () => {
   const selected = grant();
   mockGrant.mockResolvedValue(selected);
-  mockRunHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING ${body.vmid} ${body.tag}\n`, stderr: "" });
+  mockRunHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING_FULL_CHARGE ${body.vmid} ${body.tag}\n`, stderr: "" });
 
   const response = await POST(request());
   expect(response.status).toBe(200);
-  expect(await response.json()).toMatchObject({ data: { host: HOST, vmid: body.vmid, tag: body.tag, state: "running" } });
+  expect(await response.json()).toMatchObject({ data: { host: HOST, vmid: body.vmid, tag: body.tag, state: "running_full_charge" } });
 
   expect(mockHostTable).toHaveBeenCalledWith("proxmox_hosts");
   const query = mockHostTable.mock.results[0].value;
@@ -204,7 +205,7 @@ it("binds the exact sealed Canary wrapper to the host and template from the DB g
   expect(script).toMatch(/exec 8>>\/run\/lock\/hivra-allocation\.lock[\s\S]*flock -x -w 40 8[\s\S]*sha256sum -c --status BUNDLE\.sha256[\s\S]*bash "\$PROVISIONER_DIR\/hivra-canary-memory-qa-clone\.sh"/);
   expect(script).toContain("/root/hivra-provisioner-canary");
   expect(script).toContain(body.templateConfigSha256);
-  expect(script).toContain(`'${body.templateConfigSha256}' 40000 ${TEMPLATE_VMID}`);
+  expect(script).toContain(`start '${body.ownerId}' ${body.vmid} '${body.tag}' ${TEMPLATE_VMID} '${body.templateConfigSha256}' 40000`);
   expect(script).toContain(`HIVRA_CAPACITY_CANARY_HOST_ID='${HOST}'`);
   expect(script).toContain(`HIVRA_CAPACITY_CANARY_OVERCOMMIT_MILLI=${selected.ratioMilli}`);
   expect(script).toContain(`HIVRA_CAPACITY_CANARY_OVERCOMMIT_UNTIL=${selected.validUntilEpoch}`);
@@ -216,8 +217,9 @@ it("binds the exact sealed Canary wrapper to the host and template from the DB g
 
 it.each([
   { ok: false, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING ${body.vmid} ${body.tag}\n` },
-  { ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING 9311 ${body.tag}\n` },
-  { ok: true, stdout: `noise HIVRA_CANARY_MEMORY_QA_RUNNING ${body.vmid} ${body.tag}\n` },
+  { ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING ${body.vmid} ${body.tag}\n` },
+  { ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING_FULL_CHARGE 9311 ${body.tag}\n` },
+  { ok: true, stdout: `noise HIVRA_CANARY_MEMORY_QA_RUNNING_FULL_CHARGE ${body.vmid} ${body.tag}\n` },
 ])("does not report success without a successful exact host receipt (%j)", async result => {
   mockGrant.mockResolvedValue(grant());
   mockRunHostScript.mockResolvedValue({ ...result, stderr: "opaque host diagnostics" });
@@ -225,4 +227,33 @@ it.each([
   expect(response.status).toBe(503);
   expect(await response.text()).not.toContain("opaque host diagnostics");
   expect(mockRunHostScript).toHaveBeenCalledTimes(1);
+});
+
+it("requires a fresh exact owner grant before dispatching explicit qualification", async () => {
+  mockGrant.mockResolvedValue(null);
+  const response = await POST(request(qualification));
+  expect(response.status).toBe(409);
+  expect(mockGrant).toHaveBeenCalledWith({
+    host: null, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_QA_CLONE_PROVISIONER,
+  });
+  expect(mockRunHostScript).not.toHaveBeenCalled();
+});
+
+it("qualifies the exact existing fixture without reading CPU placement or asking the host to start it", async () => {
+  mockGrant.mockResolvedValue(grant());
+  mockRunHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_QUALIFIED ${body.vmid} ${body.tag}\n`, stderr: "" });
+  const response = await POST(request(qualification));
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ data: { host: HOST, vmid: body.vmid, tag: body.tag, state: "qualified" } });
+  expect(mockHostTable).not.toHaveBeenCalled();
+  expect(mockRunHostScript).toHaveBeenCalledTimes(1);
+  const [script] = mockRunHostScript.mock.calls[0];
+  expect(script).toContain(`hivra-canary-memory-qa-clone.sh" qualify '${body.ownerId}' ${body.vmid} '${body.tag}' ${TEMPLATE_VMID}`);
+  expect(script).not.toContain(body.templateConfigSha256);
+});
+
+it("never reports a start acknowledgment as qualification", async () => {
+  mockGrant.mockResolvedValue(grant());
+  mockRunHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING_FULL_CHARGE ${body.vmid} ${body.tag}\n`, stderr: "" });
+  expect((await POST(request(qualification))).status).toBe(503);
 });

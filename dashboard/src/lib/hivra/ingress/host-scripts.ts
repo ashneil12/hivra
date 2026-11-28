@@ -19,6 +19,7 @@
 // Nothing host-specific lives here: the host is identified by `hostname -s`
 // at run time and every path below is the same on every host.
 
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import {
   HIVRA_HOST_CLOUDFLARED_RELEASE,
 } from "@/lib/infrastructure/portable-provisioner-contract";
@@ -360,6 +361,7 @@ done
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+${allocationLockAcquired("host-ingress-install")}
 STEP=bundle
 [ -d "$BUNDLE" ] && [ -f "$BUNDLE/BUNDLE.sha256" ] || { echo "channel bundle directory is missing" >&2; exit 1; }
 (cd "$BUNDLE" && sha256sum -c --status BUNDLE.sha256) || { echo "channel bundle does not match its BUNDLE.sha256" >&2; exit 1; }
@@ -488,6 +490,7 @@ trap 'status=$?; trap - EXIT; if [ "$status" != 0 ]; then emit failed; fi; exit 
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+${allocationLockAcquired("host-ingress-remove")}
 STEP=dependents
 ROUTES="$(route_count)"; ENVS="$(connector_env_count)"; CONNECTORS="$(active_connector_count)"
 if [ "$ROUTES" != 0 ] || [ "$ENVS" != 0 ] || [ "$CONNECTORS" != 0 ]; then

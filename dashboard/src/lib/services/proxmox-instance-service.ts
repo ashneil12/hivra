@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "crypto";
 import { spawn } from "child_process";
 
 // SCRIPTURE_ANCHOR: proxmox-foundation | Luke 14:28 | Verse: Which of you, desiring to build a tower, doesn't first sit down and count the cost?
-import { Client as Ssh2Client, type ConnectConfig } from "ssh2";
+import { Client as Ssh2Client, type ClientChannel, type ConnectConfig } from "ssh2";
 
 import { parseConnectorHostname } from "@/lib/infrastructure/home-connector-host";
 import type { CodexVaultBundle } from "@/lib/codex-oauth";
@@ -1635,10 +1635,23 @@ function withoutSudoSentinel(result: HostScriptResult): HostScriptResult {
   return { ...result, stderr: stripSudoSentinel(result.stderr).stderr };
 }
 
+type ManagedHostSession = {
+  client?: Ssh2Client;
+  cancel?: () => void;
+  deadline: number;
+  closed: boolean;
+};
+
+function disconnectManagedHostSession(session: ManagedHostSession, client: Ssh2Client) {
+  if (session.client === client) session.client = undefined;
+  try { client.destroy(); } catch { /* Best-effort teardown. */ }
+}
+
 async function runProxmoxHostInvocation(
   invocation: HostInvocation,
   env: EnvLike = process.env,
-  timeoutMsOverride?: HostScriptTimeoutOverride
+  timeoutMsOverride?: HostScriptTimeoutOverride,
+  session?: ManagedHostSession,
 ): Promise<HostScriptResult> {
   env = resolveProxmoxTargetConfigurationUnlessHostResolved(env).env;
   const targetEnvError = envValue(env, HERMES_PROXMOX_TARGET_ENV_ERROR);
@@ -1654,7 +1667,7 @@ async function runProxmoxHostInvocation(
   }
   // Include asynchronous key loading in the SSH dispatch budget. A delayed
   // timer is not authority to start bash or write script input after expiry.
-  const dispatchDeadline = performance.now() + timeoutMs;
+  const dispatchDeadline = Math.min(performance.now() + timeoutMs, session?.deadline ?? Infinity);
   const earlyFinishMarker =
     typeof timeoutMsOverride === "object" ? timeoutMsOverride?.earlyFinishMarker : undefined;
   const earlyFinishOnLine = typeof timeoutMsOverride === "object" && timeoutMsOverride.earlyFinishOnLine === true;
@@ -1772,7 +1785,13 @@ async function runProxmoxHostInvocation(
   }
 
   return await new Promise<HostScriptResult>((resolve) => {
-      const conn = new Ssh2Client();
+      if (session && (session.closed || performance.now() >= dispatchDeadline)) {
+        resolve({ ok: false, stdout: "", stderr: "", error: "Proxmox SSH session deadline expired", stage: "connect" });
+        return;
+      }
+      const reusable = session?.client;
+      const conn = reusable ?? new Ssh2Client();
+      let channel: ClientChannel | undefined;
       let settled = false;
       // When the SSH session became ready, from the start of the connect.
       let sshReadyMs: number | null = null;
@@ -1802,18 +1821,24 @@ async function runProxmoxHostInvocation(
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        try {
-          conn.end();
-        } catch {
-          // ignore
+        const staged = result.stage === undefined ? { ...result, stage } : result;
+        const bounded = staged.ok && performance.now() >= dispatchDeadline ? timeoutResult() : staged;
+        if (session) {
+          session.cancel = undefined;
+          conn.removeListener("error", connectionError);
+          conn.removeListener("close", connectionClosed);
+          try {
+            if (bounded.ok) channel?.destroy();
+            else disconnectManagedHostSession(session, conn);
+          } catch { /* Best-effort teardown. */ }
+        } else {
+          try { conn.end(); } catch { /* Best-effort teardown. */ }
         }
         try {
           relaySock?.destroy();
         } catch {
           // ignore
         }
-        const staged = result.stage === undefined ? { ...result, stage } : result;
-        const bounded = staged.ok && performance.now() >= dispatchDeadline ? timeoutResult() : staged;
         const timed = reportTimings && sshReadyMs !== null ? { ...bounded, sshReadyMs } : bounded;
         resolve(sudoTransport ? withoutSudoSentinel(timed) : timed);
       };
@@ -1866,7 +1891,9 @@ async function runProxmoxHostInvocation(
               hostHash: "sha256",
               hostVerifier: (fingerprint: string) => {
                 presentedFingerprint = String(fingerprint).trim().toLowerCase();
-                return active() && presentedFingerprint === expectedHostFingerprint;
+                return (session && settled
+                  ? !session.closed && session.client === conn && performance.now() < session.deadline
+                  : active()) && presentedFingerprint === expectedHostFingerprint;
               },
             }
           : {}),
@@ -1883,15 +1910,15 @@ async function runProxmoxHostInvocation(
         });
       };
 
-      conn.on("ready", () => {
+      const execute = () => {
         if (!active()) return;
-        sshReadyMs = Date.now() - t0;
+        sshReadyMs = reusable ? 0 : Date.now() - t0;
         // Authenticated: a dead result can no longer prove the script never
         // reached the host.
         stage = "ready";
         debugLog("ssh.ready");
         if (!active()) return;
-        conn.exec(command, (err, stream) => {
+        const consume = (err: Error | undefined, stream: ClientChannel) => {
           if (!active()) {
             // A late channel acknowledgement is not permission to send even
             // one byte of a setup/provisioning script after cancellation.
@@ -1911,6 +1938,10 @@ async function runProxmoxHostInvocation(
           // The channel opened: the script is dispatched next — it may have
           // run even if nothing below ever reports back.
           stage = "command";
+          channel = stream;
+          if (session) stream.on("error", (error: Error) => {
+            finish({ ok: false, ...capturedOutput(), error: `SSH channel failed: ${error.message}` });
+          });
           debugLog("ssh.exec.ready");
           stream.on("close", (code: number) => {
             if (!active()) return;
@@ -1981,8 +2012,15 @@ async function runProxmoxHostInvocation(
           stream.write(input);
           stream.end();
           debugLog("script.written", { bytes: input.length });
-        });
-      });
+        };
+        if (session) {
+          try { conn.exec(command, consume); } catch (error) {
+            finish({ ok: false, ...capturedOutput(), error: `SSH exec failed: ${String(error)}` });
+          }
+        } else {
+          conn.exec(command, consume);
+        }
+      };
 
       // Up to two fixed commands on the same connection, each bounded by the
       // same dispatch deadline and a small output cap.
@@ -2018,7 +2056,7 @@ async function runProxmoxHostInvocation(
         return sudoTrue.code === 0 ? { kind: "command_not_allowed" } : { kind: "password_required" };
       };
 
-      conn.on("error", (err: Error) => {
+      const connectionError = (err: Error) => {
         finish({
           ok: false,
           ...capturedOutput(),
@@ -2027,11 +2065,32 @@ async function runProxmoxHostInvocation(
             ? { presentedHostFingerprintSha256: presentedFingerprint }
             : {}),
         });
-      });
+      };
+      const connectionClosed = () => connectionError(new Error("Connection closed"));
 
       try {
         if (!active()) return;
-        conn.connect(connectConfig);
+        if (session) {
+          session.cancel = () => finish(timeoutResult());
+          conn.on("close", connectionClosed);
+        }
+        conn.on("error", connectionError);
+        if (reusable) execute();
+        else {
+          if (session) {
+            const forget = () => {
+              if (session.client === conn) session.client = undefined;
+            };
+            conn.on("error", forget);
+            conn.on("close", forget);
+          }
+          conn.on("ready", () => {
+            if (!active()) return;
+            if (session) session.client = conn;
+            execute();
+          });
+          conn.connect(connectConfig);
+        }
       } catch (err) {
         finish({
           ok: false,
@@ -2053,6 +2112,45 @@ export async function runProxmoxHostScript(
     env,
     timeoutMsOverride,
   );
+}
+
+export function createManagedProxmoxHostScriptSession(env: EnvLike, deadlineMs: number): {
+  run: (script: string, timeout?: HostScriptTimeoutOverride) => Promise<HostScriptResult>;
+  close: () => void;
+} | null {
+  const { env: resolved } = resolveProxmoxTargetConfigurationUnlessHostResolved(env);
+  if (envValue(resolved, HERMES_PROXMOX_TARGET_ENV_ERROR)
+    || envValue(resolved, "HIVRA_USER_INFRA_CONNECTION").toLowerCase() === "true"
+    || envValue(resolved, "PROXMOX_EXEC_MODE", "ssh") !== "ssh"
+    || envValue(resolved, "PROXMOX_SSH_TRANSPORT") === "connector"
+    || !envValue(resolved, "PROXMOX_SSH_HOST_FINGERPRINT")) return null;
+  const lifetimeMs = deadlineMs - Date.now();
+  if (!Number.isFinite(lifetimeMs) || lifetimeMs <= 0 || lifetimeMs > 2_147_483_647) return null;
+  const session: ManagedHostSession = { deadline: performance.now() + lifetimeMs, closed: false };
+  let busy = false;
+  const close = () => {
+    session.closed = true;
+    clearTimeout(expiry);
+    session.cancel?.();
+    if (session.client) disconnectManagedHostSession(session, session.client);
+  };
+  const expiry = setTimeout(close, lifetimeMs);
+  return {
+    async run(script, timeout) {
+      if (busy || session.closed) {
+        return { ok: false, stdout: "", stderr: "", error: "Proxmox SSH session is unavailable", stage: "connect" };
+      }
+      busy = true;
+      try {
+        return await runProxmoxHostInvocation(
+          { loginCommand: "bash -s", loginInput: script, script, stdin: "" }, resolved, timeout, session,
+        );
+      } finally {
+        busy = false;
+      }
+    },
+    close,
+  };
 }
 
 /**

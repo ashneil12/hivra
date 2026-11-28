@@ -1,3 +1,4 @@
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { shellQuote } from "./proxmox-target";
 
 function lifecycleBindingVerificationBody(): string {
@@ -29,6 +30,7 @@ EXPECTED_BINDING_TAG=${shellQuote(bindingTag ?? "")}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for the Hivra lifecycle lock" >&2; exit 1; }
+${allocationLockAcquired("agent-lifecycle")}
 ${vmAuthority}`;
 }
 

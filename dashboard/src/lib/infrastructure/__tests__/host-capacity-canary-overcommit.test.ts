@@ -221,13 +221,22 @@ sub load_current_config { my ($class, $vmid, $current) = @_; return decode_json(
       status: 1, stderr: expect.stringContaining("measured memory plus host reserve"),
     });
     fullCharge();
+    const receipt = enroll(9301, pid);
+    const identity = readFileSync(path.join(dir, receipt), "utf8").trimEnd();
+    rmSync(path.join(dir, receipt));
+    const started = "intents/qa-memory-9301.started";
+    put(started, `${identity} user_fixtureClone 8050\n`);
+    chmodSync(path.join(dir, started), 0o600);
+    fullCharge();
+    enroll(9301, pid);
+    expect(run({ env }).status).toBe(0);
     enroll(9301, pid, { bootId: OPERATION });
     fullCharge();
     enroll(9301, pid, { pidDelta: 1 });
     fullCharge();
     enroll(9301, pid, { startDelta: 1 });
     fullCharge();
-    const receipt = enroll(9301, pid);
+    enroll(9301, pid);
     chmodSync(path.join(dir, receipt), 0o644);
     fullCharge();
     enroll(9301, pid);

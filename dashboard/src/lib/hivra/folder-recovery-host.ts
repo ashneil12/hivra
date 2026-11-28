@@ -1,3 +1,4 @@
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { isIP } from "node:net";
 import { shellQuote } from "./proxmox-target";
 import { buildVmidBoundGuestSshPrelude } from "./vmid-bound-guest-ssh";
@@ -25,6 +26,7 @@ EXPECTED_BINDING_TAG=${shellQuote(target.bindingTag)}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 45 8 || exit 1
+${allocationLockAcquired("folder-recovery")}
 [ "$(qm status "$VMID" | awk '{print $2}')" = running ] || exit 1
 CONFIG="$(qm config "$VMID")"
 printf '%s\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p' | tr ';' '\n' | grep -Fxq "$EXPECTED_BINDING_TAG" || exit 1

@@ -32,6 +32,7 @@
  * alone for the next sweep so a slow-but-healthy provision is never killed.
  */
 
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { randomUUID } from "node:crypto";
 
 import { reconcileBankrEnvAfterHivraBoot } from "@/lib/agent-wallets/hivra-lane";
@@ -232,6 +233,7 @@ install -d -m 0755 /run/lock
 ${COMPUTER_BACKUP_DELETE_LOCKS}
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for cancellation cleanup lock" >&2; exit 1; }
+${allocationLockAcquired("provision-cancel-cleanup")}
 PIDFILE="/run/hivra-provision/$VMID.pid"
 if [ -r "$PIDFILE" ]; then
   PID="$(tr -dc '0-9' < "$PIDFILE")"
@@ -303,6 +305,7 @@ install -d -m 0755 /run/lock
 ${COMPUTER_BACKUP_DELETE_LOCKS}
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for delete reconciliation lock" >&2; exit 1; }
+${allocationLockAcquired("provision-delete-reconcile")}
 # Migration-window managed provisioners predate operation/binding tags and did
 # not inherit FD8. A user-requested delete may still reconcile those exact
 # managed host/VMID rows, but only after every exact legacy provision child for
@@ -381,6 +384,7 @@ function buildProbeScript(
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for Hivra recovery evidence lock" >&2; exit 1; }
+${allocationLockAcquired("provision-recovery-evidence")}
 LOG=${shellQuote(logPath)}
 MARKER="$(grep -oE '\\{"vmid":[^{}]*"ready":(true|false)[^{}]*\\}' "$LOG" 2>/dev/null | tail -1 || true)"
 if grep -Fxq ${shellQuote(`HIVRA_OPERATION_ID ${row.operation_id ?? ""}`)} "$LOG" 2>/dev/null; then
@@ -490,6 +494,7 @@ IP="$(awk -F= '$1=="ip" {print $2; exit}' "$INTENT")"
 [[ "$VMID" =~ ^[0-9]+$ ]] || exit 1
 ${warm ? `exec 8>/run/lock/hivra-allocation.lock
 flock -w 5 8
+${allocationLockAcquired("provision-warm-reconcile")}
 exec 9>"/run/lock/hivra-vmids/$VMID.lock"
 flock -w 5 9
 grep -Fxq ${shellQuote(`generation=${generation}`)} "$INTENT"
