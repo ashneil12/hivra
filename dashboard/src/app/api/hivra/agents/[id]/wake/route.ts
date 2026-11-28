@@ -16,6 +16,7 @@ import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
 import { ensureHivraAgentAwake, MANAGED_WAKE_WORK_BUDGET_MS } from "@/lib/hivra/agent-wake";
 import { HOSTED_COMPUTE_REQUIRES_PLAN_MESSAGE } from "@/lib/billing/hosted-compute";
+import { allowsOwnerChatPrewake } from "@/lib/hivra/owner-chat-prewake";
 
 const WAKE_WAIT_MS = 45_000;
 
@@ -35,10 +36,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
     if (limited) return limited;
 
+    const source = (await req.json().catch(() => null))?.source;
     // Owner scope first: ensureHivraAgentAwake reads by id alone.
     const { data: agent, error } = await supabaseAdmin
       .from("hivra_agents")
-      .select("id")
+      .select(source === "chat-typing" ? "id,status,deployment_mode,computer_substrate,seat_funding,sleep_stored_at,type" : "id")
       .eq("id", id)
       .eq("user_id", userId)
       .maybeSingle();
@@ -47,9 +49,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
     if (!agent) return apiError("Agent not found", 404);
 
-    const source = (await req.json().catch(() => null))?.source;
+    if (source === "chat-typing" && !allowsOwnerChatPrewake(agent)) return apiError("Typing wake is unavailable for this computer.", 403);
     const result = await ensureHivraAgentAwake(String(agent.id), {
-      trigger: source === "chat" ? "action" : "open",
+      trigger: source === "chat" || source === "chat-typing" ? "action" : "open",
       portableOwnerId: userId,
       waitMs: WAKE_WAIT_MS,
       workDeadlineMs,

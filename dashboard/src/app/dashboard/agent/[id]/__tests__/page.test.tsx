@@ -76,10 +76,10 @@ jest.mock("@/components/workspace/useWorkspaceAgents", () => ({
 
 const mockChatMounts = jest.fn();
 jest.mock("@/components/hivra/HivraChat", () => ({
-  HivraChat: function MockHivraChat({ guestPaused }: { guestPaused?: boolean }) {
+  HivraChat: function MockHivraChat({ guestPaused, typingWakeGeneration }: { guestPaused?: boolean; typingWakeGeneration?: number }) {
     const { useEffect } = jest.requireActual<typeof import("react")>("react");
     useEffect(() => { mockChatMounts(); }, []);
-    return <div data-guest-paused={guestPaused}>Chat panel</div>;
+    return <div data-guest-paused={guestPaused} data-typing-wake-generation={typingWakeGeneration}>Chat panel</div>;
   },
 }));
 
@@ -2931,15 +2931,18 @@ describe("AgentPage", () => {
       expect(await screen.findByText("Waking up your agent")).toBeVisible();
     });
 
-    it("retains the same ready managed coding chat through hibernation and readiness recheck", async () => {
+    it.each([undefined, true])("retains coding chat through sleep with typing-wake capability %s", async (capability) => {
       const kvm = { ...awakeRow, deployment_mode: "hivra-managed", computer_substrate: "proxmox-kvm" };
-      mockGetAgent.mockResolvedValue(kvm);
+      mockGetAgent.mockResolvedValue({ ...kvm, owner_chat_prewake: capability });
       render(<AgentPage />);
       const composer = await screen.findByText("Chat panel");
       expect(composer).toHaveAttribute("data-guest-paused", "false");
-      mockGetAgent.mockResolvedValue({ ...kvm, sleep_state: "hibernated", sleep_generation: 7 });
+      expect(composer).not.toHaveAttribute("data-typing-wake-generation");
+      mockGetAgent.mockResolvedValue({ ...kvm, owner_chat_prewake: capability, sleep_state: "hibernated", sleep_generation: 7 });
       fireEvent(document, new Event("visibilitychange"));
       await waitFor(() => expect(composer).toHaveAttribute("data-guest-paused", "true"));
+      if (capability) expect(composer).toHaveAttribute("data-typing-wake-generation", "7");
+      else expect(composer).not.toHaveAttribute("data-typing-wake-generation");
       expect(screen.getByText("Chat panel")).toBe(composer);
       expect(screen.queryByText("Waking up your agent")).not.toBeInTheDocument();
       fireEvent.keyDown(window, { key: "a" });

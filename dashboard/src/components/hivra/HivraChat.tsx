@@ -9,7 +9,7 @@
 // retry and the welcome. How the chat looks lives in ./chat (the turn, the
 // work trail, the composer, the chat list), after MonoCode's transcript.
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
 import { createPortal } from "react-dom";
 import { matchesMedia, useMediaQuery } from "@/lib/client/media-query";
 import posthog from "posthog-js";
@@ -154,6 +154,7 @@ export interface HivraChatProps {
  * in-place connection-service update as Manage's). Without it the picker points to Manage. */
  computerId?: string;
  guestPaused?: boolean;
+ typingWakeGeneration?: number;
  /** The effort update restarted the computer's connection service. */
  onConnectionServiceRestarted?: () => void;
 }
@@ -332,6 +333,14 @@ type TurnEnd =
  | { kind: "wake_failed"; reason: string }
  | { kind: "refused"; status: number; reason: string };
 
+type ChatWakeResult = "ready" | Extract<TurnEnd, { kind: "superseded" | "wake_failed" }>;
+type ChatWake = {
+ controller: AbortController;
+ result: Promise<ChatWakeResult>;
+ waiting: number;
+ settled: boolean;
+};
+
 // What a reply says when its turn could not start (null: say nothing more).
 function turnFailureNote(end: TurnEnd): string | null {
  if (end.kind === "unreachable") return "⚠ Couldn't reach your agent. It may be starting up — try again in a moment.";
@@ -386,9 +395,10 @@ function saveActiveId(boxUrl: string, id: string) {
  try { window.localStorage.setItem(keyFor(boxUrl) + "_active", id); } catch { /* ignore */ }
 }
 
-export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel, computerId, guestPaused, onConnectionServiceRestarted }: HivraChatProps) {
+export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "claude", storageKey, token, goal, context, firstTask, emoji, instanceId, modelLabel, computerId, guestPaused, typingWakeGeneration, onConnectionServiceRestarted }: HivraChatProps) {
  const skey = storageKey || boxUrl;
  const retainAcrossSleep = guestPaused !== undefined;
+ const preWakeOnTyping = typingWakeGeneration !== undefined;
  // What the composer's pickers change on the computer: its model, its effort
  // levels and its access. The effort picked is sent with each turn.
  const controls = useBoxChatControls({ boxUrl, token, agentKind, storageKey: skey, modelLocked: Boolean((modelLabel || "").trim()), lockedModelName: (modelLabel || "").trim(), computerId, guestPaused, onConnectionServiceRestarted });
@@ -449,6 +459,19 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // Aborts this page's connection to a session's in-flight turn. The run itself
  // is detached on the box: only an explicit Stop (runRef's id) ends it.
  const abortRef = useRef(new Map<string, AbortController>());
+ const chatWakeRef = useRef<ChatWake | null>(null);
+ const typedWakeRef = useRef(false);
+ const guestPausedRef = useRef(guestPaused);
+ const sleepGenerationRef = useRef(typingWakeGeneration);
+ useEffect(() => {
+ guestPausedRef.current = guestPaused;
+ const newSleep = typingWakeGeneration !== undefined && sleepGenerationRef.current !== typingWakeGeneration;
+ if (newSleep) sleepGenerationRef.current = typingWakeGeneration;
+ if (!guestPaused || newSleep) {
+ typedWakeRef.current = false;
+ if (chatWakeRef.current?.settled) chatWakeRef.current = null;
+ }
+ }, [guestPaused, typingWakeGeneration]);
  // The box run id of each session's in-flight turn, for Stop.
  const runRef = useRef(new Map<string, string>());
  // Set once the box has shown it runs turns detached (a `_run` line or a run list).
@@ -553,6 +576,9 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  useEffect(() => {
  const abortAll = () => {
  requestGenerationRef.current += 1;
+ chatWakeRef.current?.controller.abort();
+ chatWakeRef.current = null;
+ typedWakeRef.current = false;
  const controllers = [...abortRef.current.values()];
  abortRef.current.clear();
  for (const controller of controllers) controller.abort();
@@ -1041,6 +1067,50 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  [agentKind, setSessionBusy],
  );
 
+ const wakeChatGuest = useCallback(async (wakeId: string, signal: AbortSignal, source: "chat" | "chat-typing"): Promise<ChatWakeResult> => {
+ for (let step = 0; ; step++) {
+ const woke = await wakeAgent(wakeId, signal, source);
+ if (signal.aborted) return { kind: "superseded" };
+ if (woke.state === "failed") return { kind: "wake_failed", reason: woke.message };
+ if (woke.state === "awake") break;
+ if (step >= CHAT_WAKE_RECHECK_MS.length) return { kind: "wake_failed", reason: "Your computer is still waking. Try sending again in a moment." };
+ await waitUnlessAborted(CHAT_WAKE_RECHECK_MS[step], signal);
+ if (signal.aborted) return { kind: "superseded" };
+ }
+ const readiness = await inspectChatReadiness(boxUrl, agentKind === "codex" ? "codex" : "claude-code", token);
+ if (signal.aborted) return { kind: "superseded" };
+ return readiness === "native_connected" || readiness === "provider_configured"
+ ? "ready"
+ : { kind: "wake_failed", reason: "Your computer woke up, but chat isn’t ready. Try again once it’s connected." };
+ }, [agentKind, boxUrl, token]);
+
+ const startSharedWake = useCallback((wakeId: string, source: "chat" | "chat-typing") => {
+ if (chatWakeRef.current) return chatWakeRef.current;
+ const controller = new AbortController();
+ const wake: ChatWake = {
+ controller,
+ waiting: 0,
+ settled: false,
+ result: wakeChatGuest(wakeId, controller.signal, source).then((result) => {
+ wake.settled = true;
+ if (chatWakeRef.current === wake && (result !== "ready" || !guestPausedRef.current)) chatWakeRef.current = null;
+ return result;
+ }),
+ };
+ chatWakeRef.current = wake;
+ return wake;
+ }, [wakeChatGuest]);
+
+ const preWake = useCallback((event: FormEvent<HTMLTextAreaElement>) => {
+ const inputType = (event.nativeEvent as InputEvent).inputType;
+ if (!event.isTrusted || (inputType !== "insertText" && inputType !== "insertCompositionText")
+ || !event.currentTarget.value.trim() || !preWakeOnTyping || !guestPaused || typedWakeRef.current || !agentSleepUiEnabled()) return;
+ const wakeId = computerId || instanceId;
+ if (!wakeId || !activeIdRef.current) return;
+ typedWakeRef.current = true;
+ startSharedWake(wakeId, "chat-typing");
+ }, [computerId, guestPaused, instanceId, preWakeOnTyping, startSharedWake]);
+
  // Carry a turn from its POST to its end, writing into the reply `runId` names.
  // The box runs the turn detached, so a stream that drops mid-turn re-attaches
  // through the run's log. A normal send and the first-contact welcome share
@@ -1053,24 +1123,30 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  // 503). Wake it and send again, once. Only where sleep is switched on.
  const wakeId = agentSleepUiEnabled() ? (computerId || instanceId || "") : "";
  let wakeTried = false;
- if (wakeBeforePost && wakeId) {
+ const pendingWake = onAccepted ? chatWakeRef.current : null;
+ if ((wakeBeforePost || pendingWake) && wakeId) {
  wakeTried = true;
  const signal = turn.controller.signal;
  updateRunMessage(sessionId, runId, (m) => ({ ...m, pending: "Waking up your agent. Your message will send in a moment." }));
- for (let step = 0; ; step++) {
- const woke = await wakeAgent(wakeId, signal, "chat");
- if (!turn.isCurrent() || signal.aborted) return { kind: "superseded" };
- if (woke.state === "failed") return { kind: "wake_failed", reason: woke.message };
- if (woke.state === "awake") break;
- if (step >= CHAT_WAKE_RECHECK_MS.length) return { kind: "wake_failed", reason: "Your computer is still waking. Try sending again in a moment." };
- await waitUnlessAborted(CHAT_WAKE_RECHECK_MS[step], signal);
- if (!turn.isCurrent() || signal.aborted) return { kind: "superseded" };
+ const shared = pendingWake ?? (preWakeOnTyping ? startSharedWake(wakeId, "chat") : null);
+ let ready: ChatWakeResult;
+ if (shared) {
+ typedWakeRef.current = true;
+ shared.waiting++;
+ const cancelWake = () => {
+ if (--shared.waiting || shared.settled) return;
+ if (chatWakeRef.current === shared) chatWakeRef.current = null;
+ shared.controller.abort();
+ };
+ signal.addEventListener("abort", cancelWake, { once: true });
+ try { ready = await shared.result; }
+ finally {
+ signal.removeEventListener("abort", cancelWake);
+ if (!signal.aborted) shared.waiting--;
  }
- const readiness = await inspectChatReadiness(boxUrl, agentKind === "codex" ? "codex" : "claude-code", token);
+ } else ready = await wakeChatGuest(wakeId, signal, "chat");
  if (!turn.isCurrent() || signal.aborted) return { kind: "superseded" };
- if (readiness !== "native_connected" && readiness !== "provider_configured") {
- return { kind: "wake_failed", reason: "Your computer woke up, but chat isn’t ready. Try again once it’s connected." };
- }
+ if (ready !== "ready") return ready;
  }
  const wakeThenRetry = async (): Promise<boolean> => {
  wakeTried = true;
@@ -1134,7 +1210,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  else updateRunMessage(sessionId, runId, (m) => ({ ...m, streaming: false, outcome: "error" }));
  return { kind: "settled" };
  },
- [agentKind, boxUrl, computerId, finalizeRun, followRun, instanceId, readRunStream, token, updateRunMessage],
+ [agentKind, computerId, finalizeRun, followRun, instanceId, preWakeOnTyping, readRunStream, startSharedWake, updateRunMessage, wakeChatGuest],
  );
 
  // `from` names a queued message going out: it goes to its own conversation with
@@ -1827,6 +1903,7 @@ export function HivraChat({ boxUrl, agentName = "Claude Code", agentKind = "clau
  agentName={agentName}
  input={input}
  onInputChange={changeDraft}
+ onInput={preWakeOnTyping ? preWake : undefined}
  onSend={submit}
  onStop={stop}
  busy={busy}

@@ -22,6 +22,18 @@ import { inspectChatReadiness } from "@/lib/hivra/chat-readiness";
 import { clientLog } from "@/lib/client/logger";
 import { captureClient } from "@/lib/telemetry/posthog-client";
 
+let mockComposerInput: ((event: React.FormEvent<HTMLTextAreaElement>) => void) | undefined;
+jest.mock("../chat/ChatComposer", () => {
+  const actual: typeof import("../chat/ChatComposer") = jest.requireActual("../chat/ChatComposer");
+  return {
+    ...actual,
+    ChatComposer: (props: React.ComponentProps<typeof actual.ChatComposer>) => {
+      mockComposerInput = props.onInput;
+      return <actual.ChatComposer {...props} />;
+    },
+  };
+});
+
 jest.mock("@/lib/telemetry/posthog-client", () => ({
   captureClient: jest.fn(),
 }));
@@ -849,6 +861,103 @@ describe("HivraChat", () => {
       render(<HivraChat boxUrl="https://box.example.com" storageKey="reopen-draft" agentName="Atlas" computerId="agent-1" guestPaused={false} />);
       expect(await screen.findByDisplayValue("Still a draft")).toBeInTheDocument();
       expect(wakeAgent).not.toHaveBeenCalled();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    const typingChat = (guestPaused = true, generation: number | null = 7) =>
+      <HivraChat boxUrl="https://box.example.com" storageKey="typing-wake" agentKind="codex" computerId="agent-1" guestPaused={guestPaused} typingWakeGeneration={generation ?? undefined} />;
+    function typeDraft(value: string, inputType = "insertText") {
+      const composer = screen.getByRole<HTMLTextAreaElement>("textbox");
+      fireEvent.change(composer, { target: { value } });
+      // jsdom cannot create a browser-trusted event; supply that event at the handler boundary.
+      mockComposerInput?.({ isTrusted: true, nativeEvent: { inputType }, currentTarget: composer } as unknown as React.FormEvent<HTMLTextAreaElement>);
+    }
+
+    it("does not pre-wake on draft restoration, focus, synthetic input, paste or deletion", () => {
+      window.localStorage.setItem("hivra_sessions_typingwake", JSON.stringify([{
+        id: "stored-session", title: "Draft", messages: [], createdAt: 1, loaded: true,
+      }]));
+      window.localStorage.setItem("hivra_draft_typingwake_stored-session", "Saved draft");
+      render(typingChat());
+      const composer = screen.getByRole("textbox");
+      expect(composer).toHaveValue("Saved draft");
+      fireEvent.focus(composer);
+      fireEvent.keyDown(composer, { key: "a" });
+      fireEvent.input(composer, { inputType: "insertText", target: { value: "Synthetic" } });
+      typeDraft("Pasted", "insertFromPaste");
+      typeDraft("Paste", "deleteContentBackward");
+      expect(wakeAgent).not.toHaveBeenCalled();
+    });
+
+    it("starts one wake on typing, shares its pending readiness with Send, and only posts after readiness", async () => {
+      let finishCheck!: (result: string) => void;
+      const readiness = new Promise((resolve) => { finishCheck = resolve; });
+      (inspectChatReadiness as jest.Mock).mockReturnValue(readiness);
+      (wakeAgent as jest.Mock).mockResolvedValue({ state: "awake" });
+      const fetchMock = jest.fn().mockResolvedValue(chatResponse(goodReply()));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const { rerender } = render(typingChat());
+      await act(async () => { typeDraft("H"); typeDraft("Hello"); });
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
+      expect(wakeAgent).toHaveBeenCalledWith("agent-1", expect.any(AbortSignal), "chat-typing");
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(inspectChatReadiness).toHaveBeenCalledTimes(1);
+      rerender(typingChat(false, null));
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      expect(fetchMock).not.toHaveBeenCalled();
+      await act(async () => { finishCheck("provider_configured"); });
+      expect(await screen.findByText(/Back from my nap/)).toBeInTheDocument();
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
+      expect(inspectChatReadiness).toHaveBeenCalledTimes(1);
+      const posts = fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/api/chat"));
+      expect(posts).toHaveLength(1);
+      expect(JSON.parse(posts[0][1].body)).toMatchObject({ message: "Hello" });
+    });
+
+    it("does not keep retrying a failed typing wake and leaves an explicit Send retry available", async () => {
+      (wakeAgent as jest.Mock).mockResolvedValueOnce({ state: "failed", message: "No host headroom." }).mockResolvedValueOnce({ state: "awake" });
+      (inspectChatReadiness as jest.Mock).mockResolvedValue("native_connected");
+      const fetchMock = jest.fn().mockResolvedValue(chatResponse(goodReply()));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(typingChat());
+      await act(async () => { typeDraft("H"); });
+      typeDraft("Hello");
+      expect(screen.getByRole("textbox")).toHaveValue("Hello");
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      expect(await screen.findByText(/Back from my nap/)).toBeInTheDocument();
+      expect(wakeAgent).toHaveBeenNthCalledWith(2, "agent-1", expect.any(AbortSignal), "chat");
+    });
+
+    it("does not reuse typing readiness from an older sleep generation", async () => {
+      (wakeAgent as jest.Mock).mockResolvedValue({ state: "awake" });
+      (inspectChatReadiness as jest.Mock).mockResolvedValue("native_connected");
+      const fetchMock = jest.fn().mockResolvedValue(chatResponse(goodReply()));
+      global.fetch = fetchMock as unknown as typeof fetch;
+      const { rerender } = render(typingChat());
+      await act(async () => { typeDraft("Hello"); });
+      expect(inspectChatReadiness).toHaveBeenCalledTimes(1);
+      rerender(typingChat(true, 9));
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      expect(await screen.findByText(/Back from my nap/)).toBeInTheDocument();
+      expect(wakeAgent).toHaveBeenNthCalledWith(2, "agent-1", expect.any(AbortSignal), "chat");
+      expect(inspectChatReadiness).toHaveBeenCalledTimes(2);
+    });
+
+    it("cancels a shared typing wake when the owner stops their pending send", async () => {
+      let finishWake!: (value: { state: "awake" }) => void;
+      (wakeAgent as jest.Mock).mockReturnValue(new Promise((resolve) => { finishWake = resolve; }));
+      const fetchMock = jest.fn();
+      global.fetch = fetchMock as unknown as typeof fetch;
+      render(typingChat());
+      typeDraft("Do not send");
+      fireEvent.click(screen.getByRole("button", { name: "Send message" }));
+      const signal = (wakeAgent as jest.Mock).mock.calls[0][1] as AbortSignal;
+      fireEvent.click(screen.getByRole("button", { name: "Stop response" }));
+      expect(signal.aborted).toBe(true);
+      await act(async () => { finishWake({ state: "awake" }); });
+      expect(wakeAgent).toHaveBeenCalledTimes(1);
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
