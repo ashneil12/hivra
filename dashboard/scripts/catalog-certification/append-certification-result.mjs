@@ -57,7 +57,7 @@ function safeReason(value) {
 }
 
 export function certificationRunDisposition(row) {
-  if (!row.evidenceFile || (row.sweepPassed && !row.teardown) || row.teardown && (
+  if (!row.evidenceFile || row.failure?.stage === "teardown" || (row.sweepPassed && !row.teardown) || row.teardown && (
     row.teardown.error || row.teardown.agentsLeft !== 0 ||
     row.teardown.instancesLeft !== 0 || row.teardown.accountDeleted !== false
   )) return "hold";
@@ -87,9 +87,9 @@ export function certificationRowFromSweep({ result, file, target, canarySha, pro
   const revisionMatches = result.checkoutSha === canarySha && result.expectedCanarySha === canarySha;
   const teardown = result.teardown
     ? {
-        agentsLeft: result.teardown.agentsLeft ?? 0,
-        instancesLeft: result.teardown.instancesLeft ?? 0,
-        accountDeleted: Boolean(result.teardown.accountDeleted),
+      agentsLeft: result.teardown.agentsLeft ?? null,
+      instancesLeft: result.teardown.instancesLeft ?? null,
+      accountDeleted: result.teardown.accountDeleted ?? null,
         error: result.teardown.error ? safeReason(result.teardown.error) : undefined,
       }
     : null;
