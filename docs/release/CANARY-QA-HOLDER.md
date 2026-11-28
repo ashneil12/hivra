@@ -7,8 +7,9 @@ Neither enabling access nor applying a live migration is part of merging its cod
 
 After separately authorised Canary setup, set the single row in the Canary
 database's `hivra_canary_qa_holder_settings` table. Set `enabled` to true,
-`owner_id` to the exact authorised standing owner and `expires_at` to a UTC
-deadline no more than 24 hours ahead. The deployed app can only read the row
+`owner_id` to the exact authorised standing owner, `host_id` to the only
+authorised host, and `expires_at` to a UTC deadline no more than 24 hours
+ahead. The allocator does not spill to other hosts. The deployed app can only read the row
 and only honors it on canonical Git Canary. A disabled or expired row takes
 precedence over all environment settings.
 

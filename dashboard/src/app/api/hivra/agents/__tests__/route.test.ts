@@ -4018,16 +4018,31 @@ describe("POST /api/hivra/agents", () => {
       }
     });
 
-    it("admits the explicit runtime-enrolled owner without a Vercel QA flag", async () => {
+    it("admits the explicit runtime-enrolled owner on the pinned host without a Vercel QA flag", async () => {
       delete process.env.HIVRA_CANARY_QA_HOLDER_ENABLED;
       const deadline = expiry();
       mockHolderQaSettings.mockResolvedValue({
-        data: { enabled: true, owner_id: "user_fixture1", expires_at: deadline }, error: null,
+        data: { enabled: true, owner_id: "user_fixture1", expires_at: deadline, host_id: "fixturenode7" }, error: null,
       });
       expect((await POST(makeRequest(body, qaHeader))).status).toBe(201);
+      expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({
+        forceTargetId: "fixturenode7", seatFunding: "holder",
+      }));
       expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_canary_qa_holder_agent", expect.objectContaining({
         p_expires_at: deadline,
       }));
+    });
+
+    it("does not spill a runtime-enrolled QA launch when the pinned host cannot place it", async () => {
+      mockHolderQaSettings.mockResolvedValue({
+        data: { enabled: true, owner_id: "user_fixture1", expires_at: expiry(), host_id: "fixturenode7" }, error: null,
+      });
+      mockSelectAvailableProxmoxProvisionTarget.mockResolvedValue({
+        ok: false, status: 503, message: "Host is at capacity",
+      });
+      expect((await POST(makeRequest(body, qaHeader))).status).toBe(503);
+      expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledTimes(1);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
     });
 
     it.each([
