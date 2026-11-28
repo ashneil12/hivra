@@ -153,7 +153,7 @@ class MainTest(TempRoot):
         fresh = {path: self.read(path) for path in outputs}
         from PIL import Image
         for path in outputs:
-            if path.parent in {exporter.WINDOWS_ICONS, exporter.WINDOWS_UI} and path.suffix == ".png":
+            if path.parent in {exporter.DESKTOP_ICONS, exporter.DESKTOP_UI} and path.suffix == ".png":
                 with self.subTest(path=str(path)):
                     self.assertEqual(Image.open(self.root / path).mode, "RGBA")
         self.assertEqual(self.run_main().count(" kept "), len(outputs))

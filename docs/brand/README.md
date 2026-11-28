@@ -29,8 +29,8 @@ resizes: no crop, padding, colour change, redraw or transparency.
 | `dashboard/src/app/favicon.ico` | 16, 32, 48 px | Browser favicon |
 | `dashboard/src/app/icon.png` | 192 px | `<link rel="icon">` |
 | `dashboard/src/app/apple-icon.png` | 180 px | Apple touch icon |
-| `apps/windows/HivraDesktop/src-tauri/icons/{32x32,128x128,icon}.png` and `icon.ico` | 32–256 px | Windows app, window, taskbar and installer icons |
-| `apps/windows/HivraDesktop/ui/hivra-icon.png` | 192 px | Windows app welcome-page mark |
+| `apps/desktop/HivraDesktop/src-tauri/icons/{32x32,128x128,icon}.png` and `icon.ico` | 32–256 px | Windows/Linux app, window, taskbar and installer icons |
+| `apps/desktop/HivraDesktop/ui/hivra-icon.png` | 192 px | Windows/Linux app welcome-page mark |
 
 The red H sits within 35% of the width from the centre, inside the 40% maskable
 safe zone, so the full-bleed square works as a maskable icon without padding.

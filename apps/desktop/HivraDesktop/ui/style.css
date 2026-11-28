@@ -2,6 +2,7 @@
    panels over a soft haze, system type, rounded, red only for the mark. */
 :root {
   --hg-bg: hsl(240 0% 97%);
+  --hg-window-bg: var(--hg-bg);
   --hg-fg: hsl(240 0% 14%);
   --hg-text-2: color-mix(in srgb, var(--hg-fg) 68%, transparent);
   --hg-text-3: color-mix(in srgb, var(--hg-fg) 46%, transparent);
@@ -36,18 +37,23 @@
 
 * { box-sizing: border-box; }
 
+html[data-hivra-platform="windows"] {
+  /* Windows 11's Mica shows through the transparent window. Everywhere else the
+     window is opaque, so the page supplies its own base colour. */
+  --hg-window-bg: color-mix(in srgb, var(--hg-bg) 55%, transparent);
+}
+
 html, body {
   height: 100%;
   margin: 0;
 }
 
 body {
-  /* Mica shows through on Windows 11; the haze and a light wash keep it calm. */
   background:
     radial-gradient(40% 50% at 18% 20%, var(--hg-haze-1), transparent 70%),
     radial-gradient(35% 45% at 85% 25%, var(--hg-haze-2), transparent 70%),
     radial-gradient(45% 55% at 60% 90%, var(--hg-haze-3), transparent 70%),
-    color-mix(in srgb, var(--hg-bg) 55%, transparent);
+    var(--hg-window-bg);
   color: var(--hg-fg);
   font: 14px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   display: grid;

@@ -1,4 +1,4 @@
-//! Hivra for Windows: a small native shell around the Hivra website.
+//! Hivra for Windows and Linux: a small native shell around the Hivra website.
 //!
 //! Hivra's screens (Home, Launch, agents, computers, plans and billing) are
 //! the website's own pages, so everything ships once and shows up here too.
@@ -22,12 +22,32 @@ use tauri_plugin_opener::OpenerExt;
 const DEFAULT_CONNECTION: &str = "https://hivra.cloud/dashboard";
 
 /// The website reads `HivraDesktop/<version>` as "inside the desktop app"
-/// (dashboard/src/lib/desktop-shell.ts). WebView2's own user agent is Edge's.
+/// (dashboard/src/lib/desktop-shell.ts). Keep the rest of the user agent close
+/// to the platform's real webview rather than masquerading as another shell.
+#[cfg(windows)]
 const USER_AGENT: &str = concat!(
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) ",
     "Chrome/142 Safari/537.36 Edg/142 HivraDesktop/",
     env!("CARGO_PKG_VERSION")
 );
+#[cfg(target_os = "linux")]
+const USER_AGENT: &str = concat!(
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) ",
+    "Version/17.0 Safari/605.1.15 HivraDesktop/",
+    env!("CARGO_PKG_VERSION")
+);
+#[cfg(not(any(windows, target_os = "linux")))]
+const USER_AGENT: &str = concat!("HivraDesktop/", env!("CARGO_PKG_VERSION"));
+
+fn platform() -> &'static str {
+    if cfg!(windows) {
+        "windows"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else {
+        std::env::consts::OS
+    }
+}
 
 struct Shell {
     connection: Url,
@@ -175,7 +195,13 @@ fn build_window(app: &AppHandle) -> tauri::Result<WebviewWindow> {
         .inner_size(1280.0, 820.0)
         .min_inner_size(900.0, 600.0)
         .user_agent(USER_AGENT)
-        .transparent(true)
+        // Mica needs transparency on Windows. Linux WebKitGTK only composites a
+        // transparent window reliably under a compositor, so it stays opaque there.
+        .transparent(cfg!(windows))
+        .initialization_script(format!(
+            "document.documentElement.dataset.hivraPlatform='{}';",
+            platform()
+        ))
         .on_navigation(move |url| {
             let shell = handle.state::<Shell>();
             let supported = *shell.supported.lock().unwrap() == Some(true);
@@ -257,8 +283,11 @@ pub fn run() {
             #[cfg(any(windows, target_os = "linux"))]
             {
                 // Installed builds register hivra:// at install; this covers
-                // development and portable runs.
-                let _ = handle.deep_link().register_all();
+                // development and portable runs. A registration failure must not
+                // take the app down, but it also must not be invisible.
+                if let Err(error) = handle.deep_link().register_all() {
+                    eprintln!("hivra: couldn't register the hivra:// browser handoff: {error}");
+                }
             }
             let links = handle.clone();
             handle.deep_link().on_open_url(move |event| {
@@ -274,4 +303,26 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Hivra");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_agent_carries_the_desktop_token_and_version() {
+        assert!(USER_AGENT.contains(concat!("HivraDesktop/", env!("CARGO_PKG_VERSION"))));
+        #[cfg(windows)]
+        assert!(USER_AGENT.contains("Windows NT"));
+        #[cfg(target_os = "linux")]
+        assert!(!USER_AGENT.contains("Windows NT"));
+    }
+
+    #[test]
+    fn platform_names_the_supported_desktop_os() {
+        #[cfg(windows)]
+        assert_eq!(platform(), "windows");
+        #[cfg(target_os = "linux")]
+        assert_eq!(platform(), "linux");
+    }
 }
