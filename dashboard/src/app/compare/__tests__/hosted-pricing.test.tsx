@@ -7,6 +7,7 @@ import { PLANS } from "@/lib/subscription/plans";
 import { HOSTED_COMPETITORS, hostedComparisonPath } from "@/lib/compare/hosted-competitors";
 import { buildLlmsTxt } from "@/lib/llms-txt";
 import { SITE_URL } from "@/lib/seo-urls";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
 import PricingPage from "../../pricing/page";
 import ComparePage from "../page";
 import ComparisonPage, { generateMetadata, generateStaticParams } from "../[slug]/page";
@@ -16,6 +17,7 @@ jest.mock("@/components/public-site/PublicSite", () => ({
   default: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 jest.mock("@/lib/billing/card-trial", () => ({ getCardTrialOffer: jest.fn() }));
+jest.mock("@/lib/hivra/paid-kvm-sleep-availability", () => ({ paidKvmSleepAvailable: jest.fn() }));
 jest.mock("@/lib/compliance/token-surface-view", () => ({ getTokenSurfaceView: async () => null, tokenSurfacesVisible: () => false }));
 jest.mock("@/components/public-editorial/ArticleNavigation.client", () => ({ __esModule: true, default: () => null }));
 
@@ -29,6 +31,14 @@ function detail(slug: string) {
 }
 
 afterEach(() => jest.resetAllMocks());
+
+it.each([false, true])("advertises idle sleep only with host eligibility (%s)", async (available) => {
+  jest.mocked(paidKvmSleepAvailable).mockResolvedValueOnce(available);
+  const { container } = render(await detail("agent37"));
+  const claim = "Stays on by default; optional idle sleep on eligible paid VMs";
+  if (available) expect(container).toHaveTextContent(claim);
+  else expect(container).not.toHaveTextContent(claim);
+});
 
 it.each(HOSTED_COMPETITORS)("serves a dated, cited table for every $name tier", async (provider) => {
   expect(generateStaticParams()).toContainEqual({ slug: provider.slug });

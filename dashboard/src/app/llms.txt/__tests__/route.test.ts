@@ -6,11 +6,26 @@ import { SITE_DESCRIPTION } from "@/lib/brand-description";
 import { SITE_URL } from "@/lib/seo-urls";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
 import { generateStaticParams } from "@/app/compare/[slug]/page";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
+
+jest.mock("@/lib/hivra/paid-kvm-sleep-availability", () => ({
+  paidKvmSleepAvailable: jest.fn(async () => false),
+}));
 
 const request = new Request("http://localhost/llms.txt");
 
 // Exercises the live /llms.txt route end-to-end against the shipped link map.
 describe("GET /llms.txt", () => {
+  it("does not advertise idle sleep when the host check is false or cache a positive result", async () => {
+    const claim = "Supported owner access wakes eligible computers with idle sleep turned on.";
+    expect(await (await GET(request)).text()).not.toContain(claim);
+
+    jest.mocked(paidKvmSleepAvailable).mockResolvedValueOnce(true);
+    const response = await GET(request);
+    expect(await response.text()).toContain(claim);
+    expect(response.headers.get("cache-control")).toBe("private, no-store");
+  });
+
   it("returns 200 with a text/plain content-type", async () => {
     const res = await GET(request);
     expect(res.status).toBe(200);

@@ -42,8 +42,9 @@ function comparison(managed: boolean, paidSleep: boolean) {
   ];
 }
 
-export default function SandboxesPage() {
+export default async function SandboxesPage() {
   const managed = publicManagedSandboxAvailable();
+  const paidSleep = await paidKvmSleepAvailable();
   return (
     <PublicSite className={styles.page} data-page="sandboxes">
       <main className={styles.main} id="main-content">
@@ -71,7 +72,7 @@ export default function SandboxesPage() {
             <h2 id="computer-types">Choose the computer your work needs.</h2>
           </div>
           <ol className={local.index}>
-            {comparison(managed, paidKvmSleepAvailable()).map(({ title, body }, index) => (
+            {comparison(managed, paidSleep).map(({ title, body }, index) => (
               <li key={title} className={`${local.item} ${local.split}`}>
                 <h3><span aria-hidden="true" className={local.itemNumber}>0{index + 1}</span>{title}</h3>
                 <div className={local.prose}><p>{body}</p></div>

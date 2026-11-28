@@ -11,6 +11,9 @@ jest.mock("@/lib/compliance/token-surface-view", () => ({
 }));
 
 import PricingPage, { generateMetadata } from "../page";
+import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
+
+jest.mock("@/lib/hivra/paid-kvm-sleep-availability", () => ({ paidKvmSleepAvailable: jest.fn(async () => false) }));
 import {
   HOSTED_SIZES,
   PRICING_ACTIONS,
@@ -295,6 +298,7 @@ describe("/pricing page", () => {
   });
 
   it("describes sleep as conditional without promising uninterrupted work", async () => {
+    jest.mocked(paidKvmSleepAvailable).mockResolvedValueOnce(true);
     const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_SLEEP_MODE: "on", NEXT_PUBLIC_HIVRA_AGENT_SLEEP: "1" });
     try {
     const { container } = await renderPricing();

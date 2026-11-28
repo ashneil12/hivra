@@ -7,7 +7,6 @@ import StructuredData from "@/components/StructuredData";
 import { getCardTrialOffer } from "@/lib/billing/card-trial";
 import { hostedComparisonPath, HOSTED_COMPETITORS, type HostedCompetitor } from "@/lib/compare/hosted-competitors";
 import { CLOSING } from "@/lib/compare/shared-copy";
-import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
 import { SITE_URL } from "@/lib/seo-urls";
 import { buildHostedProducts, formatPricesAsOf, HOSTED_AI, HOSTED_DISK, hostedSizes, type HostedSize } from "../pricing/pricing-content";
 import styles from "@/components/public-editorial/secondary-site.module.css";
@@ -70,10 +69,9 @@ function ValueSummary({ provider, sizes }: { provider: HostedCompetitor; sizes: 
   </ul>;
 }
 
-export default function HostedComparison({ provider }: { provider: HostedCompetitor }) {
+export default function HostedComparison({ provider, sleep }: { provider: HostedCompetitor; sleep: boolean }) {
   const entryMonthlyCents = getCardTrialOffer()?.monthlyCents;
   const sizes = hostedSizes(entryMonthlyCents);
-  const sleep = paidKvmSleepAvailable();
   const path = hostedComparisonPath(provider.slug);
   const cite = (label: string, href = provider.pricingSource) => <Source label={label} href={href} />;
   return (
