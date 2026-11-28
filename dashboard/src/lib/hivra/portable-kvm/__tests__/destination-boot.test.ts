@@ -29,12 +29,14 @@ const config = [
   "scsihw: virtio-scsi-single", "lock: backup", "memory: 2048", "cores: 2", "onboot: 0", "scsi0: local-lvm:vm-9344-disk-0,replicate=0",
   "tags: " + bindingTag, "net0: " + nic + ",link_down=1", "",
 ].join("\n");
-const managedProfile = { cpu: { vendor: "GenuineIntel" as const, requiredFlags: ["aes", "cx16", "pni", "popcnt", "sse4_1",
+const allocationOperationId = "55555555-5555-4555-8555-555555555555";
+const allocationTag = "hivra-op-" + allocationOperationId.replaceAll("-", "");
+const managedProfile = { allocationOperationId, cpu: { vendor: "GenuineIntel" as const, requiredFlags: ["aes", "cx16", "pni", "popcnt", "sse4_1",
   "sse4_2", "ssse3"] }, cpuLimit: 2, cloudInit: {
   instanceId: "d".repeat(40), gateway: "192.168.1.1", nameservers: ["192.0.2.53", "198.51.100.53"],
 } } satisfies NonNullable<PortableKvmDestinationBootProfile["managed"]>;
 const seedSnippet = `hivra-portable-meta-${operationId}.yaml`;
-const managedConfig = config.replace("vmbr1", "hivra0") + [
+const managedConfig = config.replace("vmbr1", "hivra0").replace("tags: " + bindingTag, "tags: " + bindingTag + ";" + allocationTag) + [
   "cpu: host", "cpulimit: 2", "serial0: socket", "vga: serial0", "ciuser: ubuntu", "citype: nocloud", "ciupgrade: 0",
   "ide2: local-lvm:vm-9344-cloudinit,media=cdrom,size=4M", `cicustom: meta=local:snippets/${seedSnippet}`,
   `ipconfig0: ip=${destination.ip}/24,gw=${managedProfile.cloudInit.gateway}`,
@@ -225,6 +227,7 @@ function host(current = config, managed = false) {
     connector_evidence: { destination, sourceFenced: true, sourceConnectorOff: true, destinationConnectorReady: true, bootId, connectorId },
   };
   const agent = { id: agentId, user_id: ownerId, infrastructure_binding_token_enforced: true,
+    allocation_operation_id: allocationOperationId,
     infrastructure_binding_token_hash: tokenHash, operation_kind: "wake", operation_payload: { portable_kvm: true }, cf_tunnel_id: tunnelId,
     status: "running", desired_state: "running", sleep_state: "waking", operation_id: operationId, sleep_generation: 2,
     proxmox_host: source.hostId, vmid: source.vmid, ip: source.ip,
@@ -330,6 +333,11 @@ it("preserves the ordinary managed console, seed identity and leased route acros
 });
 
 it.each([
+  ["missing allocation tag", managedConfig.replace(";" + allocationTag, "")],
+  ["wrong allocation tag", managedConfig.replace(allocationTag, "hivra-op-" + "9".repeat(32))],
+  ["extra allocation tag", managedConfig.replace(allocationTag, allocationTag + ";hivra-op-" + "9".repeat(32))],
+  ["missing binding tag", managedConfig.replace(bindingTag + ";", "")],
+  ["wrong binding tag", managedConfig.replace(bindingTag, "hivra-bind-" + "9".repeat(32))],
   ["wrong gateway", managedConfig.replace("gw=192.168.1.1", "gw=192.168.1.2")],
   ["arbitrary VGA", managedConfig.replace("vga: serial0", "vga: qxl")],
   ["arbitrary disk", managedConfig.replace("vm-9344-cloudinit", "vm-9342-cloudinit")],
@@ -341,6 +349,17 @@ it.each([
   const h = host(current, true);
   await expect(h.boot()).rejects.toThrow("observation failed");
   expect(h.events()).toBe("");
+});
+
+it("refuses placement verification if allocation authority changed after quarantined boot", async () => {
+  const h = host(managedConfig, true);
+  const bootReceipt = await h.boot();
+  h.lease.phase = "destination_verified";
+  h.agent.allocation_operation_id = operationId;
+  const input = { ownerId, profile: h.profile, bootReceipt };
+  await expect(verifyPortableKvmQuarantinedDestination(input, h.adapter)).rejects.toThrow("allocation authority changed");
+  expect(h.adapter.runHostScript).toHaveBeenCalledTimes(1);
+  expect(h.events()).toBe("install_fence\nstart\nqga_0\n");
 });
 
 it("rejects a changed private metadata snippet and fails closed if guest NoCloud identity changed", async () => {

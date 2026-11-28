@@ -10,7 +10,7 @@ import {
   type PortableKvmDestinationDiskReceipt,
   type PortableKvmDestinationReservation,
 } from "./destination-disk";
-import { portableKvmHostCpuValidationPython, portableKvmManagedDestinationProfileSchema } from "./destination-prepare";
+import { portableKvmAllocationOperationId, portableKvmHostCpuValidationPython, portableKvmManagedAllocationProfileSchema } from "./destination-prepare";
 import { isPortableKvmWakeClaimed, portableKvmPlacement, resolvePortableKvmPilotPlacement, type PortableKvmPilot } from "./pilot";
 
 const prefix = "HIVRA_KVM_PORTABLE_BOOT_V1 ";
@@ -63,7 +63,7 @@ export type PortableKvmDestinationBootProfile = {
   reservation: PortableKvmDestinationReservation;
   ip: string;
   machineId: string;
-  managed?: z.input<typeof portableKvmManagedDestinationProfileSchema>;
+  managed?: z.input<typeof portableKvmManagedAllocationProfileSchema>;
 };
 
 /**
@@ -73,7 +73,7 @@ export type PortableKvmDestinationBootProfile = {
  * This cannot be derived from the destination's own unverified QGA response.
  */
 export function serializePortableKvmDestinationBootProfile(profile: PortableKvmDestinationBootProfile): string {
-  const managed = portableKvmManagedDestinationProfileSchema.optional().parse(profile.managed);
+  const managed = portableKvmManagedAllocationProfileSchema.optional().parse(profile.managed);
   const ip = (managed ? privateIpv4 : z.string().refine(isIPv4)).parse(profile.ip);
   if (managed && (![ip, managed.cloudInit.gateway].every(value => !/\.(?:0|255)$/.test(value)) || ip === managed.cloudInit.gateway
     || ip.split(".").slice(0, 3).join(".") !== managed.cloudInit.gateway.split(".").slice(0, 3).join("."))) {
@@ -332,6 +332,9 @@ def check_config():
         check_managed_seed(fields)
     tags = fields.get("tags", "").split(";")
     require([tag for tag in tags if tag.startswith("hivra-bind-")] == [r["bindingTag"]], "binding_mismatch")
+    if managed:
+        require([tag for tag in tags if tag.startswith("hivra-op-")] ==
+                ["hivra-op-" + managed["allocationOperationId"].replace("-", "")], "allocation_mismatch")
     disk, *options = fields.get("scsi0", "").split(",")
     require(disk == volume and len({option.partition("=")[0] for option in options}) == len(options)
             and all(re.fullmatch(r"(?:discard=(?:on|ignore)|(?:ssd|iothread|backup|replicate)=[01]|size=[0-9]+[KMGT]?)",
@@ -590,6 +593,10 @@ async function runDestinationStep(
   const lease = leaseSchema.safeParse(authoritative?.lease);
   if (!authoritative || !lease.success) throw new Error("No authoritative portable KVM lease");
   const { agent } = authoritative;
+  if (profile.managed && portableKvmAllocationOperationId.safeParse(agent.allocation_operation_id).data
+    !== portableKvmAllocationOperationId.parse(profile.managed.allocationOperationId)) {
+    throw new Error("Portable KVM destination allocation authority changed");
+  }
   const pilot = resolvePortableKvmPilotPlacement(ownerId, agent, authoritative.pilot);
   const phase = { boot: "restore_claimed", verify: "destination_verified",
     enable: "placement_committed", release: "connector_verified" }[mode];

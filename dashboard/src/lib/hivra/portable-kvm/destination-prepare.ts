@@ -36,6 +36,12 @@ export const portableKvmManagedDestinationProfileSchema = z.object({
       .refine(values => new Set(values).size === values.length),
   }).strict(),
 }).strict();
+export const portableKvmAllocationOperationId = z.string()
+  .regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+  .transform(value => value.toLowerCase());
+export const portableKvmManagedAllocationProfileSchema = portableKvmManagedDestinationProfileSchema.extend({
+  allocationOperationId: portableKvmAllocationOperationId,
+});
 const planSchema = z.object({
   agentId: z.string().uuid(),
   operationId: z.string().uuid(),
@@ -58,7 +64,7 @@ const planSchema = z.object({
       macAddress: portableKvmUnicastMacAddress,
     }).strict(),
     attachment: z.object({ discard: z.boolean(), ssd: z.boolean(), ioThread: z.boolean() }).strict(),
-    managed: portableKvmManagedDestinationProfileSchema.optional(),
+    managed: portableKvmManagedAllocationProfileSchema.optional(),
   }).strict(),
   disk: z.object({
     key: z.literal("scsi0"), snapshotId: sha256,
@@ -301,7 +307,10 @@ def check_configuration(allow_generated_section=False):
     config = fields(current)
     require(config == fields(raw_current), "destination_has_pending_configuration")
     for key, value in requested.items():
-        if key not in {"agent", "scsi0", "net0", "ide2", "ipconfig0", "cpulimit"}:
+        if key == "tags":
+            require(sorted(config.pop("tags", "").split(";")) == sorted(value.split(";")),
+                    "unexpected_destination_ownership")
+        elif key not in {"agent", "scsi0", "net0", "ide2", "ipconfig0", "cpulimit"}:
             require(config.pop(key, None) == value, "unexpected_destination_configuration")
     require(config.pop("agent", None) in {"1", "enabled=1"}, "missing_destination_guest_agent")
     require(config.pop("net0", None) == requested["net0"], "destination_nic_not_quarantined")
@@ -517,6 +526,7 @@ try:
         metadata = Path("/var/lib/vz/snippets", "hivra-portable-meta-" + plan["operationId"] + ".yaml")
         meta_wire = ("instance-id: " + cloudinit["instanceId"] + "\n").encode("ascii")
         requested.update({
+            "tags": plan["bindingTag"] + ";hivra-op-" + managed["allocationOperationId"].replace("-", ""),
             "cpu": "host", "cpulimit": str(managed["cpuLimit"]), "serial0": "socket", "vga": "serial0",
             "ide2": plan["storageId"] + ":cloudinit", "ciuser": "ubuntu", "citype": "nocloud", "ciupgrade": "0",
             "ipconfig0": "ip=" + plan["ip"] + "/24,gw=" + cloudinit["gateway"],

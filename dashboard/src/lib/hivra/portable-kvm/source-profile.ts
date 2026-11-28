@@ -75,9 +75,12 @@ def check():
         optional |= {"cpulimit", "cicustom", "citype", "ciupgrade", "ciuser", "ide2", "ipconfig0", "nameserver", "serial0", "sshkeys", "vga"}
     elif fields.get("cpu") != "x86-64-v2-AES":
         return False
-    tags = [tag for tag in fields.get("tags", "").split(";") if tag.startswith("hivra-bind-")]
+    tags = fields.get("tags", "").split(";")
     if (set(fields) - required.keys() - optional or any(fields.get(key) != value for key, value in required.items())
-        or tags != [where["bindingTag"]] or fields.get("arch", "x86_64") != "x86_64"
+        or [tag for tag in tags if tag.startswith("hivra-bind-")] != [where["bindingTag"]]
+        or (managed and [tag for tag in tags if tag.startswith("hivra-op-")] !=
+            ["hivra-op-" + managed["allocationOperationId"].replace("-", "")])
+        or fields.get("arch", "x86_64") != "x86_64"
         or fields.get("bios", "seabios") != "seabios" or effective_machine(fields) != profile["machine"]
         or (managed and not managed_shape(fields, managed))
         or fields.get("sockets", "1") != "1" or fields.get("onboot", "0") != "0"
