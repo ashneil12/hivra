@@ -12,18 +12,13 @@ import {
 
 const OWNER = /^user_[A-Za-z0-9]+$/;
 
-export function canaryMemoryOvercommitHost(): string | null {
-  const host = process.env.HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID;
-  return host && CANARY_MEMORY_HOST_ID.test(host) ? host : null;
-}
-
 export async function readCanaryMemoryOvercommit(input: {
-  host: string;
+  host: string | null;
   ownerId: string;
   channel: string;
   bundleVersion?: string;
 }): Promise<CanaryMemoryOvercommit | null> {
-  if (input.host !== canaryMemoryOvercommitHost() || input.channel !== "canary"
+  if ((input.host !== null && !CANARY_MEMORY_HOST_ID.test(input.host)) || input.channel !== "canary"
     || (input.bundleVersion !== undefined && input.bundleVersion !== CANARY_MEMORY_OVERCOMMIT_PROVISIONER)
     || !OWNER.test(input.ownerId) || !isCanonicalGitCanaryDeployment() || !supabaseAdmin) return null;
   try {

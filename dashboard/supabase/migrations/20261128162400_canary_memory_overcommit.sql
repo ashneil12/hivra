@@ -12,6 +12,7 @@ create table if not exists public.hivra_canary_memory_overcommit (
   pressure_pswpout bigint check (pressure_pswpout between 0 and 9007199254740991),
   pressure_oom_kill bigint check (pressure_oom_kill between 0 and 9007199254740991),
   pressure_swap_used_kib bigint check (pressure_swap_used_kib between 0 and 64),
+  qa_template_vmid integer check (qa_template_vmid between 100 and 999999999 and qa_template_vmid not between 9300 and 9399),
   measured_guest_generations jsonb not null default '{}' check (jsonb_typeof(measured_guest_generations) = 'object'),
   measured_qa_clones text[] not null default '{}'
 );
@@ -22,6 +23,8 @@ comment on column public.hivra_canary_memory_overcommit.measured_qa_clones is
   'Operator allowlist of exact 93xx:hivra-qa-mem-<32 lowercase hex> identities, one per VMID, never 9302. Invalid or oversized lists give no QA clone credit.';
 comment on column public.hivra_canary_memory_overcommit.pressure_boot_id is
   'Boot ID for the host pressure baseline. Collect and update all pressure_* fields together with the affirmative customer-health check.';
+comment on column public.hivra_canary_memory_overcommit.qa_template_vmid is
+  'The operator-selected source template for QA cloning. NULL disables QA clone grants and credit without disabling exact-host managed grants.';
 
 alter table public.hivra_canary_memory_overcommit enable row level security;
 revoke all on table public.hivra_canary_memory_overcommit from public, anon, authenticated, service_role;
@@ -30,14 +33,15 @@ create or replace function public.get_hivra_canary_memory_overcommit(p_host_id t
 returns jsonb language sql stable security definer set search_path = pg_catalog, pg_temp
 as $$
   with permit as (
-    select s.host_id, s.owner_id, s.ratio_milli, s.measured_guest_generations, s.measured_qa_clones,
+    select s.host_id, s.owner_id, s.ratio_milli, s.qa_template_vmid, s.measured_guest_generations, s.measured_qa_clones,
       s.pressure_boot_id::text || ':' || s.pressure_pswpin::text || ':' || s.pressure_pswpout::text
         || ':' || s.pressure_oom_kill::text || ':' || s.pressure_swap_used_kib::text as pressure_baseline,
       floor(extract(epoch from least(s.expires_at, s.customer_health_checked_at + interval '10 minutes',
         statement_timestamp() + interval '90 seconds')))::bigint as valid_until_epoch
     from public.hivra_canary_memory_overcommit s
     join public.proxmox_hosts h on h.id = s.host_id
-    where s.host_id = p_host_id and s.owner_id = p_owner_id
+    where s.owner_id = p_owner_id
+      and (s.host_id = p_host_id or (p_host_id is null and s.qa_template_vmid is not null))
       and s.enabled and s.expires_at > statement_timestamp() and s.customer_health_ok
       and s.customer_health_checked_at between statement_timestamp() - interval '10 minutes' and statement_timestamp()
       and h.status = 'active' and h.decommissioned_at is null
@@ -60,7 +64,7 @@ as $$
       q.key, substring(q.key from '^([0-9]{4}):')::integer as vmid
     from permit p
     cross join lateral unnest(p.measured_qa_clones) q(key)
-    where array_ndims(p.measured_qa_clones) = 1
+    where p.qa_template_vmid is not null and array_ndims(p.measured_qa_clones) = 1
       and cardinality(p.measured_qa_clones) + (select count(*) from managed_guests) <= 64
   ), qa_clones as (
     select q.key
@@ -82,6 +86,8 @@ as $$
     )
   )
   select jsonb_build_object(
+    'host_id', p.host_id,
+    'qa_template_vmid', p.qa_template_vmid,
     'ratio_milli', p.ratio_milli,
     'valid_until_epoch', p.valid_until_epoch,
     'pressure_baseline', p.pressure_baseline,

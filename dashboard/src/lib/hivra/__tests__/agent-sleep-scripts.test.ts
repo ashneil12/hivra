@@ -809,7 +809,7 @@ host("wake script against a stub host", () => {
       const env = { STUB_WAKE_INTENT: "1" };
       const grant = {
         ratioMilli: 1100, validUntilEpoch: Math.floor(Date.now() / 1000) + 60, measuredGuests: [],
-        pressureBaseline: "00000000-0000-4000-8000-000000000042:0:17:0:24", hostId: "fixture-node-a",
+        pressureBaseline: "00000000-0000-4000-8000-000000000042:0:17:0:24", hostId: "fixture-node-a", qaTemplateVmid: null,
       };
       const scriptBody = `#!/bin/bash
 set -eu

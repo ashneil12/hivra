@@ -12,11 +12,17 @@ export type CanaryMemoryOvercommit = {
   measuredGuests: string[];
   pressureBaseline: string;
   hostId: string;
+  qaTemplateVmid: number | null;
 };
 
-export function parseCanaryMemoryOvercommit(data: unknown, hostId: string): CanaryMemoryOvercommit | null {
-  if (!data || typeof data !== "object" || !CANARY_MEMORY_HOST_ID.test(hostId)) return null;
-  const { ratio_milli, valid_until_epoch, measured_guests, pressure_baseline } = data as Record<string, unknown>;
+export function parseCanaryMemoryOvercommit(data: unknown, expectedHost: string | null): CanaryMemoryOvercommit | null {
+  if (!data || typeof data !== "object") return null;
+  const { host_id, qa_template_vmid, ratio_milli, valid_until_epoch, measured_guests, pressure_baseline } = data as Record<string, unknown>;
+  if (typeof host_id !== "string" || !CANARY_MEMORY_HOST_ID.test(host_id)
+    || (expectedHost !== null && host_id !== expectedHost)
+    || (expectedHost === null && qa_template_vmid === null)
+    || (qa_template_vmid !== null && (typeof qa_template_vmid !== "number" || !Number.isInteger(qa_template_vmid)
+      || qa_template_vmid < 100 || qa_template_vmid > 999999999 || (qa_template_vmid >= 9300 && qa_template_vmid <= 9399)))) return null;
   const now = Math.floor(Date.now() / 1000);
   if (typeof ratio_milli !== "number" || !Number.isInteger(ratio_milli) || ratio_milli < 1001 || ratio_milli > 2000
     || typeof valid_until_epoch !== "number" || !Number.isInteger(valid_until_epoch)
@@ -33,12 +39,17 @@ export function parseCanaryMemoryOvercommit(data: unknown, hostId: string): Cana
     if (!vmid || vmid === "9302" || seen.has(vmid)) return null;
     seen.add(vmid);
   }
-  return { ratioMilli: ratio_milli, validUntilEpoch: valid_until_epoch, measuredGuests: measured_guests, pressureBaseline: pressure_baseline, hostId };
+  return {
+    ratioMilli: ratio_milli, validUntilEpoch: valid_until_epoch, measuredGuests: measured_guests,
+    pressureBaseline: pressure_baseline, hostId: host_id, qaTemplateVmid: qa_template_vmid,
+  };
 }
 
 export function canaryMemoryOvercommitShell(grant?: CanaryMemoryOvercommit | null): string {
   if (!grant) return "";
   const checked = parseCanaryMemoryOvercommit({
+    host_id: grant.hostId,
+    qa_template_vmid: grant.qaTemplateVmid,
     ratio_milli: grant.ratioMilli,
     valid_until_epoch: grant.validUntilEpoch,
     measured_guests: grant.measuredGuests,

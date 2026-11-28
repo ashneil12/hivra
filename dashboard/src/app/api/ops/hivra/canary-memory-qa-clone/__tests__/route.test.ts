@@ -6,18 +6,21 @@ import release from "../../../../../../../provisioner-releases/2026.11.28.2.json
 import { CANARY_MEMORY_OVERCOMMIT_PROVISIONER } from "@/lib/infrastructure/host-capacity-policy";
 
 const mockGrant = jest.fn();
+const mockGrantRpc = jest.fn();
 const mockHostTable = jest.fn();
 const mockCpuPolicy = jest.fn();
 const mockResolveHost = jest.fn();
 const mockRunHostScript = jest.fn();
 
 jest.mock("@/lib/hivra/canary-memory-overcommit", () => ({
-  ...jest.requireActual<typeof import("@/lib/hivra/canary-memory-overcommit")>("@/lib/hivra/canary-memory-overcommit"),
   readCanaryMemoryOvercommit: (...args: unknown[]) => mockGrant(...args),
 }));
 jest.mock("@/lib/logger", () => ({ log: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() } }));
 jest.mock("@/lib/supabase", () => ({
-  supabaseAdmin: { from: (...args: unknown[]) => mockHostTable(...args) },
+  supabaseAdmin: {
+    rpc: (...args: unknown[]) => mockGrantRpc(...args),
+    from: (...args: unknown[]) => mockHostTable(...args),
+  },
 }));
 jest.mock("@/lib/services/proxmox-instance-service", () => ({
   resolveProxmoxTargetConfiguration: (...args: unknown[]) => mockResolveHost(...args),
@@ -51,6 +54,7 @@ function request(payload: unknown = body, token: string | null = TOKEN) {
 function grant(measuredGuests: string[] = [`${body.vmid}:${body.tag}`]) {
   return {
     hostId: HOST,
+    qaTemplateVmid: TEMPLATE_VMID,
     measuredGuests, ratioMilli: 1180, validUntilEpoch: Math.floor(Date.now() / 1000) + 60,
     pressureBaseline: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa:0:123:0:7",
   };
@@ -78,8 +82,6 @@ beforeEach(() => {
     VERCEL_GIT_REPO_OWNER: "ashneil12",
     VERCEL_GIT_REPO_SLUG: "hivra",
     HIVRA_MANAGED_PROVISIONER_CHANNEL: "canary",
-    HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID: HOST,
-    HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID: String(TEMPLATE_VMID),
   };
 });
 
@@ -113,17 +115,24 @@ it.each([
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
 
-it.each([
-  ["HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID", undefined],
-  ["HIVRA_CANARY_MEMORY_OVERCOMMIT_HOST_ID", "invalid host"],
-  ["HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID", undefined],
-  ["HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID", "not-a-vmid"],
-  ["HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID", "9390"],
-] as const)("fails closed without valid private host/template configuration (%s=%s)", async (key, value) => {
-  if (value === undefined) delete process.env[key];
-  else process.env[key] = value;
+it.each([null, undefined, "9051", 9390, 9051.5])("fails closed without a valid DB-authorized QA template (%s)", async qaTemplateVmid => {
+  const selected = grant();
+  mockGrant.mockImplementationOnce(jest.requireActual<typeof import("@/lib/hivra/canary-memory-overcommit")>(
+    "@/lib/hivra/canary-memory-overcommit",
+  ).readCanaryMemoryOvercommit);
+  mockGrantRpc.mockResolvedValueOnce({ error: null, data: {
+    host_id: selected.hostId, qa_template_vmid: qaTemplateVmid, measured_guests: selected.measuredGuests,
+    ratio_milli: selected.ratioMilli, valid_until_epoch: selected.validUntilEpoch, pressure_baseline: selected.pressureBaseline,
+  } });
   expect((await POST(request())).ok).toBe(false);
-  expect(mockGrant).not.toHaveBeenCalled();
+  expect(mockGrant).toHaveBeenCalledWith({
+    host: null, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  });
+  expect(mockGrantRpc).toHaveBeenCalledWith("get_hivra_canary_memory_overcommit", {
+    p_host_id: null, p_owner_id: body.ownerId,
+  });
+  expect(mockHostTable).not.toHaveBeenCalled();
+  expect(mockResolveHost).not.toHaveBeenCalled();
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
 
@@ -148,8 +157,9 @@ it.each<[string[] | null]>([
   mockGrant.mockResolvedValue(entries ? grant(entries) : null);
   expect((await POST(request())).ok).toBe(false);
   expect(mockGrant).toHaveBeenCalledWith({
-    host: HOST, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+    host: null, ownerId: body.ownerId, channel: "canary", bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
   });
+  expect(mockHostTable).not.toHaveBeenCalled();
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
 
@@ -159,7 +169,7 @@ it("does not dispatch a matching VMID and tag after the grant expires", async ()
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
 
-it("does not dispatch without an active CPU policy row for the configured host", async () => {
+it("does not dispatch without an active CPU policy row for the DB-authorized host", async () => {
   mockGrant.mockResolvedValue(grant());
   mockCpuPolicy.mockResolvedValue({ data: null, error: null });
   expect((await POST(request())).ok).toBe(false);
@@ -167,7 +177,7 @@ it("does not dispatch without an active CPU policy row for the configured host",
   expect(mockRunHostScript).not.toHaveBeenCalled();
 });
 
-it("binds the exact sealed Canary wrapper and the server-issued grant to the configured host command", async () => {
+it("binds the exact sealed Canary wrapper to the host and template from the DB grant", async () => {
   const selected = grant();
   mockGrant.mockResolvedValue(selected);
   mockRunHostScript.mockResolvedValue({ ok: true, stdout: `HIVRA_CANARY_MEMORY_QA_RUNNING ${body.vmid} ${body.tag}\n`, stderr: "" });

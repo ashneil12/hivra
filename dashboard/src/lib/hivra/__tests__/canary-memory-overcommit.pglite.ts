@@ -4,6 +4,7 @@ import { PGlite } from "@electric-sql/pglite";
 const owner = "user_PilotFixture";
 const host = "fixture-node-a";
 const otherHost = "fixture-node-b";
+const qaTemplate = 2100;
 const lookup = "public.get_hivra_canary_memory_overcommit";
 const boot = "00000000-0000-4000-8000-00000000000a";
 let db: PGlite;
@@ -69,7 +70,8 @@ const cloneIdentity = (vmid: number, binding = "b".repeat(32)) => `${vmid}:hivra
 
 async function enableWithClones(clones: Array<string | null | string[]>) {
   await db.query(`update public.hivra_canary_memory_overcommit set enabled = true, customer_health_ok = true,
-    customer_health_checked_at = statement_timestamp(), measured_qa_clones = $1::text[]`, [clones]);
+    customer_health_checked_at = statement_timestamp(), measured_qa_clones = $1::text[],
+    qa_template_vmid = $2`, [clones, qaTemplate]);
 }
 
 it("is off by default and reserves the public RPC exclusively for the service role", async () => {
@@ -83,6 +85,7 @@ it("is off by default and reserves the public RPC exclusively for the service ro
   for (const role of ["anon", "authenticated", "unrelated"]) {
     await db.exec(`reset role; set role ${role}`);
     await expect(grant()).rejects.toMatchObject({ code: "42501" });
+    await expect(grant(null)).rejects.toMatchObject({ code: "42501" });
   }
 });
 
@@ -106,6 +109,11 @@ it.each([
   "pressure_oom_kill = 9007199254740992",
   "pressure_swap_used_kib = -1",
   "pressure_swap_used_kib = 65",
+  "qa_template_vmid = 99",
+  "qa_template_vmid = 9300",
+  "qa_template_vmid = 9302",
+  "qa_template_vmid = 9399",
+  "qa_template_vmid = 1000000000",
 ])("rejects unsafe settings: %s", async (change) => {
   await setPermit();
   await expect(db.exec(`update public.hivra_canary_memory_overcommit set ${change}`)).rejects.toMatchObject({ code: "23514" });
@@ -122,6 +130,27 @@ it("allows only one configured host and accepts bounded ratios above 1250 milli"
     await db.exec(`update public.hivra_canary_memory_overcommit set ratio_milli = ${ratio}`);
     expect(await grant()).toMatchObject({ ratio_milli: ratio });
   }
+});
+
+it("resolves the enabled QA template without a host only for the exact pilot owner", async () => {
+  await setPermit();
+  const clone = cloneIdentity(9301);
+  await enableWithClones([clone]);
+  await db.exec(`update public.hivra_canary_memory_overcommit set enabled = false; set role service_role`);
+  expect(await grant(null)).toBeNull();
+  await db.exec(`reset role; update public.hivra_canary_memory_overcommit set enabled = true,
+    qa_template_vmid = null; set role service_role`);
+  expect(await grant(null)).toBeNull();
+  expect(await grant()).toMatchObject({ host_id: host, qa_template_vmid: null, measured_guests: [] });
+  await db.exec(`reset role; update public.hivra_canary_memory_overcommit set qa_template_vmid = ${qaTemplate}; set role service_role`);
+  expect(await grant(null)).toMatchObject({ host_id: host, qa_template_vmid: qaTemplate, measured_guests: [clone] });
+  expect(await grant()).toMatchObject({ host_id: host, qa_template_vmid: qaTemplate, measured_guests: [clone] });
+  expect(await grant(otherHost)).toBeNull();
+  expect(await grant(null, "user_Other")).toBeNull();
+  expect(await grant(null, null)).toBeNull();
+  await db.exec(`reset role; update public.hivra_canary_memory_overcommit set
+    customer_health_checked_at = statement_timestamp() - interval '11 minutes'; set role service_role`);
+  expect(await grant(null)).toBeNull();
 });
 
 it("requires every pressure baseline field and emits canonical values without precision loss", async () => {
@@ -249,6 +278,9 @@ it("qualifies only exact enrolled guest identities with a current ordinary alloc
   await enableWithClones([cloneIdentity(9301)]);
   await db.exec("set role service_role");
   expect(await grant()).toMatchObject({ ratio_milli: 1100, measured_guests: [identity(1100), cloneIdentity(9301)] });
+  await db.exec(`reset role; update public.hivra_canary_memory_overcommit set qa_template_vmid = null; set role service_role`);
+  expect(await grant()).toMatchObject({ qa_template_vmid: null, measured_guests: [identity(1100)] });
+  await db.exec(`reset role; update public.hivra_canary_memory_overcommit set qa_template_vmid = ${qaTemplate}; set role service_role`);
   await db.exec(`reset role; update public.hivra_agents set sleep_state = 'waking' where vmid = 1100; set role service_role`);
   expect(await grant()).toMatchObject({ measured_guests: [cloneIdentity(9301)] });
   await db.exec(`reset role; update public.hivra_agents set sleep_state = 'awake',

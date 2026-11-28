@@ -2,7 +2,7 @@ import { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
 import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
-import { canaryMemoryOvercommitHost, readCanaryMemoryOvercommit } from "@/lib/hivra/canary-memory-overcommit";
+import { readCanaryMemoryOvercommit } from "@/lib/hivra/canary-memory-overcommit";
 import { managedHivraProvisionerChannelConfiguration, managedHivraProvisionerChannelForServerEnvironment } from "@/lib/hivra/managed-provisioner-channel";
 import { managedCanaryLaunchSealScript } from "@/lib/hivra/managed-provisioner-readiness";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
@@ -38,15 +38,13 @@ export async function POST(req: NextRequest) {
   try {
     const channel = managedHivraProvisionerChannelForServerEnvironment(process.env);
     if (channel !== "canary") return apiError("Not found", 404);
-    const host = canaryMemoryOvercommitHost();
-    const templateVmid = process.env.HIVRA_CANARY_MEMORY_QA_TEMPLATE_VMID;
-    if (!host || !templateVmid || !/^[1-9][0-9]{2,8}$/.test(templateVmid) || /^93[0-9]{2}$/.test(templateVmid)) {
-      return apiError("The exact QA host and template were not configured", 503);
-    }
     const grant = await readCanaryMemoryOvercommit({
-      host, ownerId, channel, bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+      host: null, ownerId, channel, bundleVersion: CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
     });
-    if (!grant?.measuredGuests.includes(`${vmid}:${tag}`)) return apiError("No current permit for this fixture", 409);
+    if (!grant?.qaTemplateVmid || !grant.measuredGuests.includes(`${vmid}:${tag}`)) {
+      return apiError("No current permit for this fixture", 409);
+    }
+    const { hostId: host, qaTemplateVmid: templateVmid } = grant;
     const placement = await supabaseAdmin?.from("proxmox_hosts").select("total_cpu,reserved_cpu,cpu_overcommit_ratio")
       .eq("id", host).eq("status", "active").is("decommissioned_at", null).maybeSingle();
     const capacity = placement?.data;
