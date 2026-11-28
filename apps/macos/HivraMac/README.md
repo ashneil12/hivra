@@ -164,10 +164,10 @@ rules. Focus mode hides the sidebar and resource tab strip.
 | Command [ / ] | Back / Forward within a web pane |
 | Command , | App settings |
 
-App settings contains Appearance, and, with **Show developer connections** on
-(Appearance → Advanced, or any internal build), Connections and Local Hivra. System, Dark,
-and Light control the native shell's appearance. Embedded runtime interfaces
-retain their own theme controls.
+App settings contains Appearance. In internal builds, **Show developer
+connections** under Appearance → Advanced also enables Connections and Local
+Hivra. System, Dark, and Light control the native shell's appearance. Embedded
+runtime interfaces retain their own theme controls.
 
 ## Web pages, popups, links and downloads
 
@@ -241,6 +241,9 @@ web view; release builds do not.
 - **Custom** accepts another HTTP or HTTPS Hivra control-plane address.
 
 Profiles persist on the Mac. Local and hosted origins keep their own web cookies.
+Public builds use the built-in Hivra profile even if an earlier install saved
+a developer connection. They leave saved developer profiles and their selection
+untouched for internal builds. Sign in to Hivra separately if needed.
 The native workspace never starts a local runtime or creates capacity merely
 because its connection is selected.
 

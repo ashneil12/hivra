@@ -13,7 +13,7 @@ struct HivraPackagingTests {
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: bin) }
         let swift = bin.appending(path: "swift")
-        try "#!/bin/sh\nprintf 'Reached build stub\\n' >&2\nexit 42\n".write(to: swift, atomically: true, encoding: .utf8)
+        try "#!/bin/sh\nprintf 'Reached build stub: %s\\n' \"$*\" >&2\nexit 42\n".write(to: swift, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: swift.path)
 
         let appRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
@@ -35,5 +35,6 @@ struct HivraPackagingTests {
 
         #expect(process.terminationStatus == expectedStatus)
         #expect(message.contains(expectedMessage))
+        #expect(message.contains("-Xswiftc -D -Xswiftc HIVRA_PUBLIC_BUILD") == (channel == "release" && expectedStatus == 42))
     }
 }
