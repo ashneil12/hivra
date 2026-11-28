@@ -258,6 +258,7 @@ case "$*" in
   "-w 60 8")
     [ -z "\${STUB_FLOCK_TIMEOUT:-}" ] || exit 1
     if [ -n "\${STUB_FLOCK_STATE:-}" ]; then printf '%s' "$STUB_FLOCK_STATE" > "$STUB_DIR/state.json"; fi
+    if [ -n "\${STUB_FLOCK_CONFIG:-}" ]; then printf '%s\n' "$STUB_FLOCK_CONFIG" > "$STUB_DIR/pve-qemu-server/${VMID}.conf"; fi
     ;;
 esac
 exit 0

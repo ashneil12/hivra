@@ -617,6 +617,19 @@ host("wake script against a stub host", () => {
       expect(configCalls(run)).toEqual([`qm config ${VMID}`]);
     });
 
+    it("reads the current file again under the allocation lock without a config CLI", () => {
+      const config = `tags: ${TAG}\nmemory: 4096\ncores: 2`;
+      writeConf(`${config}\nlock: suspended\nvmstate: local:vm-${VMID}-state`);
+      const restored = h.run(fastWake(), HIBERNATED);
+      expect(receipt(restored)).toMatchObject({ ok: true, reason: "restored" });
+      expect(configCalls(restored)).toEqual([]);
+
+      const changed = h.run(fastWake(), HIBERNATED, { STUB_FLOCK_CONFIG: config });
+      expect(receipt(changed)).toMatchObject({ ok: false, reason: "state_changed", to: "cold" });
+      expect(configCalls(changed)).toEqual([]);
+      expect(changed.calls.some(c => c.startsWith("admission ") || c.startsWith("qm start"))).toBe(false);
+    });
+
     it("asks the CLI when there is no config file, and says unreachable when the CLI fails too", () => {
       const viaCli = h.run(fastWake(), NAPPING);
       expect(receipt(viaCli)).toMatchObject({ ok: true, reason: "resumed" });

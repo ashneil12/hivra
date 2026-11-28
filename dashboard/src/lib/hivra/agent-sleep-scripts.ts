@@ -382,6 +382,7 @@ export const INTERRUPTED_SAVE_SHELL = String.raw`recover_interrupted_save() {
 }`.replaceAll("\\${", "${");
 
 function stateShell(fastConfig: boolean, classic = false): string {
+  const config = fastConfig ? "hivra_fast_qm" : "qm";
   return `# One config read serves the binding check and the first state read.
 read_state() {
   local out
@@ -389,7 +390,7 @@ read_state() {
   if [ "$CONFIG_FRESH" = 1 ]; then
     CONFIG_FRESH=0
   else
-    CONFIG="$(qm config "$VMID" 2>/dev/null)" || { CONFIG=""; return 1; }
+    CONFIG="$(${config} config "$VMID" 2>/dev/null)" || { CONFIG=""; return 1; }
   fi
   LOCK="$(printf '%s\\n' "$CONFIG" | awk '$1=="lock:" {print $2; exit}')"
   if ! qmp_fast; then
@@ -415,7 +416,7 @@ observe() { if read_state; then OBS="$(tier_of)"; else OBS=unknown; fi; }
 ${classic ? "" : `require_binding() {
   [ -n "$EXPECTED_BINDING_TAG" ] || finish false binding_missing
   local tags
-  CONFIG="$(${fastConfig ? "hivra_fast_qm" : "qm"} config "$VMID" 2>/dev/null)" || finish false unreachable
+  CONFIG="$(${config} config "$VMID" 2>/dev/null)" || finish false unreachable
   tags="$(printf '%s\\n' "$CONFIG" | sed -n 's/^tags:[[:space:]]*//p')"
   printf '%s\\n' "$tags" | tr ';' '\\n' | grep -Fx -- "$EXPECTED_BINDING_TAG" >/dev/null \\
     || finish false binding_mismatch
