@@ -183,10 +183,16 @@ production capacity or public availability. See the
 Paid KVM sleep requires both production sleep flags and an active KVM host
 with sleep enabled. Public pages do not advertise paid sleep when no such
 host is registered. When the paid KVM computer, host and connection are
-eligible, the owner can opt in to sleep when idle. A nap pauses the VM in
-memory. Hibernate saves its memory to disk; supported owner access wakes it.
+eligible, the owner can opt in to sleep when idle in production. The canonical
+Git Canary deployment defaults newly launched eligible paid managed KVMs to
+Hibernate after 12 idle minutes. Existing settings and holder seat terms do
+not change. A nap pauses the VM in memory. Hibernate saves its memory to disk;
+supported owner access wakes it.
 Active work, schedules or channels without a supported wake path can keep it
-awake. This is not the Linux Sandbox idle-stop pilot. A paid Codex KVM
+awake. Aeon (autonomous work) and interactive Linux desktops are excluded from
+automatic KVM sleep. Self-managed computers, external providers, hosts without
+sleep and non-KVM runtimes aren't covered by this default. This is not the
+Linux Sandbox idle-stop pilot. A paid Codex KVM
 verified automatic nap, hibernate and signed-in Files wake with its data intact
 on Git Canary build `be8cf08d`. That wake took about 16 seconds end to end;
 this is one measurement, not a fleet-wide or production timing claim.

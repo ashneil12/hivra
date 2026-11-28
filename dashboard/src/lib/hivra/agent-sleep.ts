@@ -69,6 +69,7 @@ import { resolveChatEndpoints } from "./agent-profiles/resolve";
 import { probeEndpoints } from "./agent-profiles/endpoints";
 import { loadAgentIngressState } from "./ingress/wake-client";
 import { buildIngressVmStatsHostScript, parseIngressVmStats, type IngressProxyVmStats } from "./ingress/proxy-stats";
+import { CANARY_DISK_IDLE_SECONDS, canaryIdleHibernateEnabled } from "./canary-idle-hibernate";
 
 /**
  * Put an agent to sleep: nap (pause, RAM stays) or hibernate (RAM saved to
@@ -417,6 +418,17 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   const state = String(row.sleep_state ?? "awake");
   if (tier === "nap" && state !== "awake") return { outcome: "skipped", reason: "not_awake" };
   if (tier === "hibernate" && state !== "awake" && state !== "napping") return { outcome: "skipped", reason: "not_awake_or_napping" };
+  const directHibernate = trigger === "sweep" && tier === "hibernate" && state === "awake"
+    && row.seat_funding === "paid" && row.sleep_policy === "t3" && canaryIdleHibernateEnabled(env);
+  const idleWindowS = directHibernate ? CANARY_DISK_IDLE_SECONDS : timings.napAfterSeconds;
+  if (directHibernate) {
+    const bootstrappedAt = Date.parse(String(row.bootstrapped_at ?? ""));
+    const lastTransitionAt = Date.parse(String(row.sleep_tier_changed_at ?? ""));
+    if (!Number.isFinite(bootstrappedAt) || now() - bootstrappedAt < idleWindowS * 1000
+      || (row.sleep_tier_changed_at != null && (!Number.isFinite(lastTransitionAt) || now() - lastTransitionAt < idleWindowS * 1000))) {
+      return { outcome: "not_idle", reason: "hibernate_window_open", reasons: ["hibernate_window_open"] };
+    }
+  }
   const holderBoundary = holderHibernateBoundaryReason({
     row,
     tier,
@@ -526,7 +538,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   const verdictOptions = (cores: number, coveredChannels: string[] = []) => ({
     manual,
     nowMs: now(),
-    idleWindowS: timings.napAfterSeconds,
+    idleWindowS,
     horizonS: timings.horizonSeconds,
     cores,
     ...(coveredChannels.length > 0 ? { coveredChannels } : {}),
@@ -569,7 +581,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
         const blocker = ingressIdleBlocker(parseIngressVmStats(run?.stdout ?? "", target.vmid), {
           manual,
           nowMs: now(),
-          idleWindowMs: timings.napAfterSeconds * 1000,
+          idleWindowMs: idleWindowS * 1000,
         });
         if (blocker === "ingress_stats_unavailable") return { outcome: "skipped", reason: blocker };
         if (blocker) return { outcome: "not_idle", reason: blocker, reasons: [blocker] };

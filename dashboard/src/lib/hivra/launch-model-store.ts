@@ -164,7 +164,7 @@ export function createLaunchModelStore(db = supabaseAdmin) {
       return row;
     },
     async reserve(input: { userId: string; requestId: string; modelOperationId: string; fingerprints: LaunchModelFingerprint[];
-      agent: LaunchModelReservation; llm: unknown; agentLimit: number }, encrypt = encryptSecret) {
+      agent: LaunchModelReservation; llm: unknown; agentLimit: number; diskSleepDefault?: boolean }, encrypt = encryptSecret) {
       const selected = ModelKeySelectionSchema.safeParse(input.llm), row = Reservation.safeParse(input.agent);
       if (!selected.success || !selected.data || !row.success || !Id.safeParse(input.requestId).success
         || !Id.safeParse(input.modelOperationId).success || !z.array(Fingerprint).min(1).max(2).safeParse(input.fingerprints).success
@@ -180,7 +180,7 @@ export function createLaunchModelStore(db = supabaseAdmin) {
         // v3 counts the owner's plan slots under the slot lock before it
         // inserts, so a launch cannot race an attach or another launch past
         // the plan's agent limit (T35).
-        result = await rpc("reserve_hivra_launch_model_request_v3", { p_user_id: input.userId, p_request_id: input.requestId,
+        result = await rpc(input.diskSleepDefault ? "reserve_canary_hivra_disk_sleep_launch" : "reserve_hivra_launch_model_request_v3", { p_user_id: input.userId, p_request_id: input.requestId,
           p_fingerprints: input.fingerprints, p_model_operation_id: input.modelOperationId, p_agent: row.data,
           p_selection: { provider: selection.provider, mode: selection.mode, model: selection.model,
             ...(selection.mode === "managed" ? { walletType: selection.walletType } : {}) }, p_encrypted_key: encryptedKey,

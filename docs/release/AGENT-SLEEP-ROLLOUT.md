@@ -52,7 +52,13 @@ existing managed rotation. A host must pass the normal placement and live
 admission checks. If none can take the request, normal placement can still
 choose a host with sleep off. An explicit operator host pin overrides the
 preference. Confirm the effective pin and rotation before testing a release;
-this preference neither expands the rotation nor opts a computer into sleep.
+this preference does not expand the rotation. On the canonical Git Canary
+deployment with the existing sleep and owner-wake flags acting, new eligible paid
+managed KVMs start with the disk-only policy (`t3`). The sweep can hibernate
+them directly after 12 idle minutes; a live session, job, terminal, unsupported
+channel or an unavailable safety signal still prevents sleep. Existing
+computers and holder seat terms keep their stored policy. Production launch
+defaults are unchanged.
 
 ## Checking it
 
