@@ -64,7 +64,7 @@ import { isGvisorDeploymentTarget, isProxmoxDeploymentTarget } from "@/lib/infra
 import type { ProxmoxHostCapacityPolicy } from "@/lib/infrastructure/contracts";
 import {
   buildHostCapacityAdmissionCommand,
-  CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS,
   canaryMemoryOvercommitShell,
   DEFAULT_PROXMOX_HOST_CAPACITY_POLICY,
   type CanaryMemoryOvercommit,
@@ -2407,7 +2407,8 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
         controlOriginConfigured: activityControlOrigin() !== null,
       });
     }
-    const memoryOvercommit = managedGitCanary && canaryProvisionerVersion === CANARY_MEMORY_OVERCOMMIT_PROVISIONER && seatFunding === "paid"
+    const memoryOvercommit = managedGitCanary && canaryProvisionerVersion != null
+      && CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS.includes(canaryProvisionerVersion) && seatFunding === "paid"
       && !hermesStandby && !qaHolderDeadline && !options?.moveFromInstanceId && !portableRuntime
       && (type === "hermes" || type === "claude-code")
       ? await readCanaryMemoryOvercommit({ host, ownerId: userId, channel: managedProvisionerChannel, bundleVersion: canaryProvisionerVersion })

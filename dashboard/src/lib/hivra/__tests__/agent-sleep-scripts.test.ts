@@ -11,7 +11,7 @@ import {
 import { HOST_VM_CONTROL_PROGRAM, HOST_VM_CONTROL_SOCKETS_PROGRAM } from "../sleep/host-vm-control-program";
 import { IDLE_PROBE_PROGRAM } from "../sleep/idle-probe-program";
 import { shellQuote } from "../proxmox-target";
-import { CANARY_MEMORY_OVERCOMMIT_PROVISIONER } from "@/lib/infrastructure/host-capacity-policy";
+import { CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS } from "@/lib/infrastructure/host-capacity-policy";
 import {
   AWAKE, COLD, HIBERNATED, NAPPING, TAG, VMID, makeHostHarness, probeLine, type HostHarness, type HostState,
 } from "./sleep-stub-host.fixtures";
@@ -837,7 +837,7 @@ host("wake script against a stub host", () => {
     }
   });
 
-  it("requires the exact admission helper and holds the allocation lock across a pilot restore", () => {
+  it.each(CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS)("requires the exact admission helper and holds the allocation lock across a pilot restore on %s", version => {
     const fixture = makeHostHarness();
     try {
       const helper = path.join(fixture.provisionerDir, "hivra-host-capacity-admission");
@@ -868,7 +868,7 @@ printf '%s\\n' pilot_admission >&2
       const state = { ...HIBERNATED, tags: bindingTag, memory: 2048, balloon: 1024 };
       writeFileSync(path.join(fixture.provisionerDir, "VERSION"), "2026.11.28.1\n");
       expect(receipt(fixture.run(script, state, env))).toMatchObject({ ok: false, reason: "capacity_pilot" });
-      writeFileSync(path.join(fixture.provisionerDir, "VERSION"), `${CANARY_MEMORY_OVERCOMMIT_PROVISIONER}\n`);
+      writeFileSync(path.join(fixture.provisionerDir, "VERSION"), `${version}\n`);
       const admitted = fixture.run(script, state, env);
       expect(receipt(admitted)).toMatchObject({ ok: true, reason: "restored" });
       expect(admitted.stderr).toContain("pilot_admission");

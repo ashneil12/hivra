@@ -30,7 +30,7 @@ import { hibernationDiscardBody } from "./agent-power-scripts";
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
-  CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS,
   canaryMemoryOvercommitShell,
   type CanaryMemoryOvercommit,
 } from "@/lib/infrastructure/host-capacity-policy";
@@ -1502,7 +1502,10 @@ ${fastQmDefined ? "" : `${ADMISSION_FAST_QM_SHELL}
     qm() { hivra_fast_qm "$@"; }
     export -f qm hivra_fast_qm
     export PVE_QEMU_CONF_DIR QEMU_RUN_DIR
-${overcommit ? `    [ "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(CANARY_MEMORY_OVERCOMMIT_PROVISIONER)} ] || return 1
+${overcommit ? `    case "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" in
+      ${CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS.map(shellQuote).join("|")}) ;;
+      *) return 1 ;;
+    esac
     [ "$(sha256sum "$PROVISIONER_DIR/hivra-host-capacity-admission" | cut -d ' ' -f1)" = ${shellQuote(overcommit.helperSha256)} ] || return 1
 ` : ""}    ${canaryMemoryOvercommitShell(overcommit?.grant)}${batchQemuAdmission && !overcommit ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : ""}bash "$PROVISIONER_DIR/hivra-host-capacity-admission" "$@"
   )

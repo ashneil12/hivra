@@ -1,6 +1,11 @@
 import type { ProxmoxHostCapacityPolicy } from "./contracts";
 
 export const CANARY_MEMORY_OVERCOMMIT_PROVISIONER = "2026.11.28.2";
+export const CANARY_MEMORY_QA_CLONE_PROVISIONER = "2026.11.28.3";
+export const CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS: readonly string[] = [
+  CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  CANARY_MEMORY_QA_CLONE_PROVISIONER,
+];
 const CANARY_MEMORY_GUEST = /^([1-9][0-9]{2,8}):hivra-bind-[0-9a-f]{32}$/;
 const CANARY_MEMORY_QA_CLONE = /^(93[0-9]{2}):hivra-qa-mem-[0-9a-f]{32}$/;
 const PRESSURE_BASELINE = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?::(?:0|[1-9][0-9]{0,15})){4}$/;
