@@ -826,6 +826,32 @@ describe("pollPublicHealthz", () => {
     expect(quick.attempts).toBeGreaterThanOrEqual(4);
     expect(quick.ms).toBeLessThan(1000);
   });
+
+  it("bounds a stalled initial fast probe, then lets a slow healthy response finish outside the fast window", async () => {
+    jest.useFakeTimers();
+    const timeout = jest.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+      const controller = new AbortController();
+      setTimeout(() => controller.abort(), ms);
+      return controller.signal;
+    });
+    try {
+      const stalled = (_url: string, options: RequestInit) => new Promise<Response>((_resolve, reject) => {
+        options.signal!.addEventListener("abort", () => reject(options.signal!.reason), { once: true });
+      });
+      const fetchImpl = jest.fn()
+        .mockImplementationOnce(stalled)
+        .mockImplementationOnce(stalled)
+        .mockImplementationOnce(stalled)
+        .mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve({ status: 200 }), 1_200)));
+      const result = pollPublicHealthz("a.example.test", { fetchImpl, fastStart: true });
+      await jest.advanceTimersByTimeAsync(6_000);
+      await expect(result).resolves.toEqual(expect.objectContaining({ up: true, attempts: 4 }));
+      expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([1_000, 1_000, 1_000, 5_000]);
+    } finally {
+      timeout.mockRestore();
+      jest.useRealTimers();
+    }
+  });
 });
 
 describe("isStuckTransient", () => {

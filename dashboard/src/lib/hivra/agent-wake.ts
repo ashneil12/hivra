@@ -60,6 +60,7 @@ const HEALTHZ_INTERVAL_MS = 1_000;
 /** With fast_healthz: the quicker polls right after the host says the computer is up, and how long they last. */
 const HEALTHZ_FAST_INTERVAL_MS = 150;
 const HEALTHZ_FAST_WINDOW_MS = 3_000;
+const HEALTHZ_FAST_REQUEST_TIMEOUT_MS = 1_000;
 /** The host script's own bounds: up to 15 s for a sleep that holds the computer, 8 s of guest-agent wait, and for a restore the start itself. A nap wake normally takes about one second. */
 const WAKE_SCRIPT_TIMEOUT_MS = 60_000;
 const RESTORE_SCRIPT_TIMEOUT_MS = 120_000;
@@ -353,13 +354,15 @@ export async function pollPublicHealthz(
   for (;;) {
     const remaining = options.deadlineMs === undefined ? HEALTHZ_REQUEST_TIMEOUT_MS : options.deadlineMs - Date.now();
     if (remaining <= 0) return { up: false, ms: Date.now() - startedAt, attempts };
+    const attemptTimeout = options.fastStart && Date.now() - startedAt < HEALTHZ_FAST_WINDOW_MS
+      ? HEALTHZ_FAST_REQUEST_TIMEOUT_MS : HEALTHZ_REQUEST_TIMEOUT_MS;
     attempts += 1;
     try {
       const response = await fetchImpl(url, {
         method: "GET",
         cache: "no-store",
         redirect: "manual",
-        signal: AbortSignal.timeout(Math.min(remaining, HEALTHZ_REQUEST_TIMEOUT_MS)),
+        signal: AbortSignal.timeout(Math.min(remaining, attemptTimeout)),
       });
       if (response.status >= 100 && response.status < 500) return { up: true, ms: Date.now() - startedAt, attempts };
     } catch {
