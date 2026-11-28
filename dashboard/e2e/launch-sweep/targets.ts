@@ -156,3 +156,21 @@ export function selectedTargets(only = process.env.LAUNCH_SWEEP_ONLY): SweepTarg
  */
 export const SWEEP_CHAT_PROMPT = 'What is 389 + 448? Reply with only the number.';
 export const SWEEP_CHAT_ANSWER = '837';
+
+/**
+ * Tonight's rotating sample for the nightly full launch: `size` targets taken
+ * in catalog order from a window that moves `size` places each UTC day, so
+ * every target gets a full launch every ceil(targets / size) nights however
+ * long the catalog grows.
+ */
+export function pickNightlySample(
+  date: Date = new Date(),
+  size = Number(process.env.LAUNCH_SWEEP_SAMPLE_SIZE) || 3,
+  targets: readonly SweepTarget[] = SWEEP_TARGETS,
+): SweepTarget[] {
+  if (targets.length === 0) return [];
+  const count = Math.max(1, Math.min(Math.floor(size), targets.length));
+  const day = Math.floor(date.getTime() / 86_400_000);
+  const start = (day * count) % targets.length;
+  return Array.from({ length: count }, (_, i) => targets[(start + i) % targets.length]);
+}

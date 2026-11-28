@@ -328,6 +328,10 @@ operator-run catalog certification runner in
 against the exact public Canary revision using a dedicated standing test account
 and verifies teardown without deleting the account.
 
+The [proposed private release runner](../../ops/launch-sweep-runner/README.md)
+remains on hold. Its nightly `launch-sample` would be informational, separate
+from the customer path on the exact served revision and from catalog certification.
+
 ### Required isolated-runner setup
 
 Use a dedicated runner with no customer shell, no production secrets and no

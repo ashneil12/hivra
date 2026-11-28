@@ -1,0 +1,210 @@
+# Canary release testing on a schedule. Copy this file to .github/workflows/ in
+# the private runner repository with launch-sweep-status.mjs as described in
+# the README. It is not a public workflow: it needs Canary admin and Stripe
+# test secrets and launches real computers.
+#
+# Its cost stays flat as the catalog grows:
+#   - when a 15-minute poll sees a new served Canary commit: the one full
+#     customer path, card trial to
+#     Pro and one reference agent (dashboard/e2e/trial-to-pro.spec.ts). Its
+#     verdict is the `launch-sweep` commit status the pre-Promote gate reads;
+#   - nightly: a full launch of a small rotating sample of the Launch tiles,
+#     recorded as the informational `launch-sample` status;
+#   - by hand: workflow_dispatch, either mode; `only` limits a sample run to a
+#     few targets and then records no status at all.
+name: Canary release testing
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'release (customer path) or sample (rotating launch sample)'
+        required: true
+        default: release
+        type: choice
+        options: [release, sample]
+      only:
+        description: 'sample mode only: comma-separated profile ids instead of tonight''s sample (records no status)'
+        required: false
+        default: ''
+
+concurrency:
+  group: launch-sweep
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pick:
+    runs-on: ${{ fromJSON(vars.LAUNCH_SWEEP_RUNS_ON || '["self-hosted","launch-sweep"]') }}
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.pick.outputs.sha }}
+      mode: ${{ steps.pick.outputs.mode }}
+      run: ${{ steps.pick.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+      - id: pick
+        env:
+          GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_MODE: ${{ inputs.mode }}
+        run: |
+          sha="$(node launch-sweep-status.mjs served-sha)"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            echo "mode=$INPUT_MODE" >> "$GITHUB_OUTPUT"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "$SCHEDULE" = "*/15 * * * *" ]; then
+            run="$(node launch-sweep-status.mjs needs-sweep --sha "$sha")"
+            echo "mode=release" >> "$GITHUB_OUTPUT"
+            echo "run=$run" >> "$GITHUB_OUTPUT"
+          else
+            echo "mode=sample" >> "$GITHUB_OUTPUT"
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  sweep:
+    needs: pick
+    if: needs.pick.outputs.run == 'true'
+    runs-on: ${{ fromJSON(vars.LAUNCH_SWEEP_RUNS_ON || '["self-hosted","launch-sweep"]') }}
+    timeout-minutes: 180
+    env:
+      SHA: ${{ needs.pick.outputs.sha }}
+      MODE: ${{ needs.pick.outputs.mode }}
+      STATUS_CONTEXT: ${{ needs.pick.outputs.mode == 'release' && 'launch-sweep' || 'launch-sample' }}
+      STATUS_HELPER: ${{ github.workspace }}/runner-tools/launch-sweep-status.mjs
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      LAUNCH_SWEEP_RUN_ID: gh${{ github.run_id }}
+      LAUNCH_SWEEP_OUT_DIR: ${{ github.workspace }}/hivra/dashboard/launch-sweep-output
+      LAUNCH_SWEEP_VERDICT_FILE: ${{ github.workspace }}/hivra/dashboard/launch-sweep-output/verdict.json
+      LAUNCH_SWEEP_WORKERS: ${{ vars.LAUNCH_SWEEP_WORKERS || '1' }}
+      LAUNCH_SWEEP_SAMPLE_SIZE: ${{ vars.LAUNCH_SWEEP_SAMPLE_SIZE || '3' }}
+      LAUNCH_SWEEP_ONLY: ${{ inputs.only || '' }}
+      CUSTOMER_PATH_AGENT: ${{ vars.CUSTOMER_PATH_AGENT || 'claude-code' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: runner_tools
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: runner-tools
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ashneil12/hivra
+          ref: ${{ needs.pick.outputs.sha }}
+          path: hivra
+          clean: true
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: hivra/dashboard/package-lock.json
+      - name: Install
+        working-directory: hivra/dashboard
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      # A run limited with `only` checks a few tiles by hand; it never records
+      # a status on the commit, so it cannot stand in for a full run.
+      - name: Mark the commit as being tested
+        if: env.LAUNCH_SWEEP_ONLY == ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
+        run: |
+          served="$(node "$STATUS_HELPER" served-sha)"
+          if [ "$served" != "$SHA" ]; then
+            echo "::error::Canary moved before testing began; run again on the current deployment."
+            exit 1
+          fi
+          node "$STATUS_HELPER" publish --sha "$SHA" --context "$STATUS_CONTEXT" --state pending --description "Testing on Canary ($MODE)" --target-url "$RUN_URL"
+      - name: Run the customer path or tonight's sample on Canary
+        id: sweep
+        working-directory: hivra/dashboard
+        continue-on-error: true
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.LAUNCH_SWEEP_CLERK_SECRET_KEY }}
+          LAUNCH_SWEEP_SUPABASE_URL: ${{ secrets.LAUNCH_SWEEP_SUPABASE_URL }}
+          LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.LAUNCH_SWEEP_SUPABASE_SERVICE_ROLE_KEY }}
+          TRIAL_JOURNEY_STRIPE_SECRET_KEY: ${{ secrets.TRIAL_JOURNEY_STRIPE_SECRET_KEY }}
+        run: |
+          if [ "$MODE" = "release" ]; then
+            if [[ "$CUSTOMER_PATH_AGENT" =~ ^[[:space:]]*none[[:space:]]*$ ]]; then
+              echo "::error::Release testing requires a reference agent."
+              exit 1
+            fi
+            npm run test:trial-journey
+          else
+            if [ -z "$LAUNCH_SWEEP_ONLY" ]; then
+              sample="$(npm run -s test:launch-sweep:sample)"
+              if [ -z "$sample" ]; then
+                echo "::error::The nightly sample is empty."
+                exit 1
+              fi
+              export LAUNCH_SWEEP_ONLY="$sample"
+            fi
+            echo "Sample: $LAUNCH_SWEEP_ONLY"
+            npm run test:launch-sweep
+          fi
+      - name: Summary
+        if: always() && env.MODE == 'sample'
+        working-directory: hivra/dashboard
+        continue-on-error: true
+        run: npm run test:launch-sweep:summary -- "$LAUNCH_SWEEP_RUN_ID"
+      - name: Reap anything a crashed run left
+        id: reap
+        if: always()
+        working-directory: hivra/dashboard
+        continue-on-error: true
+        env:
+          CLERK_SECRET_KEY: ${{ secrets.LAUNCH_SWEEP_CLERK_SECRET_KEY }}
+        run: npm run audit:first-run:cleanup
+      # Green only when the run itself exited cleanly (every step finished, and
+      # for a sample every tile covered), a sample's verdict is green, and the
+      # reaper found nothing left running.
+      - name: Record the verdict on the commit
+        if: always() && steps.runner_tools.outcome == 'success' && env.LAUNCH_SWEEP_ONLY == ''
+        env:
+          GITHUB_TOKEN: ${{ secrets.HIVRA_STATUS_TOKEN }}
+          SWEEP_OUTCOME: ${{ steps.sweep.outcome }}
+          REAP_OUTCOME: ${{ steps.reap.outcome }}
+        run: |
+          publish() { node "$STATUS_HELPER" publish --sha "$SHA" --context "$STATUS_CONTEXT" --target-url "$RUN_URL" "$@"; }
+          if [ "$SWEEP_OUTCOME" != "success" ]; then
+            publish --state failure --description "The $MODE run did not finish cleanly ($SWEEP_OUTCOME)"
+          elif [ "$REAP_OUTCOME" != "success" ]; then
+            publish --state failure --description "Cleanup failed: the run may have left computers running"
+          elif ! served="$(node "$STATUS_HELPER" served-sha)" || [ "$served" != "$SHA" ]; then
+            publish --state error --description "Could not confirm the same Canary deployment at the end of testing"
+            exit 1
+          elif [ "$MODE" = "release" ]; then
+            publish --state success --description "Customer path passed: trial, Pro, one agent used, slept, woken, deleted"
+          elif [ -f "$LAUNCH_SWEEP_VERDICT_FILE" ]; then
+            publish --verdict "$LAUNCH_SWEEP_VERDICT_FILE"
+          else
+            publish --state error --description "The sample wrote no verdict"
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: canary-${{ needs.pick.outputs.mode }}-${{ needs.pick.outputs.sha }}
+          path: |
+            hivra/dashboard/launch-sweep-output/
+            hivra/dashboard/playwright-report/
+            hivra/dashboard/test-results/
+          retention-days: 30
+      - name: Fail the run when testing or cleanup failed
+        if: always() && (steps.sweep.outcome == 'failure' || steps.reap.outcome == 'failure')
+        run: exit 1

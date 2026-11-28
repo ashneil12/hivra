@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { SweepFailure, SweepRecorder, readResults, sweepMarkdown, sweepVerdict } from "../e2e/launch-sweep/result";
+import { SweepFailure, SweepRecorder, readResults, sweepMarkdown, sweepVerdict, verdictCounts } from "../e2e/launch-sweep/result";
 import { SWEEP_CHAT_ANSWER, SWEEP_CHAT_PROMPT, SWEEP_TARGETS, selectedTargets } from "../e2e/launch-sweep/targets";
 import { PRIVATE_ONLY_QUESTION } from "../e2e/launch-sweep/private-only";
 import { softwareEvidenceFromResponse } from "../e2e/launch-sweep/software";
@@ -30,6 +30,21 @@ describe("launch sweep results", () => {
     expect(verdict.ok).toBe(false);
     expect(verdict.broken.map(row => row.tile)).toEqual(["Agent Zero"]);
     expect(sweepMarkdown([pass.result, broken.result])).toContain("| Agent Zero | **Fail** | nothing |");
+  });
+
+  it("counts the verdict for the commit status, and an empty run is not a pass", () => {
+    const pass = recorder("hermes-computer", "Hermes");
+    pass.result.passed = true;
+    const known = recorder("aeon", "Aeon", "fails at the host step");
+    known.fail(new SweepFailure("ready", "product", "host step"), "ready");
+    const broken = recorder("agent-zero", "Agent Zero");
+    broken.fail(new SweepFailure("ready", "product", "timed out"), "ready");
+
+    expect(verdictCounts([pass.result, known.result])).toEqual({
+      ok: true, total: 2, passed: 1, knownBroken: 1, broken: 0, leaked: 0, privateOnlyFailed: 0,
+    });
+    expect(verdictCounts([pass.result, broken.result])).toMatchObject({ ok: false, broken: 1 });
+    expect(verdictCounts([])).toMatchObject({ ok: false, total: 0 });
   });
 
   it("fails the run when teardown leaves anything running", () => {
