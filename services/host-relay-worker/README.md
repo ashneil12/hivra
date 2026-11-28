@@ -1,4 +1,4 @@
-# host-relay-worker (CANARY)
+# Host relay Worker
 
 Lets hosted Hivra reach a user's machine that has **no inbound ports** (a home
 or office machine behind a router). The machine runs
@@ -8,13 +8,14 @@ Object per connection copies bytes between the two. SSH, and the host key Hivra
 pinned when the owner confirmed "Is this your server?", stay end to end: the
 relay can drop traffic but cannot read or change a session.
 
-**Status:** built and tested locally. Not deployed. Hivra's control plane is
-now wired to it, behind `HIVRA_HOME_CONNECTOR_ENABLED`, which is **off by
-default**: with it on (and `HOST_RELAY_URL` / `HOST_RELAY_SECRET` set) the
+Hivra's control plane uses the relay behind `HIVRA_HOME_CONNECTOR_ENABLED`,
+which is **off by default**. With it on (and `HOST_RELAY_URL` /
+`HOST_RELAY_SECRET` set), the
 dashboard issues a one-time enrolment command for a machine, dials this relay
 with a 60-second single-use ticket for SSH (host key pinning unchanged), and
 calls `/revoke` with a bumped generation when the connection is removed or the
-machine is disconnected. Nothing is turned on or deployed by that wiring.
+machine is disconnected. Relay health does not establish dashboard availability;
+see [the managed hosting status](../../docs/STATUS.md) for what has shipped.
 
 ## Protocol
 
@@ -27,7 +28,7 @@ machine is disconnected. Nothing is turned on or deployed by that wiring.
 | `GET /health` | anyone | none; reports whether the secret is configured |
 
 All credentials derive from one secret, `HOST_RELAY_SECRET`, shared with the
-canary Vercel project:
+matching Vercel project's production environment:
 
 - connector secret = HMAC(secret, `connector|<connectionId>|<generation>`), so
   the relay stores nothing per machine;
@@ -55,10 +56,36 @@ to end test with the real connector and a stand-in SSH server.
 
 ## Deploy (needs the owner's authority)
 
+### Canary
+
 ```sh
 CLOUDFLARE_API_TOKEN=<workers-scoped-token> npx wrangler deploy
 npx wrangler secret put HOST_RELAY_SECRET
 ```
+
+### Production
+
+Use the separate `host-relay-production` Worker on the same owned Cloudflare
+account, with its own SQLite-backed `HostRelay` Durable Object namespace.
+The checked-in Wrangler config targets Canary. For an approved production
+deploy, use a separate config with the production Worker name, `workers_dev`
+and `preview_urls` disabled, and no Canary bindings. Attach only
+`host-relay.hivra.cloud` as a Cloudflare custom domain, after checking that
+it does not overwrite DNS records, routes or another Worker's domain.
+
+Use a fresh `HOST_RELAY_SECRET` for production, shared only between that Worker
+and the `hermesos` production environment. Set `HOST_RELAY_URL` to
+`https://host-relay.hivra.cloud` and set `HIVRA_HOME_CONNECTOR_ENABLED=true`
+only when approved. Keep credentials out of config files, terminal output, and
+GitHub. Verify trusted TLS and confirm `GET /health` reports `configured: true`.
+That health response only confirms a secret is set; verify the dashboard and
+relay agree by enrolling and reaching the intended worker.
+
+Vercel settings changes do not update an existing deployment. If enrolment must
+precede final settings, use an approved, protected Git staging candidate, never
+the live alias. Revoke any temporary staging access after enrolment. Stage the
+derived binding in the final Git candidate and verify the revision and settings
+under the [managed hosting release process](../../docs/release/MANAGED-HOSTING-RELEASES.md).
 
 ## Local bridge route
 
