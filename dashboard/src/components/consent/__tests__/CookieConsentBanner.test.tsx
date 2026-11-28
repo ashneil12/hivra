@@ -13,6 +13,7 @@ import {
   CookieConsentBanner,
   OPEN_COOKIE_PREFERENCES_EVENT,
 } from "../CookieConsentBanner";
+import { CookieConsentDock, CookieConsentDockProvider } from "../CookieConsentDock";
 import {
   CONSENT_STORAGE_KEY,
   CONSENT_VERSION,
@@ -40,6 +41,34 @@ describe("CookieConsentBanner", () => {
     expect(screen.getByText("Reject all")).toBeInTheDocument();
     expect(screen.getByText("Manage preferences")).toBeInTheDocument();
     expect(grant).not.toHaveBeenCalled();
+  });
+
+  it("puts the consent banner after the workspace instead of over it and preserves an open preferences panel", async () => {
+    mockGeo(true);
+    const view = render(
+      <CookieConsentDockProvider>
+        <main><iframe title="Hermes dashboard" /><CookieConsentDock /></main>
+        <CookieConsentBanner />
+      </CookieConsentDockProvider>
+    );
+    const banner = await screen.findByRole("dialog", { name: "Cookie consent" });
+    expect(screen.getByRole("main")).toContainElement(banner);
+    expect(screen.getByTitle("Hermes dashboard").nextElementSibling).toContainElement(banner);
+    expect(banner).not.toHaveStyle({ position: "fixed" });
+    fireEvent.click(screen.getByRole("button", { name: "Manage cookie preferences" }));
+    expect(grant).not.toHaveBeenCalled();
+    expect(readStoredConsent()).toBeNull();
+
+    view.rerender(
+      <CookieConsentDockProvider>
+        <main><p>Outside the workspace</p></main>
+        <CookieConsentBanner />
+      </CookieConsentDockProvider>
+    );
+    const floating = screen.getByRole("dialog", { name: "Cookie consent" });
+    expect(screen.getByRole("main")).not.toContainElement(floating);
+    expect(floating).toHaveStyle({ position: "fixed" });
+    expect(screen.getByRole("button", { name: "Save cookie preferences" })).toBeInTheDocument();
   });
 
   it("Accept all grants analytics, persists 'accepted', and hides the banner", async () => {

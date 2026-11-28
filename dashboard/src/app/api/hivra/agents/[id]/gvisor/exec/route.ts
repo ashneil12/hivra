@@ -1,6 +1,7 @@
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
+export const maxDuration = 180;
 
 import type { NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
@@ -24,7 +25,9 @@ export async function POST(request: NextRequest, context: { params: Promise<{ id
   if (!parsed?.success) return apiError("Send a bounded command and arguments.", 400);
   try { return apiSuccess({ result: await executeGvisorComputerCommand(userId, (await context.params).id, parsed.data.argv) }); }
   catch (error) {
-    if (error instanceof GvisorComputerError) return apiError(error.message, error.code === "not_found" ? 404 : 503, undefined, { code: error.code });
+    if (error instanceof GvisorComputerError) return apiError(error.message,
+      error.code === "not_found" ? 404 : error.code === "plan_required" ? 402
+        : error.code === "conflict" ? 409 : 503, undefined, { code: error.code });
     return apiError("The gVisor command could not be confirmed.", 500);
   }
 }

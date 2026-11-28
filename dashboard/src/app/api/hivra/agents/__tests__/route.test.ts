@@ -93,6 +93,10 @@ jest.mock("@/lib/hivra/gvisor-computer-service", () => ({
   launchGvisorComputer: (...args: unknown[]) => mockLaunchGvisorComputer(...args),
 }));
 const mockSupabaseFrom = jest.fn();
+let mockCanaryLaunchPilot: {
+  pilot: string; host_id: string; image_sha256: string; owner_id: string | null; standby_enabled: boolean;
+} | null = null;
+let mockCanaryLaunchPilotError: { code: string } | null = null;
 const mockPosthogCapture = jest.fn();
 const mockPosthogFlush = jest.fn(async () => undefined);
 
@@ -506,6 +510,15 @@ describe("POST /api/hivra/agents", () => {
     "HIVRA_CANARY_QA_HOLDER_ENABLED",
     "HIVRA_CANARY_QA_HOLDER_USER_ID",
     "HIVRA_CANARY_QA_HOLDER_EXPIRES_AT",
+    "HIVRA_CANARY_DEEPSEEK_IMAGE_HOST",
+    "HIVRA_CANARY_DEEPSEEK_IMAGE_SHA256",
+    "HIVRA_CANARY_DEEPSEEK_IMAGE_USER_ID",
+    "HIVRA_CANARY_UBUNTU_QGA_IMAGE_HOST",
+    "HIVRA_CANARY_UBUNTU_QGA_IMAGE_SHA256",
+    "HIVRA_CANARY_UBUNTU_QGA_IMAGE_USER_ID",
+    "HIVRA_CANARY_AGENT_ZERO_IMAGE_HOST",
+    "HIVRA_CANARY_AGENT_ZERO_IMAGE_SHA256",
+    "HIVRA_CANARY_AGENT_ZERO_IMAGE_USER_ID",
     "VERCEL",
     "VERCEL_ENV",
     "VERCEL_PROJECT_PRODUCTION_URL",
@@ -629,6 +642,8 @@ describe("POST /api/hivra/agents", () => {
     mockAgentInsertError = null;
     mockAgentInsertThrows = null;
     mockExistingAgents = [];
+    mockCanaryLaunchPilot = null;
+    mockCanaryLaunchPilotError = null;
     mockSlotCountOverride = null;
     mockSupabaseRpc.mockReset().mockImplementation(mockDefaultRpc);
     mockAuth.mockResolvedValue({ userId: "user-free" });
@@ -681,6 +696,21 @@ describe("POST /api/hivra/agents", () => {
       .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
 
     mockSupabaseFrom.mockImplementation((table: string) => {
+      if (table === "hivra_canary_launch_pilots") {
+        const filters: Record<string, string> = {};
+        return {
+          select: jest.fn().mockReturnThis(),
+          eq(key: string, value: string) {
+            filters[key] = value;
+            return this;
+          },
+          maybeSingle: async () => ({
+            data: mockCanaryLaunchPilot?.pilot === filters.pilot && mockCanaryLaunchPilot?.host_id === filters.host_id
+              ? mockCanaryLaunchPilot : null,
+            error: mockCanaryLaunchPilotError,
+          }),
+        };
+      }
       if (table === "hermes_subscriptions") {
         return {
           select: jest.fn().mockReturnThis(),
@@ -1467,6 +1497,183 @@ describe("POST /api/hivra/agents", () => {
     const kickoff = String(mockRunProxmoxHostScript.mock.calls[1][0]);
     expect(kickoff).toContain('hivra-provision-on-host.sh "$VMID" "$OCTET" "2" "4096" "hermes"');
     expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({ type: "hermes" }));
+  });
+
+  it.each([
+    ["configured Canary host", "canary", "fixturenode7", "2026.11.27.2", "a".repeat(64), undefined, 201, true],
+    ["other host", "canary", "fixturenode8", "2026.11.27.2", "a".repeat(64), undefined, 201, false],
+    ["other owner", "canary", "fixturenode7", "2026.11.27.2", "a".repeat(64), "user_other", 201, false],
+    ["configured owner", "canary", "fixturenode7", "2026.11.27.2", "a".repeat(64), "user_fixture1", 201, true],
+    ["production branch", "main", "fixturenode7", "2026.11.27.2", "a".repeat(64), undefined, 201, false],
+    ["incompatible host version", "canary", "fixturenode7", "2026.11.27.1", "a".repeat(64), undefined, 503, false],
+  ] as const)("uses only the server-pinned Hermes image on the configured Git Canary host (%s)", async (
+    _case, branch, imageHost, version, digest, imageUser, status, baked,
+  ) => {
+    enableManagedGvisorQaFixture({
+      VERCEL_TARGET_ENV: "canary",
+      VERCEL_GIT_COMMIT_REF: branch,
+    });
+    mockCanaryLaunchPilot = {
+      pilot: "hermes", host_id: imageHost, image_sha256: digest, owner_id: imageUser ?? null, standby_enabled: false,
+    };
+    mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 3,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
+      ok: true, targetId: "fixturenode7", provisionerVersion: version,
+      env: {
+        PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+        PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",
+      },
+    });
+    const response = await POST(makeRequest({
+      type: "hermes", name: "HERMES_BAKE_FIXTURE", cpu: 2, ram: 4,
+      hermesImageSha256: "b".repeat(64),
+    }) as never);
+    expect(response.status).toBe(status);
+    const kickoff = mockRunProxmoxHostScript.mock.calls
+      .map(([script]) => String(script))
+      .find(script => script.includes("HIVRA_PROVISION_RESULT"));
+    if (status === 503) {
+      expect(kickoff).toBeUndefined();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    } else {
+      expect(kickoff).toBeDefined();
+      expect(kickoff?.includes(`HIVRA_HERMES_IMAGE_SHA256='${digest}'`)).toBe(baked);
+      expect(kickoff).not.toContain("b".repeat(64));
+    }
+  });
+
+  it("reads saved and removed Hermes pilot settings on fresh requests in the same deployment", async () => {
+    enableManagedGvisorQaFixture({ VERCEL_TARGET_ENV: "canary" });
+    mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 3,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    mockSelectAvailableProxmoxProvisionTarget.mockResolvedValue({
+      ok: true, targetId: "fixturenode7", provisionerVersion: "2026.11.27.7",
+      env: {
+        PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+        PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",
+      },
+    });
+    const launch = () => POST(makeRequest({ type: "hermes", name: "RUNTIME_PILOT_FIXTURE", cpu: 2, ram: 4 }) as never);
+    for (const setting of [null, {
+      pilot: "hermes", host_id: "fixturenode7", image_sha256: "a".repeat(64),
+      owner_id: "user_fixture1", standby_enabled: true,
+    }, null]) {
+      mockCanaryLaunchPilot = setting;
+      mockRunProxmoxHostScript.mockReset()
+        .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+        .mockResolvedValue({ ok: true, stdout: "ok\n" });
+      mockAgentInsert.mockClear();
+      mockSupabaseRpc.mockImplementation((name, args) => name === "read_hivra_hermes_standby"
+        ? Promise.resolve({ data: null, error: null }) : mockDefaultRpc(name, args));
+      const response = await launch();
+      expect(response.status).toBe(setting ? 503 : 201);
+      if (setting) {
+        expect(mockSupabaseRpc).toHaveBeenCalledWith("read_hivra_hermes_standby", {
+          p_owner_id: "user_fixture1", p_host_id: "fixturenode7", p_baked_digest: setting.image_sha256,
+        });
+        expect(mockAgentInsert).not.toHaveBeenCalled();
+        expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      } else {
+        expect(mockAgentInsert).toHaveBeenCalledTimes(1);
+        expect(String(mockRunProxmoxHostScript.mock.calls[0][0])).not.toContain("HIVRA_HERMES_IMAGE_SHA256=");
+      }
+    }
+    mockCanaryLaunchPilotError = { code: "PGRST205" };
+    mockAgentInsert.mockClear();
+    expect((await launch()).status).toBe(503);
+    expect(mockAgentInsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["claimed", 201],
+    ["no_match", 409],
+    ["claim_in_doubt", 502],
+    ["priority_mismatch", 409],
+  ] as const)("does not cold-allocate around the exact paid Hermes standby claim (%s)", async (claimStatus, status) => {
+    const generation = "11111111-1111-4111-8111-111111111111";
+    const privateIp = "10.250.21.50";
+    const vmid = 9354;
+    enableManagedGvisorQaFixture({
+      VERCEL_TARGET_ENV: "canary",
+    });
+    mockCanaryLaunchPilot = {
+      pilot: "hermes", host_id: "fixturenode7", image_sha256: "a".repeat(64), owner_id: "user_fixture1", standby_enabled: true,
+    };
+    mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+    mockSubscriptionRow = {
+      plan: "operator", status: "active", instance_limit: 3,
+      total_cpu_budget: 4, total_ram_budget: 8192, current_period_end: null,
+    };
+    mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
+      ok: true, targetId: "fixturenode7", provisionerVersion: "2026.11.27.7",
+      env: {
+        PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+        PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",
+      },
+    });
+    mockSupabaseRpc.mockImplementation((name: string, args: Record<string, unknown>) => {
+      if (name === "read_hivra_hermes_standby") return Promise.resolve({
+        data: { generation, vmid, privateIp, cpu: 2, ramMb: 4096, diskGb: 40 }, error: null,
+      });
+      if (name === "claim_hivra_hermes_standby") {
+        return Promise.resolve({ data: { status: claimStatus, vmid, privateIp }, error: null });
+      }
+      if (name === "assign_hivra_hermes_standby") return Promise.resolve({ data: true, error: null });
+      return mockDefaultRpc(name, args);
+    });
+    const standardFrom = mockSupabaseFrom.getMockImplementation()!;
+    mockSupabaseFrom.mockImplementation((table: string) => {
+      if (table === "proxmox_hosts") {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { status: "active", cpu_overcommit_ratio: "8" }, error: null }) }) }) };
+      }
+      if (table === "pools") {
+        return { select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: { priority: claimStatus === "priority_mismatch" ? 2 : 1 }, error: null }) }) }) };
+      }
+      return standardFrom(table);
+    });
+    mockRunProxmoxHostScript.mockReset()
+      .mockResolvedValueOnce({ ok: true, stdout: `HIVRA_PROVISION_RESULT ${JSON.stringify({ vmid, ip: privateIp })}\\n` })
+      .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set" })
+      .mockResolvedValueOnce({ ok: true, stdout: "cpu units set" });
+    const response = await POST(makeRequest({ type: "hermes", name: "STANDBY_FIXTURE", cpu: 2, ram: 4 }) as never);
+    expect(response.status).toBe(status);
+    if (claimStatus === "priority_mismatch") {
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("claim_hivra_hermes_standby", expect.anything());
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+      return;
+    }
+    expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({
+      seat_funding: "paid", proxmox_host: "",
+      operation_payload: { stage: "pre_allocation_access", hermes_standby_generation: generation },
+    }));
+    const kickoff = mockRunProxmoxHostScript.mock.calls
+      .map(([script]) => String(script)).find(script => script.includes("HIVRA_PROVISION_RESULT"));
+    if (status === 201) {
+      expect(kickoff).toContain("HIVRA_HERMES_STANDBY_ACTION=claim");
+      expect(kickoff).toContain("HIVRA_HERMES_STANDBY_ENFORCE_CEILINGS=1");
+      expect(kickoff).toContain("HIVRA_HERMES_STANDBY_CPU_DENSITY_MILLI=4000");
+      expect(kickoff).not.toContain("HIVRA_ALLOCATION_SELECTED");
+      expect(kickoff?.indexOf("HIVRA_HERMES_STANDBY_ACTION=claim"))
+        .toBeLessThan(kickoff?.indexOf("install -m 0600 /dev/null \"$SECRET_ENV_FILE\"") ?? -1);
+      expect(mockBeginHivraAgentVmAllocation).toHaveBeenCalledWith(expect.objectContaining({ hermesStandbyGeneration: generation }));
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("assign_hivra_hermes_standby", expect.objectContaining({ p_generation: generation }));
+      const followUp = mockRunProxmoxHostScript.mock.calls.map(([script]) => String(script)).filter(script => script !== kickoff);
+      expect(followUp.join("\n")).not.toMatch(/qm set \d+ --(?:cores|cpuunits|balloon)/);
+      expect(followUp.join("\n")).toContain(`qm config ${vmid} --current 1`);
+      expect(followUp.join("\n")).toContain('ACTUAL_BALLOON');
+    } else {
+      expect(kickoff).toBeUndefined();
+      expect(mockSupabaseRpc).not.toHaveBeenCalledWith("assign_hivra_hermes_standby", expect.anything());
+      expect(mockFailHivraAgentBeforeAllocation).toHaveBeenCalledTimes(status === 409 ? 1 : 0);
+    }
   });
 
   it("preserves the free Claude half-core request while provisioning a one-core VM capped to 0.5 CPU", async () => {
@@ -3034,6 +3241,93 @@ describe("POST /api/hivra/agents", () => {
       });
     };
 
+    it.each([
+      ["scope matches", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, true, 201, "deepseek-harness"],
+      ["different host", "canary", "fixturenode8", "user_fixture1", "2026.11.27.4", true, false, 201, "deepseek-harness"],
+      ["different owner", "canary", "fixturenode7", "user_other", "2026.11.27.4", true, false, 201, "deepseek-harness"],
+      ["not a Git Canary deploy", "main", "fixturenode7", "user_fixture1", "2026.11.27.4", true, false, 201, "deepseek-harness"],
+      ["owner omitted", "canary", "fixturenode7", undefined, "2026.11.27.4", true, false, 503, "deepseek-harness"],
+      ["bundle too old", "canary", "fixturenode7", "user_fixture1", "2026.11.27.3", true, false, 503, "deepseek-harness"],
+      ["image missing", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", false, false, 503, "deepseek-harness"],
+      ["Ubuntu QGA trial when no DeepSeek image is configured", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, true, 201, "ubuntu-qga"],
+      ["Ubuntu QGA trial for another owner stays stock", "canary", "fixturenode7", "user_other", "2026.11.27.4", true, false, 201, "ubuntu-qga"],
+      ["Agent Zero trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "agent-zero"],
+      ["Agent Zero trial on standby description release", "canary", "fixturenode7", "user_fixture1", "2026.11.27.7", true, true, 201, "agent-zero"],
+      ["Agent Zero trial rejects the old consumer", "canary", "fixturenode7", "user_fixture1", "2026.11.27.4", true, false, 503, "agent-zero"],
+      ["Agent Zero trial stays stock for another owner", "canary", "fixturenode7", "user_other", "2026.11.27.6", true, false, 201, "agent-zero"],
+      ["Agent Zero trial stays stock for another host", "canary", "fixturenode8", "user_fixture1", "2026.11.27.7", true, false, 201, "agent-zero"],
+      ["Agent Zero trial stays stock outside Git Canary", "main", "fixturenode7", "user_fixture1", "2026.11.27.7", true, false, 201, "agent-zero"],
+      ["Claude Code dependency trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "bux-dependencies", "claude-code"],
+      ["Codex dependency trial", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, true, 201, "bux-dependencies", "codex"],
+      ["Codex dependency trial for another owner stays stock", "canary", "fixturenode7", "user_other", "2026.11.27.6", true, false, 201, "bux-dependencies", "codex"],
+      ["Codex dependency trial for another host stays stock", "canary", "fixturenode8", "user_fixture1", "2026.11.27.6", true, false, 201, "bux-dependencies", "codex"],
+      ["Codex dependency trial outside Git Canary stays stock", "main", "fixturenode7", "user_fixture1", "2026.11.27.6", true, false, 201, "bux-dependencies", "codex"],
+      ["Claude browser-on stays stock", "canary", "fixturenode7", "user_fixture1", "2026.11.27.6", true, false, 201, "bux-dependencies", "claude-code", true],
+    ] as const)("limits each prepared disk to its owner and host (%s)", async (
+      _case, branch, bakeHost, bakeUser, version, verified, baked, status, kind,
+      profile: string = kind === "agent-zero" ? "agent-zero" : "deepseek-harness", browser: boolean = false,
+    ) => {
+      paidPlan();
+      const digest = "a".repeat(64);
+      const databasePilot = kind === "agent-zero" || kind === "bux-dependencies";
+      const prefix = `HIVRA_CANARY_${{
+        "deepseek-harness": "DEEPSEEK", "ubuntu-qga": "UBUNTU_QGA",
+        "agent-zero": "AGENT_ZERO", "bux-dependencies": "BUX_DEPENDENCIES",
+      }[kind]}_IMAGE`;
+      mockCreateManagedVeniceProxyKey.mockResolvedValue({ id: "key-ds", keyPrefix: "hven_live_TEST", plaintextKey: "hven_live_TESTKEY123" });
+      enableManagedGvisorQaFixture({
+        VERCEL_TARGET_ENV: "canary",
+        VERCEL_GIT_COMMIT_REF: branch,
+        ...(databasePilot ? {} : {
+          [`${prefix}_HOST`]: bakeHost,
+          [`${prefix}_SHA256`]: digest,
+          [`${prefix}_USER_ID`]: bakeUser,
+        }),
+        ...(kind === "deepseek-harness" && baked ? {
+          HIVRA_CANARY_UBUNTU_QGA_IMAGE_HOST: bakeHost,
+          HIVRA_CANARY_UBUNTU_QGA_IMAGE_SHA256: "c".repeat(64),
+          HIVRA_CANARY_UBUNTU_QGA_IMAGE_USER_ID: bakeUser,
+        } : {}),
+      });
+      if (databasePilot) {
+        mockCanaryLaunchPilot = {
+          pilot: kind, host_id: bakeHost, image_sha256: digest, owner_id: bakeUser ?? null, standby_enabled: false,
+        };
+      }
+      mockAuth.mockResolvedValue({ userId: "user_fixture1" });
+      mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
+        ok: true, targetId: "fixturenode7", provisionerVersion: version,
+        env: {
+          PROXMOX_NODE: "fixturenode7", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+          PROXMOX_PRIVATE_GATEWAY: "10.250.21.1", PROXMOX_VMID_START: "200",
+        },
+      });
+      if (baked || !verified) {
+        mockRunProxmoxHostScript.mockReset()
+          .mockResolvedValueOnce({ ok: verified, stdout: verified ? "HIVRA_PREPARED_IMAGE_VERIFIED\n" : "", stderr: "" })
+          .mockResolvedValueOnce({ ok: true, stdout: 'HIVRA_PROVISION_RESULT {"vmid":200,"ip":"10.250.21.50"}\n' })
+          .mockResolvedValueOnce({ ok: true, stdout: "cpu limit set\n" })
+          .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
+      }
+      const response = await POST(makeRequest({
+        type: profile, name: "PREPARED_IMAGE_FIXTURE", cpu: 2, ram: 4, managedVenice: true, browser,
+        deepSeekImageSha256: "b".repeat(64),
+      }) as never);
+      expect(response.status).toBe(status);
+      const scripts = mockRunProxmoxHostScript.mock.calls.map(([script]) => String(script));
+      expect(scripts.some(script => script.includes("HIVRA_PREPARED_IMAGE_VERIFIED"))).toBe(baked || !verified);
+      const kickoff = scripts.find(script => script.includes("HIVRA_PROVISION_RESULT"));
+      if (status === 503) {
+        expect(kickoff).toBeUndefined();
+        expect(mockAgentInsert).not.toHaveBeenCalled();
+      } else {
+        expect(kickoff).toBeDefined();
+        expect(kickoff?.includes(`HIVRA_UBUNTU_IMG='/var/lib/vz/template/iso/hivra-${kind}-${digest}.qcow2'`)).toBe(baked);
+        expect(kickoff?.includes("HIVRA_PREPARED_RUNTIME=")).toBe(baked && (kind === "agent-zero" || kind === "bux-dependencies"));
+        expect(kickoff).not.toContain("b".repeat(64));
+      }
+    });
+
     it("is accepted on Hivra Cloud on credits and provisions the deepseek-harness kind with named access and its model", async () => {
       paidPlan();
       mockCreateManagedVeniceProxyKey.mockResolvedValue({ id: "key-ds", keyPrefix: "hven_live_TEST", plaintextKey: "hven_live_TESTKEY123" });
@@ -3889,6 +4183,50 @@ describe("POST /api/hivra/agents", () => {
       deployment_mode: "hivra-managed",
       proxmox_host: "fixturenode7",
     }));
+  });
+
+  it.each(["on", "canary", "observe", "off"] as const)("requests paid sleep placement only in acting mode %s", async mode => {
+    const originalMode = process.env.HIVRA_SLEEP_MODE;
+    process.env.HIVRA_SLEEP_MODE = mode;
+    mockSubscriptionRow = {
+      plan: "operator",
+      status: "active",
+      instance_limit: 4,
+      total_cpu_budget: 4,
+      total_ram_budget: 8192,
+      current_period_end: null,
+    };
+    mockExistingAgents = [{ id: "agent-existing", type: "claude-code", status: "running",
+      proxmox_host: "fixturenode5", cpu: 0.5, ram: 1, created_at: "2026-06-08T10:00:00.000Z" }];
+    const defaultPlacement = mockSelectAvailableProxmoxProvisionTarget.getMockImplementation()!;
+    const admissionResults: ManagedReadinessResult[] = [];
+    mockRunProxmoxHostScript.mockReset().mockResolvedValue({ ok: true, stdout: "HIVRA_HOST_READY 2026.11.27.2\n" });
+    mockCheckHostWakeCapacity.mockResolvedValue({ ok: false, freeMb: 200 });
+    mockSelectAvailableProxmoxProvisionTarget.mockReset().mockImplementation(async (args: ManagedPlacementOptions) => {
+      if (mode === "on" || mode === "canary") {
+        const env = { NODE_ENV: "test", PROXMOX_NODE: "fixturenode7" } as const;
+        admissionResults.push(await args.readinessCheck!({ targetId: "fixturenode7", env }));
+      }
+      return { ok: false, status: 503, message: "Not admitted" };
+    });
+    try {
+      const result = await POST(makeRequest({ type: "claude-code", name: "PAID_SLEEP_PLACEMENT", cpu: 0.5, ram: 1 }) as never);
+      expect(result.status).toBe(503);
+      const options = mockSelectAvailableProxmoxProvisionTarget.mock.calls[0][0];
+      if (mode === "on" || mode === "canary") {
+        expect(options).toMatchObject({ forceTargetId: null, paidSleepPlacement: { stickyHost: "fixturenode5" } });
+        expect(admissionResults).toEqual([expect.objectContaining({ ok: false, status: 503, message: expect.stringMatching(/at capacity/) })]);
+        expect(mockCheckHostWakeCapacity).toHaveBeenCalledTimes(1);
+      } else {
+        expect(options).toMatchObject({ forceTargetId: "fixturenode5" });
+        expect(options).not.toHaveProperty("paidSleepPlacement");
+        expect(mockCheckHostWakeCapacity).not.toHaveBeenCalled();
+      }
+    } finally {
+      mockSelectAvailableProxmoxProvisionTarget.mockReset().mockImplementation(defaultPlacement);
+      if (originalMode === undefined) delete process.env.HIVRA_SLEEP_MODE;
+      else process.env.HIVRA_SLEEP_MODE = originalMode;
+    }
   });
 
   it("honors an explicit Claude Code Proxmox host override", async () => {

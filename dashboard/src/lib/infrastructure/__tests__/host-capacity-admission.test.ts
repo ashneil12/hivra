@@ -76,8 +76,8 @@ printf 'local-lvm lvmthin active 200000000 100000000 %s 50\n' "\${PVESM_AVAILABL
     chmodSync(file, 0o700);
   }
 
-  function run(extraEnv: Record<string, string> = {}) {
-    return spawnSync("bash", [HELPER, "-", "512", "1024", "1", "512", "0", "1000", "1000", "0"], {
+  function run(extraEnv: Record<string, string> = {}, helper = HELPER) {
+    return spawnSync("bash", [helper, "-", "512", "1024", "1", "512", "0", "1000", "1000", "0"], {
       encoding: "utf8",
       env: {
         ...process.env,
@@ -141,6 +141,130 @@ printf 'local-lvm lvmthin active 200000000 100000000 %s 50\n' "\${PVESM_AVAILABL
     const result = run();
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("active_max_cpu_milli=4000");
+  });
+
+  describe("batched Proxmox inventory", () => {
+    let batchHelper: string;
+    let configs: string;
+
+    beforeEach(() => {
+      configs = path.join(fixtureDir, "configs");
+      mkdirSync(configs);
+      mkdirSync(path.join(fixtureDir, "PVE"));
+      batchHelper = path.join(fixtureDir, "capacity-batch");
+      writeFileSync(batchHelper, readFileSync(HELPER, "utf8").replace("/etc/pve/qemu-server", configs));
+      writeFileSync(path.join(fixtureDir, "PVE", "Cluster.pm"), `package PVE::Cluster;
+sub cfs_update { $ENV{FIXTURE_FAIL_CLUSTER} and die "missing pmxcfs"; $ENV{FIXTURE_CLUSTER_READY}=1; }
+1;
+`);
+      writeFileSync(path.join(fixtureDir, "PVE", "QemuServer.pm"), `package PVE::QemuServer;
+use JSON::PP qw(decode_json);
+sub vmstatus {
+  my ($id, $full) = @_;
+  die "wrong inventory or not initialized" if defined($id) || !$full || !$ENV{FIXTURE_CLUSTER_READY};
+  return decode_json($ENV{FIXTURE_QEMU_INVENTORY});
+}
+1;
+`);
+      writeFileSync(path.join(fixtureDir, "PVE", "QemuConfig.pm"), `package PVE::QemuConfig;
+use JSON::PP qw(decode_json);
+sub load_current_config {
+  my ($class, $id, $current) = @_;
+  die "wrong policy or missing config" if $current || $ENV{FIXTURE_FAIL_CONFIG};
+  return decode_json($ENV{FIXTURE_QEMU_CONFIG})->{$id};
+}
+1;
+`);
+    });
+
+    function batch(
+      ids: readonly number[],
+      states: Record<string, unknown>,
+      facts: Record<string, unknown>,
+      extraEnv: Record<string, string> = {},
+    ) {
+      for (const id of ids) writeFileSync(path.join(configs, `${id}.conf`), "");
+      return run({
+        HIVRA_CAPACITY_BATCH_QEMU: "1",
+        PERL5LIB: fixtureDir,
+        FIXTURE_QEMU_INVENTORY: JSON.stringify(states),
+        FIXTURE_QEMU_CONFIG: JSON.stringify(facts),
+        FAIL_QM_LIST: "1",
+        FAIL_QM_STATUS: "1",
+        ...extraEnv,
+      }, batchHelper);
+    }
+
+    it.each(["running", "stopped", "paused", "prelaunch", "unknown"])("matches old resource accounting for %s", status => {
+      const old = run({ QM_STATUS: status });
+      const result = batch([101], { 101: { vmid: 101, qmpstatus: status } }, {
+        101: { memory: 1024, balloon: 512, cores: 2, sockets: 2, cpulimit: 0 },
+      });
+      expect(old.status).toBe(0);
+      expect(result).toMatchObject({ status: 0, stdout: old.stdout });
+    });
+
+    it("preserves pending overlay values and excludes templates", () => {
+      const result = batch([101, 102], {
+        101: { vmid: 101, qmpstatus: "paused" },
+        102: { vmid: 102 },
+      }, {
+        101: { memory: 4096, balloon: 2048, cores: 4, cpulimit: 2.5 },
+        102: { template: 1, memory: 32768 },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("active_floor_mb=2048 active_max_mb=4096 active_max_cpu_milli=2500");
+    });
+
+    it("admits against a running Hermes standby exactly like any other running guest", () => {
+      const state = { 101: { vmid: 101, qmpstatus: "running" } };
+      const resources = { memory: 1024, balloon: 0, cores: 2, cpulimit: 2 };
+      const standby = batch([101], state, { 101: { ...resources, tags: "hivra-standby-" + "1".repeat(32) } });
+      const customer = batch([101], state, { 101: { ...resources, tags: "hivra-op-" + "2".repeat(32) + ";hivra-bind-" + "3".repeat(32) } });
+      expect(standby.status).toBe(0);
+      expect(standby.stdout).toContain("active_floor_mb=1024 active_max_mb=1024 active_max_cpu_milli=2000");
+      expect(standby.stdout).toBe(customer.stdout);
+    });
+
+    it("fails closed for missing, extra, malformed, or unreadable host evidence", () => {
+      const good = { 101: { vmid: 101, qmpstatus: "running" } };
+      const valid = { 101: { memory: 1024, cores: 2 } };
+      for (const result of [
+        batch([101], {}, valid),
+        batch([101], { 102: { vmid: 102, qmpstatus: "stopped" } }, valid),
+        batch([101], { 101: { vmid: 101, qmpstatus: "bad status" } }, valid),
+        batch([101], good, { 101: { ...valid[101], tags: "tag\ncpulimit: 4" } }),
+        batch([101], good, valid, { FIXTURE_FAIL_CONFIG: "1" }),
+        batch([101], good, valid, { FIXTURE_FAIL_CLUSTER: "1" }),
+      ]) {
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("could not read complete batched QEMU inventory");
+      }
+    });
+
+    it("has capacity on a verified empty node", () => {
+      const result = batch([], {}, {});
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("active_floor_mb=0 active_max_mb=0 active_max_cpu_milli=0");
+    });
+
+    it.each([true, false])("matches existing pending reservation identity accounting (exact: %s)", exact => {
+      const ip = "10.251.20.50";
+      writeIntent(OPERATION_ID, schemaIntent(OPERATION_ID, 101, ip));
+      const old = run({
+        EXACT_VMID: "101", EXACT_OP_HEX: OPERATION_HEX, EXACT_BINDING: exact ? BINDING : `hivra-bind-${"b".repeat(32)}`, EXACT_IP: ip,
+      });
+      const result = batch([101], { 101: { vmid: 101, qmpstatus: "running" } }, {
+        101: {
+          memory: 1024, balloon: 512, cores: 2, sockets: 2,
+          tags: `hivra-op-${OPERATION_HEX};${exact ? BINDING : `hivra-bind-${"b".repeat(32)}`}`,
+          ipconfig0: `ip=${ip}/24,gw=10.251.20.1`,
+        },
+      });
+      expect(old.status).toBe(0);
+      expect(result).toMatchObject({ status: 0, stdout: old.stdout });
+      expect(result.stdout).toContain(`pending_floor_mb=${exact ? 0 : 512}`);
+    });
   });
 
   it("does not let a memory reduction increase another overcommitted dimension", () => {

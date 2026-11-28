@@ -5,6 +5,7 @@ import { GET } from "../route";
 import { SITE_DESCRIPTION } from "@/lib/brand-description";
 import { SITE_URL } from "@/lib/seo-urls";
 import { TOOL_ENTRIES } from "@/lib/tools/tool-catalog";
+import { generateStaticParams } from "@/app/compare/[slug]/page";
 
 const request = new Request("http://localhost/llms.txt");
 
@@ -89,8 +90,9 @@ describe("GET /llms.txt", () => {
     expect(sitePaths.length).toBeGreaterThan(15);
     // /tools/[slug] is one dynamic route; a tool page exists when its slug is in the catalog.
     const toolPaths = new Set(TOOL_ENTRIES.map(tool => `/tools/${tool.slug}`));
+    const comparePaths = new Set(generateStaticParams().map(({ slug }) => `/compare/${slug}`));
     const missing = sitePaths.filter(pathname => {
-      if (toolPaths.has(pathname)) return false;
+      if (toolPaths.has(pathname) || comparePaths.has(pathname)) return false;
       if (pathname === "/") return !exists(path.join(appRoot, "page.tsx"));
       const relative = pathname.slice(1);
       const routeDir = path.join(appRoot, relative);

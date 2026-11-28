@@ -6,6 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const source = readFileSync(join(process.cwd(), "provisioner/hivra-provision-on-host.sh"), "utf8");
+const timingStart = source.indexOf("launch_stage() {");
+const timingEnd = source.indexOf('\n}\n', timingStart) + 2;
+if (timingStart < 0 || timingEnd <= timingStart) throw new Error("Hermes stage logger not found");
+const stageLogger = source.slice(timingStart, timingEnd);
+const sshIdentityStart = source.indexOf("set_guest_ssh_identity() {");
+const sshIdentityEnd = source.indexOf('\n}\n', sshIdentityStart) + 2;
+if (sshIdentityStart < 0 || sshIdentityEnd <= sshIdentityStart) throw new Error("Guest SSH identity writer not found");
+const sshIdentity = source.slice(sshIdentityStart, sshIdentityEnd);
 const start = source.indexOf("wait_for_guest_cloud_init() {");
 const end = source.indexOf("# The package and generated SSH host key now live on the guest disk.", start);
 if (start < 0 || end < 0) throw new Error("Guest boot gate not found");
@@ -13,7 +21,101 @@ const gate = source.slice(start, end).replace('log "waiting for guest', `
 guest_boot_uptime() { cat "$FIXTURE_DIR/clock"; }
 log "waiting for guest`);
 
-function boot(steps: string[]) {
+const attestStart = source.indexOf("prepare_guest_ssh_identity() {");
+const pause = source.slice(source.indexOf("guest_probe_pause() {"), attestStart);
+const attest = source.slice(attestStart, source.indexOf('log "attesting guest SSH'));
+const qgaCloudInit = source.split("<<'HIVRA_QGA_VENDOR_DATA'\n")[1].split("\nHIVRA_QGA_VENDOR_DATA")[0]
+  .split("  - |\n")[1].replace(/^    /gm, "").replace("/usr/sbin/qemu-ga", "$FIXTURE_BINARY");
+
+describe("QEMU Guest Agent boot path", () => {
+  it.each([
+    ["prepared", "installed", 0, ["systemctl"]],
+    ["stock", "absent", 0, ["apt-get", "apt-get", "systemctl"]],
+    ["stock", "unpacked", 0, ["apt-get", "apt-get", "systemctl"]],
+    ["stock", "absent", 1, ["apt-get"]],
+  ])("installs QGA only when needed (%s, %s, apt exits %s)", (image, state, failure, calls) => {
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-s"], {
+      input: `
+FIXTURE_BINARY=${image === "prepared" || state === "unpacked" ? "/bin/bash" : "/does-not-exist"}
+dpkg-query() { printf '%s' "${state}"; }
+apt-get() { echo apt-get; return ${failure}; }
+systemctl() { echo systemctl; }
+${qgaCloudInit}
+`,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(failure);
+    expect(result.stdout.trim().split("\n")).toEqual(calls);
+  });
+
+  it("omits only metadata that the stock QGA installation does not use", () => {
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-s"], {
+      input: `
+FIXTURE_BINARY=/does-not-exist
+dpkg-query() { return 1; }
+apt-get() { printf '%s\\n' "$*"; }
+systemctl() { :; }
+${qgaCloudInit}
+`,
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "-o Acquire::Retries=3 -o Acquire::Languages=none -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false update",
+      "-o Acquire::Retries=3 install -y --no-install-recommends qemu-guest-agent",
+    ]);
+  });
+
+  it.each([["ready", 0, 2], ["late", 1, 601], ["foreign", 1, 0], ["wrong-ip", 1, 0]])(
+    "accepts only a correctly owned, timely attestation (%s)", (outcome, exitCode, elapsed) => {
+      const fixture = mkdtempSync(join(tmpdir(), "hivra-qga-"));
+      try {
+        writeFileSync(join(fixture, "clock"), "0");
+        const hostKey = Buffer.concat([Buffer.from("0000000b7373682d6564323535313900000020", "hex"), Buffer.alloc(32, 5)]).toString("base64");
+        const result = spawnSync("bash", ["--noprofile", "--norc", "-s"], {
+          input: `set -euo pipefail
+VMID=1100
+IP=192.0.2.1
+STANDBY_ACTION=
+GUEST_SSH_IDENTITY_DIR=
+vm_owned_by_operation() { [ "$CASE" != foreign ]; }
+fail() { echo "$*" >&2; exit 1; }
+guest_boot_uptime() { cat "$FIXTURE_DIR/clock"; }
+sleep() { echo "$(($1 + $(guest_boot_uptime)))" > "$FIXTURE_DIR/clock"; }
+mktemp() { mkdir "$FIXTURE_DIR/key"; echo "$FIXTURE_DIR/key"; }
+timeout() { [ "$1" = --kill-after=2s ] && [ "$2" = 8s ] || exit 125; shift 2; "$@"; }
+qm() {
+  case "$1" in
+    config) if [ "$CASE" = wrong-ip ]; then echo 'ipconfig0: ip=192x0x2x1/24'; else echo 'ipconfig0: ip=192.0.2.1/24'; fi ;;
+    guest)
+      [ "$3" = "$VMID" ] || exit 1
+      if [ "$CASE" = late ]; then echo 601 > "$FIXTURE_DIR/clock"; fi
+      if [ "$(guest_boot_uptime)" = 0 ]; then echo '{"exited":1,"exitcode":0,"out-data":"ssh-ed25519 invalid"}'; return; fi
+      echo '{"exited":1,"exitcode":0,"out-data":"ssh-ed25519 ${hostKey}"}'
+      ;;
+    *) exit 1 ;;
+  esac
+}
+${pause}
+${sshIdentity}
+${attest}
+prepare_guest_ssh_identity
+cat "$GUEST_SSH_KNOWN_HOSTS"
+`,
+          env: { PATH: "/usr/bin:/bin", CASE: outcome, FIXTURE_DIR: fixture, NODE_ENV: "test" },
+          encoding: "utf8", timeout: 10_000,
+        });
+        expect(result.status).toBe(exitCode);
+        expect(Number(readFileSync(join(fixture, "clock"), "utf8"))).toBe(elapsed);
+        expect(result.stdout.trim()).toBe(exitCode === 0 ? `hivra-vmid-1100 ssh-ed25519 ${hostKey}` : "");
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
+});
+
+function boot(steps: string[], kind = "hermes") {
   const fixture = mkdtempSync(join(tmpdir(), "hivra-cloud-init-gate-"));
   try {
     writeFileSync(join(fixture, "steps"), steps.join("\n") + "\n");
@@ -29,8 +131,8 @@ step="$(sed -n "\${n}p" "$FIXTURE_DIR/steps")"
 clock="$(cat "$FIXTURE_DIR/clock")"
 case "$step" in
   transport) exit 255 ;;
-  timeout) printf '%s' "$((clock + 22))" > "$FIXTURE_DIR/clock"; exit 124 ;;
-  killed) printf '%s' "$((clock + 22))" > "$FIXTURE_DIR/clock"; exit 137 ;;
+  timeout) printf '%s' "$((clock + PROBE_BUDGET))" > "$FIXTURE_DIR/clock"; exit 124 ;;
+  killed) printf '%s' "$((clock + PROBE_BUDGET + 2))" > "$FIXTURE_DIR/clock"; exit 137 ;;
   late) printf '601' > "$FIXTURE_DIR/clock" ;;
   late-transport) printf '601' > "$FIXTURE_DIR/clock"; exit 255 ;;
 esac
@@ -65,6 +167,7 @@ set -eu
 printf '%s\\n' "$1 $2" >> "$FIXTURE_DIR/timeouts"
 [ "$1" = --kill-after=2s ] || exit 125
 budget="\${2%s}"; [ "$budget" -ge 1 ] && [ "$budget" -le 20 ] || exit 125
+export PROBE_BUDGET="$budget"
 shift 2
 exec "$@"
 `, { mode: 0o700 });
@@ -73,6 +176,10 @@ exec "$@"
 VM_KEY=/unused-fixture-key
 IP=192.0.2.1
 VMID=1100
+AGENT_KIND="$FIXTURE_KIND"
+STANDBY_ACTION=
+OPERATION_ID=11111111-1111-4111-8111-111111111111
+LAUNCH_STAGE_CLOCK=0
 CLOUD_INIT_KEEP_DIR="$FIXTURE_DIR"
 GSSH=(ssh)
 log() { printf '%s\\n' "$*" >&2; }
@@ -81,10 +188,12 @@ sleep() {
   clock="$(cat "$FIXTURE_DIR/clock")"
   printf '%s' "$((clock + $1))" > "$FIXTURE_DIR/clock"
 }
+${stageLogger}
+${pause}
 ${gate}
 printf 'INSTALL_NEXT\\n'
 `,
-      env: { PATH: `${fixture}:/usr/bin:/bin`, FIXTURE_DIR: fixture, NODE_ENV: "test" },
+      env: { PATH: `${fixture}:/usr/bin:/bin`, FIXTURE_DIR: fixture, FIXTURE_KIND: kind, NODE_ENV: "test" },
       encoding: "utf8", timeout: 10_000,
     });
     return { ...result,
@@ -103,9 +212,17 @@ printf 'INSTALL_NEXT\\n'
 describe("guest boot gate", () => {
   it("continues only after clean completion, including normal early boot states", () => {
     const result = boot(["transport", "not-run", "running", "done"]);
-    expect(result).toMatchObject({ status: 0, attempts: 4, stdout: "INSTALL_NEXT\n" });
+    expect(result).toMatchObject({ status: 0, attempts: 4, elapsed: 6, stdout: "INSTALL_NEXT\n" });
     expect(result.budgets).toHaveLength(4);
     expect(result.stderr).toContain("guest cloud-init completed");
+    expect(result.stderr).toMatch(/^HIVRA_HERMES_STAGE cloud_init_ready \d+$/m);
+  });
+
+  it("emits boot stage timings for non-Hermes launches without guest output", () => {
+    const result = boot(["done"], "codex");
+    expect(result.status).toBe(0);
+    expect(result.stderr).toMatch(/^HIVRA_LAUNCH_STAGE 11111111-1111-4111-8111-111111111111 cloud_init_ready \d+$/m);
+    expect(result.stderr).not.toContain("HIVRA_HERMES_STAGE");
   });
 
   it.each(["disabled", "unknown", "malformed", "empty"])(
@@ -147,7 +264,7 @@ describe("guest boot gate", () => {
       const result = boot([step]);
       expect(result.status).toBe(1);
       expect(result.stdout).not.toContain("INSTALL_NEXT");
-      expect(result.attempts).toBeLessThanOrEqual(60);
+      expect(result.elapsed).toBeLessThanOrEqual(600);
       expect(result.budgets).toHaveLength(result.attempts);
       expect(result.stderr).toContain("guest boot timed out");
     },

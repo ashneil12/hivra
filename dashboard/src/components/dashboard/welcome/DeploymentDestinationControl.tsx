@@ -81,6 +81,7 @@ export function useLaunchDestination(
     selfManagedAvailable = true,
     preferSelfManaged = false,
     targetKind = "any",
+    lockedTargetId,
   }: {
     handoff?: LaunchTargetHandoff | null;
     /** False for runtimes Hivra Cloud cannot run; placement is then always
@@ -93,6 +94,7 @@ export function useLaunchDestination(
      * you connected is the default until you choose otherwise. */
     preferSelfManaged?: boolean;
     targetKind?: "any" | "proxmox" | "gvisor";
+    lockedTargetId?: string;
   } = {},
 ): LaunchDestinationState {
   const selfHosted = isLocalAuthMode();
@@ -113,8 +115,8 @@ export function useLaunchDestination(
   const currentChoice = choice.handoffKey === handoffKey ? choice : initialChoice;
   const [refreshToken, setRefreshToken] = useState(0);
   const scope = useMemo(
-    () => ({ catalogRuntimeId, handoffKey, refreshToken, targetKind }),
-    [catalogRuntimeId, handoffKey, refreshToken, targetKind],
+    () => ({ catalogRuntimeId, handoffKey, refreshToken, targetKind, lockedTargetId }),
+    [catalogRuntimeId, handoffKey, refreshToken, targetKind, lockedTargetId],
   );
   const [evidence, setEvidence] = useState<{
     scope: typeof scope;
@@ -152,7 +154,7 @@ export function useLaunchDestination(
           && (targetKind !== "gvisor" || (target.capabilities as unknown as { kind?: string }).kind === "gvisor"),
         );
         const nextReadyTargets = kindTargets.filter((target) =>
-          targetSupportsCatalogRuntime(target, catalogRuntimeId),
+          (!lockedTargetId || target.id === lockedTargetId) && targetSupportsCatalogRuntime(target, catalogRuntimeId),
         );
         setEvidence({ scope, targets: nextReadyTargets, launchReadyTargets: nextLaunchReadyTargets,
           incompatibleReadyTargetCount: kindTargets.length - nextReadyTargets.length, error: null });
@@ -169,9 +171,9 @@ export function useLaunchDestination(
             : "Hivra could not load your ready hosts." });
       });
     return () => controller.abort();
-  }, [catalogRuntimeId, handoffKey, scope, targetKind]);
+  }, [catalogRuntimeId, handoffKey, lockedTargetId, scope, targetKind]);
 
-  const selectedTarget = targets.find((target) => target.id === currentChoice.targetId)
+  const selectedTarget = targets.find((target) => target.id === (lockedTargetId ?? currentChoice.targetId))
     ?? (autoSelfManaged && currentChoice.targetId === null ? targets[0] ?? null : null);
 
   const setMode = useCallback((nextMode: LaunchDestinationMode) => {

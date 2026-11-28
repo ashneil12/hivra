@@ -17,6 +17,7 @@ import { getTokenSurfaceView, tokenSurfacesVisible } from "@/lib/compliance/toke
 import { buildAbsoluteTitleMetadata } from "@/lib/metadata";
 import { SITE_URL } from "@/lib/seo-urls";
 import { paidKvmSleepAvailable } from "@/lib/hivra/paid-kvm-sleep-availability";
+import { HOSTED_COMPETITORS, hostedComparisonPath } from "@/lib/compare/hosted-competitors";
 import { renderLinkedText } from "./linked-text";
 import page from "./pricing.module.css";
 import {
@@ -33,6 +34,7 @@ import {
   PRICING_PAYING,
   PRICING_REFUNDS,
   buildPricingOffers,
+  buildHostedProducts,
   formatPricesAsOf,
   visiblePricingFaq,
   type PricingFaqItem,
@@ -51,7 +53,7 @@ export function generateMetadata(): Metadata {
   });
 }
 
-function buildPricingSchema(faq: PricingFaqItem[], entryPrice: string) {
+function buildPricingSchema(faq: PricingFaqItem[], entryPrice: string, entryMonthlyCents?: number) {
   return {
     "@context": "https://schema.org",
     "@graph": [
@@ -71,6 +73,7 @@ function buildPricingSchema(faq: PricingFaqItem[], entryPrice: string) {
         url: SITE_URL,
         offers: buildPricingOffers(SITE_URL, entryPrice),
       },
+      ...buildHostedProducts(SITE_URL, entryMonthlyCents),
       {
         // The visible questions and answers, word for word.
         "@type": "FAQPage",
@@ -109,6 +112,7 @@ export default async function PricingPage() {
       <StructuredData schema={buildPricingSchema(
         faq.map((item) => ({ ...item, a: withEntryPrice(item.a) })),
         entryPrice,
+        cardTrial?.monthlyCents,
       )} />
       <main className={styles.main} id="main-content">
         <Breadcrumbs items={[{ label: "Pricing" }]} />
@@ -179,7 +183,7 @@ export default async function PricingPage() {
               </a>
             </article>
 
-            <article className={`${page.offer} ${page.offerCloud}`} aria-labelledby="offer-hivra-cloud">
+            <article className={`${page.offer} ${page.offerCloud}`} id="cloud-operator" aria-labelledby="offer-hivra-cloud">
               <h3 id="offer-hivra-cloud">{options.entry.title}</h3>
               <p className={page.price}>
                 <strong>{entryPrice}</strong>
@@ -199,7 +203,7 @@ export default async function PricingPage() {
               </Link>
             </article>
 
-            <article className={`${page.offer} ${page.offerCloud}`} aria-labelledby="offer-hivra-cloud-more-room">
+            <article className={`${page.offer} ${page.offerCloud}`} id="cloud-fleet" aria-labelledby="offer-hivra-cloud-more-room">
               <h3 id="offer-hivra-cloud-more-room">{options.larger.title}</h3>
               <p className={page.price}>
                 <strong>{options.larger.price}</strong>
@@ -233,6 +237,15 @@ export default async function PricingPage() {
           />
           <p className={page.asOf}>
             Prices as of <time dateTime={PRICES_AS_OF}>{formatPricesAsOf()}</time>.
+          </p>
+          <p className={page.asOf}>
+            <Link href="/compare">Compare hosted agents</Link>:{" "}
+            {HOSTED_COMPETITORS.map((provider, index) => (
+              <span key={provider.slug}>
+                {index > 0 ? " · " : null}
+                <Link href={hostedComparisonPath(provider.slug)}>Hivra vs {provider.name}</Link>
+              </span>
+            ))}
           </p>
         </section>
 

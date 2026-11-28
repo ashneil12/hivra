@@ -3923,6 +3923,61 @@ describe("InstanceService.createInstance free-tier guard", () => {
     expect(selection.ok && selection.targetId).toBe(expectedHost);
   });
 
+  it.each([
+    ["eligible", "on", true, false, null, "fixturenode2", ["fixturenode2"]],
+    ["canary", "canary", true, false, null, "fixturenode2", ["fixturenode2"]],
+    ["readiness refuses", "on", false, false, null, "fixturenode1", ["fixturenode2", "fixturenode1"]],
+    ["insufficient RAM", "on", true, true, null, "fixturenode1", ["fixturenode1"]],
+    ["not acting", "observe", true, false, null, "fixturenode1", ["fixturenode1"]],
+    ["explicit pin", "on", true, false, "fixturenode1", "fixturenode1", ["fixturenode1"]],
+  ] as const)("prefers sleep admission without bypassing normal placement: %s", async (_scenario, mode, ready, underCapacity, forceTargetId, winner, probes) => {
+    const host = {
+      status: "active",
+      env_prefix: null,
+      total_cpu: 12,
+      reserved_cpu: 2,
+      reserved_ram_mb: 4096,
+      wake_headroom_ram_mb: 8192,
+      max_tenant_instances: null,
+      thinpool_size_gb: null,
+      thinpool_overcommit_ratio: null,
+    };
+    const db = {
+      from: jest.fn((table: string) => {
+        if (table === "proxmox_hosts") return { select: jest.fn().mockResolvedValue({ data: [
+          { ...host, id: "fixturenode1", total_ram_mb: 65536, sleep_mode: "off" },
+          { ...host, id: "fixturenode2", total_ram_mb: underCapacity ? 12288 : 32768, sleep_mode: mode },
+        ], error: null }) };
+        if (table === "hermes_instances") return {
+          select: jest.fn().mockReturnThis(), in: jest.fn().mockReturnThis(),
+          or: jest.fn().mockResolvedValue({ data: [], error: null }),
+        };
+        if (table === "hivra_agents") return emptyHivraAgentsQuery();
+        if (table === "holder_admissions") return emptyHolderAdmissionsQuery();
+        throw new Error(`Unexpected table ${table}`);
+      }),
+    } as unknown as typeof supabaseAdmin;
+    const readinessCheck = jest.fn(async ({ targetId }: { targetId: string | null }) =>
+      !ready && targetId === "fixturenode2" ? { ok: false as const, message: "Host admission refused" } : { ok: true as const });
+    const result = await selectAvailableProxmoxProvisionTarget({
+      supabase: db,
+      env: { ...process.env, HERMES_PROXMOX_TARGETS: "fixturenode1,fixturenode2", HERMES_PROXMOX_MAX_TENANT_INSTANCES: "0" },
+      hostConfig: null,
+      userId: "paid-sleep-placement",
+      neededCpu: 2,
+      neededRamMb: 4096,
+      neededDiskGb: 40,
+      rankManagedTarget: true,
+      skipTemplateAvailabilityCheck: true,
+      seatFunding: "paid",
+      paidSleepPlacement: { stickyHost: "fixturenode1" },
+      forceTargetId,
+      readinessCheck,
+    });
+    expect(result).toMatchObject({ ok: true, targetId: winner });
+    expect(readinessCheck.mock.calls.map(([x]) => x.targetId)).toEqual(probes);
+  });
+
   it("counts stopped Hivra computers' disk but not their CPU/RAM when ranking hosts", async () => {
     // A stopped Hivra computer keeps its thin-pool disk. Placement used to
     // read only provisioning/running rows, so a host full of stopped

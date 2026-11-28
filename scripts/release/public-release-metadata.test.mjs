@@ -366,14 +366,15 @@ test('every third-party GitHub Action is pinned to an immutable commit', () => {
   // publish job fetches that with the preinstalled gh CLI, not a new action).
   // 26: the Windows desktop app build pins checkout, setup-node and one upload
   // of the unsigned installer.
+  // 31: the Linux desktop app build adds the same three pinned actions.
   assert.deepEqual(workflowActionReferences(read('.github/workflows/managed-launch-bridge.yml'), 'managed-launch-bridge.yml'), [
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
   ], 'the bridge rehearsal only uses the reviewed checkout action');
   assert.deepEqual(workflowActionReferences(read('.github/workflows/claude-sandbox-image.yml'), 'claude-sandbox-image.yml'), [
     'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
   ], 'the source-only sandbox smoke only uses the reviewed checkout action');
-  // 30: the read-only launch sweep gate adds checkout and setup-node.
-  assert.equal(actionCount, 30, 'review the complete workflow action inventory when it changes');
+  // 33: the read-only launch sweep gate adds checkout and setup-node.
+  assert.equal(actionCount, 33, 'review the complete workflow action inventory when it changes');
 });
 
 test('workflow action inventory fails closed on alternate uses-key forms', () => {

@@ -45,6 +45,8 @@ import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, r
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
 import { CANARY_QA_HOLDER_NAME, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
+import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
+import { HERMES_STANDBY_CPU_UNITS, HERMES_STANDBY_PROVISIONER_VERSION, parseHermesStandbyIdentity, type HermesStandby } from "@/lib/hivra/hermes-standby";
 import { parseSleepMode, supportsIdleNap } from "@/lib/hivra/agent-sleep-policy";
 import type { SeatFunding } from "@/lib/hivra/seat-funding";
 import { getAgent, resizeFloor } from "@/lib/hivra/agent-catalog";
@@ -249,6 +251,40 @@ function submittedLaunchRequestIntent(
 // Phase 1 (synchronous over SSH): pick a free VMID in range, kick the host
 // orchestrator in the background (it does VM create + provisioner + tunnel,
 // ~10 min), and print a marker so this call returns in seconds.
+type PreparedKvmImage = { kind: "deepseek-harness" | "ubuntu-qga" | "agent-zero" | "bux-dependencies"; digest: string };
+const STOCK_QGA_AGENT_KINDS = ["claude", "codex", "openclaw", "deepseek-harness", "agent-zero"];
+const PREPARED_RUNTIME_BUNDLE_VERSION = "2026.11.27.6";
+
+function supportsPreparedKvmImage(kind: PreparedKvmImage["kind"], version: string | undefined, agentKind: string) {
+  if (kind === "agent-zero" || kind === "bux-dependencies") {
+    return (version === PREPARED_RUNTIME_BUNDLE_VERSION || version === HERMES_STANDBY_PROVISIONER_VERSION)
+      && (kind === "agent-zero" ? agentKind === kind : agentKind === "claude" || agentKind === "codex");
+  }
+  return ["2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(candidate => candidate === version)
+    && (kind === "ubuntu-qga" ? STOCK_QGA_AGENT_KINDS.includes(agentKind) : agentKind === kind);
+}
+
+function preparedKvmImagePath(image: PreparedKvmImage): string {
+  return `/var/lib/vz/template/iso/hivra-${image.kind}-${image.digest}.qcow2`;
+}
+
+function preparedKvmImageGate(image: PreparedKvmImage): string {
+  const diskGiB = image.kind === "agent-zero" ? 24 : 8;
+  return `PREPARED_IMAGE=${shellQuote(preparedKvmImagePath(image))}
+[ -f "$PREPARED_IMAGE" ] && [ ! -L "$PREPARED_IMAGE" ] \\
+  && [ "$(stat -c '%u:%g:%a:%h' -- "$PREPARED_IMAGE")" = '0:0:444:1' ] \\
+  || { echo 'prepared KVM image is missing or not a read-only root-owned file' >&2; exit 1; }
+printf '%s  %s\\n' ${shellQuote(image.digest)} "$PREPARED_IMAGE" | sha256sum --check --status \\
+  || { echo 'prepared KVM image digest mismatch' >&2; exit 1; }
+qemu-img info --output=json "$PREPARED_IMAGE" | python3 -I -B -c '
+import json, sys
+d = json.load(sys.stdin)
+sys.exit(0 if d.get("format") == "qcow2" and d.get("virtual-size") == ${diskGiB} * 1024**3
+         and not any(k in d for k in ("backing-filename", "full-backing-filename"))
+         and not d.get("format-specific", {}).get("data", {}).get("data-file") else 1)
+' || { echo 'prepared KVM image is not standalone ${diskGiB} GiB qcow2' >&2; exit 1; }`;
+}
+
 export function phase1Script(params: {
   cpu: number;
   cpuLimit: number;
@@ -274,6 +310,9 @@ export function phase1Script(params: {
   managedRuntimePaths: ManagedHivraRuntimePaths;
   portableRuntime?: PortableProxmoxRuntime | null;
   canaryProvisionerVersion?: string;
+  hermesImageSha256?: string;
+  hermesStandby?: HermesStandby;
+  preparedImage?: PreparedKvmImage;
   computerId?: string;
   controlOrigin?: string;
   capacityPolicy: ProxmoxHostCapacityPolicy;
@@ -287,6 +326,17 @@ export function phase1Script(params: {
   const logDirectory = runtimePaths.logDirectory;
   const logName = runtime ? `provision-$VMID.log` : `hivra-prov-$VMID.log`;
   const provisionerDirectory = runtimePaths.provisionerDirectory;
+  const candidate = params.preparedImage;
+  const standby = params.hermesStandby;
+  if (standby && (runtime || params.agentKind !== "hermes" || !params.hermesImageSha256
+      || params.canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION)) {
+    throw new Error("Hermes standby requires a sealed managed baked-image host");
+  }
+  const preparedImage = !runtime && candidate && !params.wantBrowser
+    && /^[a-f0-9]{64}$/.test(candidate.digest)
+    && supportsPreparedKvmImage(candidate.kind, params.canaryProvisionerVersion, params.agentKind)
+    ? candidate
+    : undefined;
   const operationTag = `hivra-op-${params.operationId.replace(/-/g, "")}`;
   // The desktop profile has its own contained desktop and explicitly rejects
   // the agent-browser option. The shared launcher historically serialized a
@@ -330,13 +380,25 @@ fi`
     `HIVRA_STORAGE=${shellQuote(runtimePaths.storage)}`,
     `HIVRA_DISK_GB=${HIVRA_AGENT_VM_DISK_GB}`,
     `HIVRA_BRIDGE=${shellQuote(runtimePaths.bridge)}`,
-    `HIVRA_UBUNTU_IMG=${shellQuote(runtimePaths.ubuntuImage)}`,
+    `HIVRA_UBUNTU_IMG=${shellQuote(preparedImage ? preparedKvmImagePath(preparedImage) : runtimePaths.ubuntuImage)}`,
     `HIVRA_VM_SSH_KEY_PATH=${shellQuote(runtimePaths.vmSshKeyPath)}`,
     `HIVRA_LOG_DIR=${shellQuote(runtimePaths.logDirectory)}`,
     `HIVRA_COMPUTER_ID=${shellQuote(params.computerId ?? "")}`,
     `HIVRA_CONTROL_ORIGIN=${shellQuote(params.controlOrigin ?? "")}`,
+    ...(!runtime && params.agentKind === "hermes" && params.hermesImageSha256
+      ? [`HIVRA_HERMES_IMAGE_SHA256=${shellQuote(params.hermesImageSha256)}`]
+      : []),
+    ...(standby ? [
+      `HIVRA_HERMES_STANDBY_CLAIM_GENERATION=${shellQuote(standby.generation)}`,
+      `HIVRA_HERMES_STANDBY_HOST=${shellQuote(standby.host)}`,
+    ] : []),
+    ...(preparedImage?.kind === "agent-zero" || preparedImage?.kind === "bux-dependencies"
+      ? [`HIVRA_PREPARED_RUNTIME=${shellQuote(preparedImage.kind)}`] : []),
   ].join(" ") + " ";
-  const hostCapacityAdmission = buildHostCapacityAdmissionCommand({
+  const batchQemuAdmission = !runtime
+    && ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].includes(params.canaryProvisionerVersion ?? "")
+    && ["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(params.agentKind);
+  const hostCapacityAdmission = (batchQemuAdmission ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : "") + buildHostCapacityAdmissionCommand({
     provisionerDirectory: runtimePaths.provisionerDirectory,
     floorMemoryMb: params.guaranteedMemMb,
     maximumMemoryMb: params.memMb,
@@ -355,7 +417,16 @@ if [ "$STORAGE_AVAILABLE_KB" -lt "$STORAGE_REQUIRED_KB" ]; then
   exit 1
 fi`
     : "";
-  const kickoff = runtime
+  const kickoff = standby
+    ? `(
+  exec 8>&-
+  exec 9>&-
+  exec env HIVRA_PID_FILE="$PIDFILE" HIVRA_SECRET_ENV_FILE="$SECRET_ENV_FILE" HIVRA_OPERATION_ID=${shellQuote(params.operationId)} HIVRA_BINDING_TAG=${shellQuote(params.infrastructureBindingTag)} ${hostEnvironment}HIVRA_WANT_BROWSER=0 HIVRA_SUBNET_PREFIX=${shellQuote(params.subnetPrefix)} HIVRA_GW=${shellQuote(params.gateway)} bash ${shellQuote(provisionerDirectory)}/hivra-provision-on-host.sh "$VMID" "$OCTET" "${params.cpu}" "${params.memMb}" hermes "${params.cpuLimit}"
+) >> "$LOG" 2>&1 < /dev/null &
+PROVISION_PID=$!
+printf '%s\\n' "$PROVISION_PID" > "$PIDFILE"
+disown`
+    : runtime
     ? `nohup env HIVRA_PID_FILE="$PIDFILE" HIVRA_SECRET_ENV_FILE="$SECRET_ENV_FILE" HIVRA_OPERATION_ID=${shellQuote(params.operationId)} HIVRA_BINDING_TAG=${shellQuote(params.infrastructureBindingTag)} HIVRA_ALLOCATION_LOCK_FD=8 ${hostEnvironment}HIVRA_WANT_BROWSER=${shellQuote(wantBrowserEnvValue)} HIVRA_SUBNET_PREFIX=${shellQuote(params.subnetPrefix)} HIVRA_GW=${shellQuote(params.gateway)} bash ${shellQuote(provisionerDirectory)}/hivra-provision-on-host.sh "$VMID" "$OCTET" "${params.cpu}" "${params.memMb}" "${params.agentKind}" "${params.cpuLimit}" >> "$LOG" 2>&1 < /dev/null &
 PROVISION_PID=$!
 printf '%s\\n' "$PROVISION_PID" > "$PIDFILE"
@@ -490,7 +561,7 @@ disown
 ) >/dev/null 2>&1 &
 LOCK_GUARDIAN_PID=$!
 disown`;
-  const managedHermesIpInventory = !runtime && params.agentKind === "hermes";
+  const batchIpInventory = batchQemuAdmission || (!runtime && params.agentKind === "hermes");
   return `#!/usr/bin/env bash
 set -euo pipefail
 umask 077
@@ -514,10 +585,23 @@ ${params.canaryProvisionerVersion
     ? `PROVISIONER_DIR=${shellQuote(provisionerDirectory)}
 ${managedCanaryLaunchSealScript([params.canaryProvisionerVersion])}`
     : ""}
+${preparedImage ? preparedKvmImageGate(preparedImage) : ""}
+${standby ? `VMID=${standby.vmid}
+OCTET=${shellQuote(standby.privateIp.slice(params.subnetPrefix.length + 1))}
+${buildVmidReferenceLedgerScript(params.vmidLedger)}
+[ "$HIVRA_VMID_REFERENCE_PUBLISH" = 1 ] || { echo "standby requires complete managed VMID references" >&2; exit 1; }
+hivra_vmid_reference_sync
+LEDGER="$HIVRA_VMID_REFERENCE_DIR/$HIVRA_VMID_REFERENCE_PLANE.$HIVRA_VMID_REFERENCE_LANE.list"
+[ -f "$LEDGER" ] && [ ! -L "$LEDGER" ] \
+  && cmp -s "$LEDGER" <(if [ -n "$HIVRA_VMID_REFERENCES" ]; then printf '%s\\n' "$HIVRA_VMID_REFERENCES"; fi) \
+  || { echo "could not verify published managed VMID references" >&2; exit 1; }
+HIVRA_HERMES_STANDBY_ACTION=claim HIVRA_HERMES_STANDBY_RESERVE_MB=${Math.round(params.capacityPolicy.hostMemoryReserveMb)} HIVRA_HERMES_STANDBY_ENFORCE_CEILINGS=1 HIVRA_HERMES_STANDBY_CPU_DENSITY_MILLI=${Math.round(params.capacityPolicy.cpuCeilingDensity * 1000)} HIVRA_HERMES_STANDBY_MEMORY_DENSITY_MILLI=${Math.round(params.capacityPolicy.memoryCeilingDensity * 1000)} HIVRA_OPERATION_ID=${shellQuote(params.operationId)} HIVRA_BINDING_TAG=${shellQuote(params.infrastructureBindingTag)} HIVRA_ALLOCATION_LOCK_FD=8 ${hostEnvironment}HIVRA_SUBNET_PREFIX=${shellQuote(params.subnetPrefix)} HIVRA_GW=${shellQuote(params.gateway)} bash ${shellQuote(provisionerDirectory)}/hivra-provision-on-host.sh "$VMID" "$OCTET" "${params.cpu}" "${params.memMb}" hermes "${params.cpuLimit}"
+hivra_vmid_reference_record "$VMID"
+grep -Fxq "$VMID" "$LEDGER"` : `
 # Inventory is intentionally captured only after FD 8 is held. A launcher that
 # waited behind another provision must observe the predecessor's committed VM
 # configuration and private IP, rather than allocate from its pre-wait snapshot.
-${managedHermesIpInventory ? "" : `local_vmids="$(qm list | awk 'NR>1{print $1}')"`}
+${batchIpInventory ? "" : `local_vmids="$(qm list | awk 'NR>1{print $1}')"`}
 cluster_resources="$(pvesh get /cluster/resources --type vm --output-format json 2>/dev/null)" \
   || { echo "could not read cluster-wide VMID inventory" >&2; exit 1; }
 cluster_vmids="$(printf '%s' "$cluster_resources" | grep -oE '"vmid":[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | sort -un || true)"
@@ -550,7 +634,7 @@ hivra_vmid_reference_record "$VMID"` : ""}
 # guest unreachable (host->guest ARP races) and lets later lifecycle/maintenance
 # ssh hit the wrong tenant's box.
 claimed_octets="$(
-${managedHermesIpInventory ? `  [ -d /etc/pve/qemu-server ] || { echo "local Proxmox inventory is unavailable" >&2; exit 1; }
+${batchIpInventory ? `  [ -d /etc/pve/qemu-server ] || { echo "local Proxmox inventory is unavailable" >&2; exit 1; }
   shopt -s nullglob
   configs=(/etc/pve/qemu-server/*.conf)
   if [ "\${#configs[@]}" -gt 0 ]; then
@@ -580,12 +664,14 @@ for cand in "$pref" $(seq ${params.ipLastOctetStart} 254); do
   if [ "$cand" -ge 2 ] && [ "$cand" -le 254 ] && ! printf '%s\\n' "$claimed_octets" | grep -qx "$cand"; then OCTET="$cand"; break; fi
 done
 [ -n "$OCTET" ] || { echo "no free private IPv4 octet on this host for VMID $VMID (start octet ${params.ipLastOctetStart})" >&2; exit 1; }
+`}
 install -d -m 0750 ${shellQuote(logDirectory)}
 LOG=${shellQuote(logDirectory)}/${logName}
 install -m 0600 /dev/null "$LOG"
 install -d -m 0755 /run/hivra-provision
 PIDFILE="/run/hivra-provision/$VMID.pid"
 SECRET_ENV_FILE="/run/hivra-provision/$VMID.env"
+${standby ? "" : `
 INTENT_FILE=${shellQuote(`/var/lib/hivra/provision-operations/operation-${params.operationId}.selected`)}
 INTENT_TMP="$INTENT_FILE.tmp.$$"
 {
@@ -604,6 +690,7 @@ INTENT_TMP="$INTENT_FILE.tmp.$$"
 chmod 0600 "$INTENT_TMP"
 mv -f -- "$INTENT_TMP" "$INTENT_FILE"
 printf 'HIVRA_ALLOCATION_SELECTED {"vmid":%s,"ip":"${params.subnetPrefix}.%s"}\\n' "$VMID" "$OCTET"
+`}
 ${activityTelemetryProbe}
 install -m 0600 /dev/null "$SECRET_ENV_FILE"
 write_secret_b64() { printf '%s' "$1" | base64 -w 0; printf '\n'; }
@@ -854,6 +941,7 @@ export async function launchHivraAgentForUser(
   body: Record<string, unknown>,
   options?: LaunchAgentOptions,
 ): Promise<Response> {
+  const requestStartedAt = performance.now();
   try {
     if (!supabaseAdmin) return apiError("Database not configured", 500);
     const qaHolderDeadline = options?.canaryQaHolder ? canaryQaHolderDeadline(userId) : null;
@@ -952,6 +1040,19 @@ export async function launchHivraAgentForUser(
       bodyVal !== undefined && bodyVal !== null && bodyVal !== "" ? bodyVal : tplVal ?? undefined;
 
     const type = String(pick(body.type, template?.type) || "claude-code");
+    const claudeTerminal = body.gvisorWorkload === "claude-terminal";
+    if (body.gvisorWorkload !== undefined && (!claudeTerminal || type !== "linux-terminal" || deployment.mode !== "self-managed")) {
+      return apiError("This launch cannot use the requested sandbox workload.", 400);
+    }
+    const managedGitCanary = deployment.mode === "hivra-managed"
+      && managedProvisionerChannel === "canary" && isCanonicalGitCanaryDeployment();
+    const hermesCanary = managedGitCanary && type === "hermes";
+    const measuredCanary = managedGitCanary
+      && ["hermes", "claude-code", "codex", "openclaw", "deepseek-harness", "agent-zero"].includes(type);
+    const launchCheckpoints: Record<string, number> = {};
+    const checkpointLaunchTiming = (stage: string) => {
+      if (measuredCanary) launchCheckpoints[stage] = Math.round(performance.now() - requestStartedAt);
+    };
     if (body.launchRequestId === undefined && (type === "codex" || type === "linux-desktop" || type === "linux-terminal")) {
       return apiError("Include a valid stable launch request ID and complete launch settings.", 400,
         undefined, { code: "invalid_request" });
@@ -962,7 +1063,7 @@ export async function launchHivraAgentForUser(
       deployment.mode === "hivra-managed" && canCertifyCatalog(userId))) {
       return apiError("That app isn't certified for launch yet", 400);
     }
-    const name = String(pick(body.name, template?.name) || def?.name || "Agent").trim();
+    const name = String(pick(body.name, template?.name) || (claudeTerminal ? "Claude Code (sandbox)" : def?.name) || "Agent").trim();
     if (type === "linux-terminal") {
       if (templateRef) {
         return apiError("Linux terminal sandboxes require an exact connected gVisor host target.", 400);
@@ -1041,6 +1142,7 @@ export async function launchHivraAgentForUser(
           name,
           cpu,
           ramGb: ram,
+          ...(claudeTerminal ? { claudeTerminal: true } : {}),
         });
         return apiSuccess({
           agent: sanitizeHivraAgentRow(row),
@@ -1364,9 +1466,14 @@ export async function launchHivraAgentForUser(
     let host: string;
     let portableRuntime: PortableProxmoxRuntime | null = null;
     let canaryProvisionerVersion: string | undefined;
+    let hermesImageSha256: string | undefined;
+    let useHermesStandby = false;
+    let hermesStandby: HermesStandby | undefined;
+    let preparedImage: PreparedKvmImage | undefined;
     let capacityPolicy: ProxmoxHostCapacityPolicy = DEFAULT_PROXMOX_HOST_CAPACITY_POLICY;
     let stickyHost: string | null = null;
     let explicitClaudeHost: string | null = null;
+    let preferSleepPlacement = false;
     let seatFunding: SeatFunding | null = null;
 
     if (deployment.mode === "self-managed") {
@@ -1458,12 +1565,13 @@ export async function launchHivraAgentForUser(
         }
       }
 
+      const sleepMode = parseSleepMode(process.env.HIVRA_SLEEP_MODE);
+      const sleepActs = sleepMode === "on" || sleepMode === "canary";
       if (seatFunding === "holder") {
         if (!supportsIdleNap(type)) {
           return apiError("This runtime cannot nap and save its memory on holder terms. Choose a sleep-capable computer.", 409);
         }
-        const mode = parseSleepMode(process.env.HIVRA_SLEEP_MODE);
-        if ((mode !== "on" && mode !== "canary") || !isTunnelConfigured()) {
+        if (!sleepActs || !isTunnelConfigured()) {
           return apiError("Holder launches need automatic sleep and a configured wake connection.", 503);
         }
       }
@@ -1473,6 +1581,20 @@ export async function launchHivraAgentForUser(
       if (!explicitClaudeHost && seatFunding !== "holder") {
         stickyHost = await resolveStickyHivraProxmoxHost(userId);
       }
+      preferSleepPlacement = seatFunding === "paid" && !options?.moveFromInstanceId
+        && !explicitClaudeHost && supportsIdleNap(type) && sleepActs;
+      const hostFitsMaximum = async (hostEnv: typeof env) => {
+        if (!hasExplicitEnvelope) return true;
+        const maximumEvidence = await runProxmoxHostScript(`set -euo pipefail
+HOST_CPU="$(nproc)"
+HOST_RAM_MB="$(awk '$1=="MemTotal:" {print int($2/1024)}' /proc/meminfo)"
+[[ "$HOST_CPU" =~ ^[0-9]+$ && "$HOST_RAM_MB" =~ ^[0-9]+$ ]] \\
+  || { echo "could not measure selected host totals" >&2; exit 1; }
+[ "$HOST_CPU" -ge ${Math.ceil(maximumCpu)} ] && [ "$HOST_RAM_MB" -ge ${maximumRam * 1024} ] \\
+  || { echo "resource maximum exceeds selected host totals" >&2; exit 1; }
+printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostEnv);
+        return maximumEvidence.ok && maximumEvidence.stdout.includes("HIVRA_RESOURCE_MAXIMUM_FITS ");
+      };
       // With HIVRA_HOST_CAPACITY_ALERTS on, a host whose latest capacity reading
       // is critical is tried only when no other host can take the launch.
       const placeOn = (forceTargetId: string | null) => selectAvoidingCriticalHosts(excludeTargetIds => selectAvailableProxmoxProvisionTarget({
@@ -1486,27 +1608,36 @@ export async function launchHivraAgentForUser(
         forceTargetId,
         rankManagedTarget: true,
         seatFunding,
+        ...(preferSleepPlacement ? { paidSleepPlacement: { stickyHost } } : {}),
         ...(excludeTargetIds ? { excludeTargetIds } : {}),
         skipTemplateAvailabilityCheck: true,
         // Managed-model agents (def.managedVenice) get HIVRA_MODEL_* at launch,
         // so their host must carry model-settings support as well as the
         // runtime's own minimum release.
-        readinessCheck: candidate => checkManagedHivraHostReadiness({
-          ...candidate,
-          channel: managedProvisionerChannel,
-          requirePinnedCatalogDigest: requiresPinnedCatalogDigest,
-          runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
-          runtimeLabel: launchLabel,
-          // Claude Code takes model settings only on Hivra credits; its native
-          // sign-in launch does not need them.
-          ...(launchAdmission || (def.managedVenice && (def.llm?.wire !== "anthropic" || anthropicCredits))
-            ? { requireModelSettings: true }
-            : {}),
-        }),
+        readinessCheck: async candidate => {
+          const readiness = await checkManagedHivraHostReadiness({
+            ...candidate,
+            channel: managedProvisionerChannel,
+            requirePinnedCatalogDigest: requiresPinnedCatalogDigest,
+            runtimeId: anthropicCredits ? CLAUDE_CODE_HIVRA_CREDITS_RUNTIME_ID : compatibilityRuntimeId,
+            runtimeLabel: launchLabel,
+            // Claude Code takes model settings only on Hivra credits; its native
+            // sign-in launch does not need them.
+            ...(launchAdmission || (def.managedVenice && (def.llm?.wire !== "anthropic" || anthropicCredits))
+              ? { requireModelSettings: true }
+              : {}),
+          });
+          if (!readiness.ok || !preferSleepPlacement) return readiness;
+          if (!await hostFitsMaximum(candidate.env)) {
+            return { ok: false, status: 409, message: "No managed host can enforce that CPU and memory maximum." };
+          }
+          const admission = await checkHostWakeCapacity(ram * 1024, candidate.env);
+          return admission.ok ? readiness : { ok: false, status: 503, message: "Host is at capacity — try again shortly" };
+        },
       }), { forced: Boolean(forceTargetId) });
-      let placement = await placeOn(explicitClaudeHost ?? stickyHost);
+      let placement = await placeOn(explicitClaudeHost ?? (preferSleepPlacement ? null : stickyHost));
       // A paid user's usual host may be full or unavailable. Try the rotation.
-      if (!placement.ok && stickyHost) {
+      if (!placement.ok && stickyHost && !preferSleepPlacement) {
         log.warn("hivra sticky host could not take the launch; trying the other servers", {
           source: "hivra/agents",
           failureType: "hivra_agent_sticky_host_spillover",
@@ -1548,18 +1679,71 @@ export async function launchHivraAgentForUser(
         if (!canaryProvisionerVersion) return apiError("Could not verify the selected Canary provisioner bundle.", 503);
       }
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();
-      if (hasExplicitEnvelope) {
-        const maximumEvidence = await runProxmoxHostScript(`set -euo pipefail
-HOST_CPU="$(nproc)"
-HOST_RAM_MB="$(awk '$1=="MemTotal:" {print int($2/1024)}' /proc/meminfo)"
-[[ "$HOST_CPU" =~ ^[0-9]+$ && "$HOST_RAM_MB" =~ ^[0-9]+$ ]] \\
-  || { echo "could not measure selected host totals" >&2; exit 1; }
-[ "$HOST_CPU" -ge ${Math.ceil(maximumCpu)} ] && [ "$HOST_RAM_MB" -ge ${maximumRam * 1024} ] \\
-  || { echo "resource maximum exceeds selected host totals" >&2; exit 1; }
-printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
-        if (!maximumEvidence.ok || !maximumEvidence.stdout.includes("HIVRA_RESOURCE_MAXIMUM_FITS ")) {
-          return apiError("No managed host can enforce that CPU and memory maximum.", 409);
+      checkpointLaunchTiming("hostSelectedMs");
+      const pilotKind = managedGitCanary && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline
+        ? hermesCanary ? "hermes" : agentKind === "agent-zero" ? "agent-zero"
+          : agentKind === "claude" || agentKind === "codex" ? "bux-dependencies" : null
+        : null;
+      let pilot: { image_sha256: string; owner_id: string | null; standby_enabled: boolean } | null = null;
+      if (pilotKind) {
+        const { data, error } = await supabaseAdmin
+          .from("hivra_canary_launch_pilots")
+          .select("image_sha256,owner_id,standby_enabled")
+          .eq("pilot", pilotKind)
+          .eq("host_id", host)
+          .maybeSingle();
+        if (error) {
+          log.error("Could not read Canary launch pilot settings", new Error(error.code), {
+            source: "hivra/agents", pilotKind,
+          });
+          return apiError("Could not verify the Canary launch pilot settings.", 503);
         }
+        if (data && (data.owner_id === userId || (pilotKind === "hermes" && data.owner_id === null))) {
+          pilot = data;
+        }
+      }
+      if (pilotKind === "hermes" && pilot) {
+        if (!["2026.11.27.2", "2026.11.27.3", "2026.11.27.4", "2026.11.27.5", HERMES_STANDBY_PROVISIONER_VERSION, PREPARED_RUNTIME_BUNDLE_VERSION].some(version => version === canaryProvisionerVersion)) {
+          return apiError("The selected Canary host does not support the pinned Hermes image.", 503);
+        }
+        hermesImageSha256 = pilot.image_sha256;
+        useHermesStandby = pilot.standby_enabled && pilot.owner_id === userId;
+      }
+      if (managedGitCanary && STOCK_QGA_AGENT_KINDS.includes(agentKind) && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline) {
+        const trials = [
+          ...(type === "deepseek-harness" ? [["deepseek-harness", "HIVRA_CANARY_DEEPSEEK_IMAGE"]] as const : []),
+          ...(pilot && (pilotKind === "agent-zero" || pilotKind === "bux-dependencies") ? [[pilotKind, null]] as const : []),
+          ["ubuntu-qga", "HIVRA_CANARY_UBUNTU_QGA_IMAGE"],
+        ] as const;
+        for (const [kind, prefix] of trials) {
+          const bakeSha = prefix === null ? pilot?.image_sha256 : process.env[`${prefix}_SHA256`];
+          if (prefix !== null) {
+            const bakeHost = process.env[`${prefix}_HOST`];
+            const bakeUser = process.env[`${prefix}_USER_ID`];
+            if (!bakeHost && !bakeSha && !bakeUser) continue;
+            if (!bakeHost || !/^[a-z0-9][a-z0-9-]*$/.test(bakeHost) || !bakeSha || !/^[a-f0-9]{64}$/.test(bakeSha)
+              || !bakeUser || !/^user_[A-Za-z0-9]+$/.test(bakeUser)) {
+              return apiError("The Canary prepared image selection is not configured safely.", 503);
+            }
+            if (bakeHost !== host || bakeUser !== userId) continue;
+          }
+          if (!bakeSha) continue;
+          if (!supportsPreparedKvmImage(kind, canaryProvisionerVersion, agentKind)) {
+            return apiError("The selected Canary host does not support the prepared image.", 503);
+          }
+          const candidate = { kind, digest: bakeSha };
+          const imageCheck = await runProxmoxHostScript(`set -euo pipefail
+${preparedKvmImageGate(candidate)}
+printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
+          if (!imageCheck.ok || !imageCheck.stdout.split("\n").includes("HIVRA_PREPARED_IMAGE_VERIFIED")) {
+            return apiError("The selected Canary image could not be verified.", 503);
+          }
+          preparedImage = candidate;
+          break;
+        }
+      }
+      if (!preferSleepPlacement && !await hostFitsMaximum(env)) {
+        return apiError("No managed host can enforce that CPU and memory maximum.", 409);
       }
     }
 
@@ -1575,34 +1759,59 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     const vmidStart = resolveHivraVmidStart(env);
     const vmidEnd = resolveHivraVmidEnd(env, vmidStart);
     const ipLastOctetStart = resolveHivraIpLastOctetStart(env);
+    if (hermesImageSha256 && useHermesStandby && seatFunding === "paid") {
+      if (canaryProvisionerVersion !== HERMES_STANDBY_PROVISIONER_VERSION
+          || !Number.isInteger(cpu) || cpu !== maximumCpu || ram !== maximumRam) {
+        return apiError("The Canary Hermes standby does not match this launch.", 409);
+      }
+      const [{ data: slot, error }, { data: registeredHost, error: policyError }] = await Promise.all([
+        supabaseAdmin!.rpc("read_hivra_hermes_standby", {
+          p_owner_id: userId, p_host_id: host, p_baked_digest: hermesImageSha256,
+        }),
+        supabaseAdmin!.from("proxmox_hosts").select("status,cpu_overcommit_ratio").eq("id", host).maybeSingle(),
+      ]);
+      const cpuDensity = Number(registeredHost?.cpu_overcommit_ratio);
+      const identity = parseHermesStandbyIdentity(slot, {
+        host, subnetPrefix: resolveHivraNetworkConfig(host, env).subnetPrefix, ipLastOctetStart,
+      });
+      if (error || policyError || registeredHost?.status !== "active"
+          || !Number.isFinite(cpuDensity) || cpuDensity < 1 || cpuDensity > 20
+          || !identity || slot.cpu !== cpu || slot.ramMb !== ram * 1024 || slot.diskGb !== HIVRA_AGENT_VM_DISK_GB) {
+        return apiError("The scoped Canary Hermes standby is not available for this launch.", 503);
+      }
+      hermesStandby = identity;
+      capacityPolicy = { ...capacityPolicy, mode: "enforce", cpuCeilingDensity: Math.min(cpuDensity, 4) };
+    }
 
     // Provision-time OOM guard. The start path already gates wakes on live host
     // RAM; new provisions had no such check, so a saturated host would boot the
     // guest into swap, miss the provisioner's ssh window, and strand a half-dead
     // box (the recurring fixturenodea failure). Fail fast with the "at capacity" UX
     // instead. Fails open on a flaky probe, so it never blocks on noise.
-    const provisionCapacity = await checkHostWakeCapacity(ram * 1024, env);
-    // Managed fleet admission has historically failed open so a transient
-    // telemetry probe does not block every customer. A user-selected target is
-    // different: before creating a DB row, tunnel, key, or VM, require live
-    // memory evidence from that exact credential and target.
-    if (deployment.mode === "self-managed" && provisionCapacity.freeMb === null) {
-      return apiError(
-        "Hivra could not verify live memory headroom on this computer. Check the connection and try again.",
-        503,
-      );
-    }
-    if (!provisionCapacity.ok) {
-      log.warn("hivra provision blocked: host at capacity", {
-        source: "hivra/agents",
-        failureType: "hivra_agent_provision_host_at_capacity",
-        userId,
-        agentType: type,
-        proxmoxHost: host,
-        requestedRamMb: ram * 1024,
-        freeMb: provisionCapacity.freeMb,
-      });
-      return apiError("Host is at capacity — try again shortly", 503);
+    if (!preferSleepPlacement) {
+      const provisionCapacity = await checkHostWakeCapacity(ram * 1024, env);
+      // Managed fleet admission has historically failed open so a transient
+      // telemetry probe does not block every customer. A user-selected target is
+      // different: before creating a DB row, tunnel, key, or VM, require live
+      // memory evidence from that exact credential and target.
+      if (deployment.mode === "self-managed" && provisionCapacity.freeMb === null) {
+        return apiError(
+          "Hivra could not verify live memory headroom on this computer. Check the connection and try again.",
+          503,
+        );
+      }
+      if (!provisionCapacity.ok) {
+        log.warn("hivra provision blocked: host at capacity", {
+          source: "hivra/agents",
+          failureType: "hivra_agent_provision_host_at_capacity",
+          userId,
+          agentType: type,
+          proxmoxHost: host,
+          requestedRamMb: ram * 1024,
+          freeMb: provisionCapacity.freeMb,
+        });
+        return apiError("Host is at capacity — try again shortly", 503);
+      }
     }
 
     log.info("hivra launch selected Proxmox placement target", {
@@ -1724,6 +1933,15 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     const poolId = deployment.mode === "hivra-managed" && !qaHolderDeadline
       ? await getOrCreatePoolId(userId, "hermesos")
       : null;
+    if (hermesStandby) {
+      const { data: pool, error: poolError } = poolId
+        ? await supabaseAdmin.from("pools").select("priority").eq("id", poolId).maybeSingle()
+        : { data: null, error: null };
+      if (poolError || priorityToCpuUnits((pool as { priority?: number } | null)?.priority) !== HERMES_STANDBY_CPU_UNITS) {
+        await releaseLlmKeyOnFailure();
+        return apiError("The Canary Hermes standby requires the default pool CPU weight.", poolError ? 503 : 409);
+      }
+    }
     const deploymentBinding = deployment.mode === "self-managed"
       ? {
           infrastructure_connection_id: deployment.connectionId,
@@ -1772,7 +1990,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         seat_funding: seatFunding,
         computer_substrate: "proxmox-kvm", operation_id: provisionOperationId,
         managed_provisioner_channel: managedProvisionerChannel,
-        proxmox_host: deployment.mode === "self-managed" ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL : host,
+        proxmox_host: deployment.mode === "self-managed" ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL : hermesStandby ? "" : host,
         infrastructure_binding_token_hash: infrastructureBindingTokenHash, pool_id: poolId,
         goal, context, personality, emoji, template_skills: templateSkillsColumn, ...deploymentBinding,
       }, agentLimit) : null;
@@ -1802,7 +2020,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       desired_state: "running",
       operation_id: provisionOperationId,
       operation_kind: "provision",
-      operation_payload: { stage: "pre_allocation_access" },
+      operation_payload: { stage: "pre_allocation_access", ...(hermesStandby ? { hermes_standby_generation: hermesStandby.generation } : {}) },
       operation_started_at: new Date().toISOString(),
       infrastructure_binding_token_hash: infrastructureBindingTokenHash,
       // Every new allocation is provider-bound. Portable hosts stamp tags in
@@ -1813,7 +2031,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       infrastructure_binding_token_enforced: true,
       proxmox_host: deployment.mode === "self-managed"
         ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL
-        : host,
+        : hermesStandby ? "" : host,
       cpu,
       ram,
       cpu_max: maximumCpu,
@@ -1906,6 +2124,34 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         ? apiError("The selected infrastructure authority changed before launch. Refresh and try again.", 409)
         : apiError("Could not create agent", 500);
     }
+    checkpointLaunchTiming("agentRowCreatedMs");
+    if (hermesStandby) {
+      const operation = { userId, agentId: String(agent.id), operationId: provisionOperationId };
+      const claim = await supabaseAdmin!.rpc("claim_hivra_hermes_standby", {
+        p_owner_id: userId, p_agent_id: agent.id, p_operation_id: provisionOperationId,
+        p_host_id: host, p_generation: hermesStandby.generation, p_vmid: hermesStandby.vmid,
+        p_private_ip: hermesStandby.privateIp, p_baked_digest: hermesImageSha256,
+      }).then(result => result, () => null);
+      if (!claim?.error && claim?.data?.status === "no_match") {
+        await releaseLlmKeyOnFailure();
+        const failed = await failHivraAgentBeforeAllocation({ ...operation, error: "The Canary Hermes standby is no longer available." }).catch(() => false);
+        if (failed) {
+          if (launchOperations && launchOperationAdmission) {
+            await launchOperations.fail(launchOperationAdmission, 409, "hermes_standby_unavailable");
+          }
+          return apiError("The Canary Hermes standby is no longer available.", 409);
+        }
+      }
+      if (claim?.error || claim?.data?.status !== "claimed"
+          || claim.data.vmid !== hermesStandby.vmid || claim.data.privateIp !== hermesStandby.privateIp) {
+        await recordHivraAgentOperationFailure({ ...operation, error: "Canary Hermes standby claim is not confirmed." }).catch(() => false);
+        if (launchOperations && launchOperationAdmission) {
+          await launchOperations.markReconciling(launchOperationAdmission);
+        }
+        return apiError("The Canary Hermes standby claim needs reconciliation. Do not retry this launch yet.", 502);
+      }
+      checkpointLaunchTiming("standbyClaimedMs");
+    }
     if (launchOperations && launchOperationAdmission) {
       // Once the row is durably owner-bound it is an accepted resource, even
       // while access and VM kickoff continue. Replay can safely expose it and a
@@ -1966,6 +2212,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     let tunnelUrl = "";
     let cfTunnelId = "";
     let cfHostname = "";
+    checkpointLaunchTiming("routeStartedMs");
     if (isTunnelConfigured()) {
       let t;
       try {
@@ -2013,6 +2260,8 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         cfHostname = t.hostname;
       }
     }
+
+    checkpointLaunchTiming("routePreparedMs");
 
     // A verified terminal provision failure will not be re-driven, so release
     // its named tunnel here. Ambiguous transport failures deliberately retain
@@ -2097,6 +2346,10 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
           lane: "hivra",
         })
       : { reservedVmids: [] as number[], vmidLedger: null };
+    if (hermesStandby && (!vmidLedger?.plane || !vmidLedger.references || reservedVmids.includes(hermesStandby.vmid))) {
+      await retainAmbiguousProvisionOperation("The Hermes standby VMID could not be reserved across managed launch lanes.");
+      return apiError("The Canary Hermes standby VMID needs reconciliation. Do not retry this launch yet.", 502);
+    }
 
     // The out-of-repo Hivra provisioner accepts a guest-visible core count.
     // Fractional free-tier CPU is a Proxmox scheduler cap, not a fractional
@@ -2107,6 +2360,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     const ramEnvelope = resolveRamBurst(ram * 1024, process.env, maximumRam * 1024);
     const allocationStageAdvanced = await beginHivraAgentVmAllocation({
       userId, agentId: agent.id, operationId: provisionOperationId,
+      ...(hermesStandby ? { hermesStandbyGeneration: hermesStandby.generation } : {}),
     });
     const launchStillCurrent = allocationStageAdvanced && await checkpointHivraAgentOperation({
       userId,
@@ -2142,6 +2396,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         controlOriginConfigured: activityControlOrigin() !== null,
       });
     }
+    checkpointLaunchTiming("allocationStartedMs");
     const result = await runProxmoxHostScript(phase1Script({
       cpu: provisionCores,
       cpuLimit: maximumCpu,
@@ -2166,12 +2421,16 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
       managedRuntimePaths,
       portableRuntime,
       canaryProvisionerVersion,
+      hermesImageSha256,
+      hermesStandby,
+      preparedImage,
       computerId: type === "linux-desktop" ? String(agent.id) : undefined,
       controlOrigin: desktopControlOrigin ?? undefined,
       capacityPolicy,
       activityTelemetry,
       catalogAppSpec,
     }), env, { earlyFinishMarker: "HIVRA_PROVISION_RESULT" });
+    checkpointLaunchTiming("allocationReturnedMs");
     const activityCredentialStaged = activityTelemetry !== null
       && (result.stdout || "").split(/\r?\n/).some(line => line.trim() === ACTIVITY_CREDENTIAL_STAGED);
     if (activityTelemetry && !activityCredentialStaged) {
@@ -2212,12 +2471,14 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         });
       }
     }
-    const allocationIdentity = parsePhase1AllocationIdentity({
+    const observedIdentity = parsePhase1AllocationIdentity({
       stdout: result.stdout || "",
-      vmidStart,
-      vmidEnd,
+      vmidStart: hermesStandby?.vmid ?? vmidStart,
+      vmidEnd: hermesStandby?.vmid ?? vmidEnd,
       subnetPrefix: networkConfig.subnetPrefix,
     });
+    const allocationIdentity = hermesStandby && (observedIdentity?.receipt !== "allocated"
+      || observedIdentity.ip !== hermesStandby.privateIp) ? null : observedIdentity;
     if (!result.ok) {
       let providerAbsenceVerified = false;
       let terminalPersisted = false;
@@ -2386,6 +2647,17 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
         : apiError("The selected VM slot changed and automatic VM cleanup could not be confirmed. Check the target before retrying.", 502);
     }
 
+    if (hermesStandby) {
+      const assigned = await supabaseAdmin!.rpc("assign_hivra_hermes_standby", {
+        p_owner_id: userId, p_agent_id: agent.id, p_operation_id: provisionOperationId,
+        p_generation: hermesStandby.generation,
+      }).then(result => result, () => null);
+      if (assigned?.error || assigned?.data !== true) {
+        await retainAmbiguousProvisionOperation("Canary Hermes standby accounting transfer is unconfirmed.");
+        return apiError("The Canary Hermes standby transfer needs reconciliation. Do not retry this launch yet.", 502);
+      }
+      checkpointLaunchTiming("standbyAssignedMs");
+    }
     const cpuLimitStillCurrent = await checkpointHivraAgentOperation({
       userId,
       agentId: agent.id,
@@ -2402,11 +2674,22 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, env);
     const allocationVerificationScript = `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
-TAGS="$(qm config ${vmid} | sed -n 's/^tags:[[:space:]]*//p')"
+CONFIG="$(qm config ${vmid}${hermesStandby ? " --current 1" : ""})"
+TAGS="$(sed -n 's/^tags:[[:space:]]*//p' <<< "$CONFIG")"
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(infrastructureBindingTag)}
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(`hivra-op-${provisionOperationId.replace(/-/g, "")}`)}
-qm set ${vmid} --cores ${Math.max(1, Math.ceil(maximumCpu))} --cpulimit ${maximumCpu} --memory ${ramEnvelope.ceilingMb} --balloon ${ramEnvelope.baselineMb}
-ACTUAL_CPULIMIT="$(qm config ${vmid} | awk '$1=="cpulimit:" {print $2; exit}')"
+${hermesStandby ? `ACTUAL_CORES="$(awk '$1=="cores:" {print $2; exit}' <<< "$CONFIG")"
+ACTUAL_MEMORY="$(awk '$1=="memory:" {print $2; exit}' <<< "$CONFIG")"
+ACTUAL_BALLOON="$(awk '$1=="balloon:" {print $2; exit}' <<< "$CONFIG")"
+ACTUAL_WEIGHT="$(awk '$1=="cpuunits:" {print $2; exit}' <<< "$CONFIG")"
+[ "$ACTUAL_CORES" = ${shellQuote(String(Math.max(1, Math.ceil(maximumCpu))))} ] \\
+  && [ "$ACTUAL_MEMORY" = ${shellQuote(String(ramEnvelope.ceilingMb))} ] \\
+  && [ "$ACTUAL_BALLOON" = 0 ] \\
+  && [ "$(stat -fc %T /sys/fs/cgroup)" = cgroup2fs ] \\
+  && [ "\${ACTUAL_WEIGHT:-${HERMES_STANDBY_CPU_UNITS}}" = ${HERMES_STANDBY_CPU_UNITS} ] \\
+  || { echo "standby resource envelope or CPU weight differs from its claim" >&2; exit 1; }
+ACTUAL_CPULIMIT="$(awk '$1=="cpulimit:" {print $2; exit}' <<< "$CONFIG")"` : `qm set ${vmid} --cores ${Math.max(1, Math.ceil(maximumCpu))} --cpulimit ${maximumCpu} --memory ${ramEnvelope.ceilingMb} --balloon ${ramEnvelope.baselineMb}
+ACTUAL_CPULIMIT="$(qm config ${vmid} | awk '$1=="cpulimit:" {print $2; exit}')"`}
 [ "$ACTUAL_CPULIMIT" = ${shellQuote(String(maximumCpu))} ] \
   || { echo "allocated VM has an unexpected CPU limit" >&2; exit 1; }
 rm -f -- "/run/hivra-provision/${vmid}.allocated"
@@ -2458,7 +2741,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
 
     // Phase 5: set the VM's scheduling-priority weight from the pool tier at first
     // launch (the out-of-repo provisioner sizes cores/RAM but not cpuunits).
-    const { data: poolRow } = poolId
+    const { data: poolRow } = poolId && !hermesStandby
       ? await supabaseAdmin.from("pools").select("priority").eq("id", poolId).maybeSingle()
       : { data: null };
     const cpuunits = priorityToCpuUnits((poolRow as { priority?: number } | null)?.priority);
@@ -2468,7 +2751,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
     // it never rejects, so the previous `.catch(() => {})` was dead code that
     // hid every failure, and the `|| true; echo ok` masked the `qm set` exit
     // status too. Run it unmasked and log a degraded warning if it fails.
-    const cpuUnitsResult = await runProxmoxHostScript(
+    const cpuUnitsResult = hermesStandby ? null : await runProxmoxHostScript(
       `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
@@ -2478,7 +2761,7 @@ printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq ${shellQuote(`hivra-op-${provisi
 qm set ${vmid} --cpuunits ${cpuunits}`,
       env
     );
-    if (!cpuUnitsResult.ok) {
+    if (cpuUnitsResult && !cpuUnitsResult.ok) {
       log.warn("hivra agent cpu priority not applied; running with host default weight", {
         source: "hivra/agents",
         failureType: "hivra_agent_cpuunits_apply_failed",
@@ -2515,6 +2798,19 @@ qm set ${vmid} --cpuunits ${cpuunits}`,
 
     if (launchOperations && launchOperationAdmission) {
       await launchOperations.accept(launchOperationAdmission, String(agent.id), 201);
+    }
+    if (measuredCanary) {
+      checkpointLaunchTiming("acceptedMs");
+      log.info(type === "hermes" ? "managed Hermes launch timings" : "managed agent launch timings", {
+        source: "hivra/agents",
+        agentId: agent.id,
+        agentType: type,
+        operationId: provisionOperationId,
+        vmid,
+        baked: hermesImageSha256 !== undefined || preparedImage !== undefined,
+        ...(preparedImage ? { imageKind: preparedImage.kind, imageSha256: preparedImage.digest } : {}),
+        ...launchCheckpoints,
+      });
     }
     return apiSuccess({ agent: sanitizeHivraAgentRow(updated || { ...agent, vmid, ip }),
       ...(launchAdmission ? { launchRequestId: launchAdmission.requestId } : {}),

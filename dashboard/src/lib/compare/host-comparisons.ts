@@ -54,6 +54,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
         blocks: paragraphs(
           `Agent 37 and Hivra both give an agent a machine that does not depend on your laptop, and they charge for it in opposite ways. Agent 37's Cloud API is a meter: you fund a prepaid balance, and compute and disk draw it down by the minute, with no plan fee. Hivra is a monthly computer, ${ENTRY_PRICE_PROSE}, a fixed figure whether the agent is busy or idle. For a standard, shared sandbox with 2 vCPU, 4 GB and 4 GB of disk running 730 hours, Agent 37 states $4.76 and Hivra is ${ENTRY_PLAN_PRICE}.`,
           "It is not the whole story, because the two sell different things around the meter. Agent 37 is built for products and teams that create sandboxes through an API, and it also sells flat managed plans for individuals. Hivra is built for a developer or AI power user who wants a computer of its own for an agent, one you open and work in, and a bill that does not move. The useful question is what your agent does all month and whether you want the bill to follow it.",
+          "Shopping for a personal agent rather than a sandbox API? [Compare the Agent 37 Personal tiers](/compare/agent37) with Hivra Cloud by price, storage, uptime and included AI.",
         ),
       },
       {
@@ -97,7 +98,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
               {
                 criterion: "Always-on 2 vCPU, 4 GB",
                 hivra: `${formatPlanSize("entry", "compact")}`,
-                alternative: "$4.76/mo for 730 running hours on a standard, shared sandbox, including 4 GB of disk. A like-for-like VM is about $11.36 (our arithmetic from its rate card), above Hivra's $9.99 for 2 vCPU and 4 GB",
+                alternative: "$4.76/mo for 730 running hours on a standard, shared sandbox, including 4 GB of disk. A VM from Agent 37 with the same listed resources is about $11.36 by our arithmetic from its rate card",
               },
               {
                 criterion: "Always-on 4 vCPU, 8 GB (our arithmetic)",
@@ -260,7 +261,7 @@ export const HOST_COMPARISONS: Record<CompetitorSlug, ComparePage> = {
     faqs: [
       {
         q: "Is Agent 37 cheaper than Hivra?",
-        a: `On raw compute, yes. An always-on 2 vCPU, 4 GB standard sandbox is $4.76 a month on Agent 37's metered Cloud API, against Hivra at ${ENTRY_PRICE_PROSE}. That price assumes a funded balance, includes 4 GB of disk and leaves out model usage. A like-for-like VM on Agent 37 costs 2.5 times the compute rate, about $11.36 on our arithmetic, above Hivra's $9.99 for 2 vCPU and 4 GB. The $4.76 is for a standard, shared sandbox with 4 GB of disk over 730 hours. For work that is mostly idle a meter is cheaper again, and for steady work you should add up a full month.`,
+        a: `Compare the machine as well as the bill. An always-on 2 vCPU, 4 GB standard sandbox is $4.76 a month on Agent 37's metered Cloud API, against Hivra at ${ENTRY_PRICE_PROSE}. That price assumes a funded balance, includes 4 GB of disk and leaves out model usage. A VM on Agent 37 costs 2.5 times the compute rate, about $11.36 by our arithmetic. The $4.76 is for a standard, shared sandbox with 4 GB of disk over 730 hours. For work that is mostly idle a meter costs less, and for steady work you should add up a full month.`,
       },
       {
         q: "Does Hivra include AI usage in the monthly price?",

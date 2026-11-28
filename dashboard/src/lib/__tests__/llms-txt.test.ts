@@ -132,12 +132,12 @@ describe("buildLlmsTxt", () => {
     }
   });
 
-  it("describes /compare as fifteen comparisons including the agent product and sandbox pages", () => {
+  it("links the comparison directory and individual hosted pricing comparisons", () => {
     const txt = buildLlmsTxt({ siteUrl: SITE });
     const line = txt.split("\n").find((l) => l.includes(`(${SITE}/compare)`)) ?? "";
-    for (const name of ["Fifteen comparisons", "Claude Code on the web", "OpenAI Codex cloud", "Cursor cloud agents", "GitHub Codespaces", "Fly.io Sprites", "E2B", "dated price table"]) {
-      expect([name, line.includes(name)]).toEqual([name, true]);
-    }
+    expect(line).toContain("personal agent hosting, sandbox services and self-hosting");
+    expect(txt).toContain(`[Hivra vs Agent 37](${SITE}/compare/agent37)`);
+    expect(txt).toContain(`[Hivra vs xCloud](${SITE}/compare/xcloud)`);
   });
 
   it("says what is coming next in the ecosystem page's own words, so the two cannot disagree", () => {

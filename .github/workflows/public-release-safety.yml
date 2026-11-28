@@ -68,8 +68,15 @@ jobs:
       - name: Guard staged native package publication with owned filesystem fixtures
         run: sudo python3 -I -B dashboard/scripts/test-deepseek-package-install.py && sudo python3 -I -B dashboard/scripts/test-deepseek-service-owner.py && sudo python3 -I -B dashboard/scripts/test-deepseek-guest-install.py && sudo python3 -I -B dashboard/scripts/test-deepseek-guest-update.py && python3 -I -B dashboard/scripts/test-guest-install.py
 
-      - name: Guard offline native systemd fixture boundaries
-        run: python3 -I -B dashboard/scripts/test-deepseek-systemd-vm-contract.py
+      - name: Guard offline systemd fixtures and image producer boundaries
+        run: |
+          python3 -I -B dashboard/scripts/test-deepseek-systemd-vm-contract.py
+          python3 -I -B dashboard/scripts/test-runtime-image-bake.py
+          python3 -I -B dashboard/scripts/test-agent-zero-bake.py
+          python3 -I -B dashboard/scripts/test-bux-runtime-bake.py
+
+      - name: Guard exact Hermes standby host staging and claim boundaries
+        run: sudo python3 -I -B dashboard/provisioner/test_hivra_hermes_standby.py
 
       # The reporter ships in the portable bundle. Run its stdlib tests in UTC
       # and in a zone behind UTC so a local-time parsing regression cannot hide

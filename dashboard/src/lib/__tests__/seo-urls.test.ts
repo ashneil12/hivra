@@ -1,5 +1,6 @@
 import { COMPETITOR_FACTS_CHECKED } from "@/lib/compare/competitor-facts";
 import { PRODUCT_FACTS_CHECKED } from "@/lib/compare/products/checked";
+import { HOSTED_COMPETITORS, hostedComparisonPath } from "@/lib/compare/hosted-competitors";
 import { getPublicBlogArticles } from "@/lib/blog-data";
 import { AGENT_PAGES_LAST_MODIFIED, AGENT_SEO_SLUGS } from "@/lib/hivra/agent-seo-catalog";
 import { PRICES_AS_OF } from "@/app/pricing/pricing-content";
@@ -150,10 +151,11 @@ describe("seo urls", () => {
   it("dates the /features and /compare pages from the registry, and the host and product comparisons from the day their figures were read", () => {
     const urls = getSiteUrls();
     const rewritten = urls.filter((u) => /\/(features|compare)(\/|$)/.test(u.url));
-    // 2 hubs + 6 feature pages + 22 comparison pages.
+    const hostedDates = new Map(HOSTED_COMPETITORS.map((provider) => [hostedComparisonPath(provider.slug), provider.checked]));
     expect(rewritten.map((u) => u.url.slice(SITE_URL.length)).sort()).toEqual(
       [
         "/compare",
+        ...hostedDates.keys(),
         "/compare/ai-agent-hosting-alternatives",
         "/compare/openclaw-to-hermes",
         "/compare/vs-agent-37",
@@ -209,6 +211,7 @@ describe("seo urls", () => {
       const path = entry.url.slice(SITE_URL.length);
       const registryDay =
         path === "/features" ? PAGE_LAST_MODIFIED.featuresHub
+        : hostedDates.has(path) ? hostedDates.get(path)!
         : productPages.has(path) ? (PRODUCT_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? PRODUCT_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail)
         : path === "/compare" ? PAGE_LAST_MODIFIED.compareHub
         : factsPages.has(path) ? (COMPETITOR_FACTS_CHECKED > PAGE_LAST_MODIFIED.compareDetail ? COMPETITOR_FACTS_CHECKED : PAGE_LAST_MODIFIED.compareDetail)

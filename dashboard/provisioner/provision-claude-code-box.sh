@@ -65,6 +65,7 @@ NODE_LINUX_X64_SHA256="${NODE_LINUX_X64_SHA256:-d60acfe00a2932254bb0ad20e01b0d74
 TTYD_VERSION="${TTYD_VERSION:-1.7.7}"
 TTYD_LINUX_X64_SHA256="${TTYD_LINUX_X64_SHA256:-8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55}"
 AGENT_ZERO_IMAGE_DIGEST="${AGENT_ZERO_IMAGE_DIGEST:-}"  # default: the image's latest tag at launch
+AGENT_ZERO_BAKED="${HIVRA_AGENT_ZERO_BAKED:-0}"
 CDP_PORT="${CDP_PORT:-9222}"                    # local Chrome remote-debugging port
 PROFILE_DIR="${PROFILE_DIR:-/home/${AGENT_USER}/.browser-profile}"  # NON-default Chrome profile (Chrome 136+ gotcha)
 HIVRA_CHAT_PORT="${HIVRA_CHAT_PORT:-8080}"      # Hivra chat HTTP port
@@ -91,6 +92,20 @@ case "$COMPUTER_SUBSTRATE" in
   proxmox-kvm|provider-vm) ;;
   *) printf '%s\n' 'unsupported HIVRA_COMPUTER_SUBSTRATE' >&2; exit 1 ;;
 esac
+HERMES_BAKED="${HIVRA_HERMES_BAKED:-0}"
+case "$HERMES_BAKED" in
+  0) ;;
+  1) [ "$AGENT_KIND:$COMPUTER_SUBSTRATE" = hermes:proxmox-kvm ] || exit 1 ;;
+  *) exit 1 ;;
+esac
+BUX_BAKED="${HIVRA_BUX_DEPENDENCIES_BAKED:-0}"
+case "$BUX_BAKED:$AGENT_KIND:$COMPUTER_SUBSTRATE:${HIVRA_WANT_BROWSER:-}" in
+  0:*|1:claude:proxmox-kvm:0|1:codex:proxmox-kvm:0) ;;
+  *) printf '%s\n' 'unsupported baked bux dependency profile' >&2; exit 1 ;;
+esac
+uses_standalone_access_base() {
+  is_linux_computer || [ "$HERMES_BAKED" = 1 ]
+}
 # A private provider desktop worker must publish its ownership plan before
 # activating chat, Selkies or the broker. This mode only prepares the shared
 # base; it never publishes a desktop/runtime receipt or completes a launch.
@@ -151,6 +166,57 @@ warn() { printf '%s  ! %s %s\n' "$c_red" "$c_reset" "$*" >&2; }
 # guest is removed on failure, so this is the only trace of which step stopped.
 die()  { warn "$*"; ( umask 077; printf '%s\n' "$*" > /run/hivra-install-failure-reason ) 2>/dev/null || true; exit 1; }
 
+read_hermes_version() {
+  local version_text
+  version_text="$(timeout 60 sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${AGENT_HOME}/.hermes" \
+    "${AGENT_HOME}/.local/bin/hermes" --version 2>/dev/null)" || return 1
+  [[ "${version_text%%$'\n'*}" =~ (^|[^0-9])([0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6})([^0-9.]|$) ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[2]}"
+}
+
+verify_hermes_bake() {
+  local pin source_dir="${AGENT_HOME}/.hermes/hermes-agent"
+  pin="$(python3 -I -B - /etc/hivra/hermes-bake.json <<'PY'
+import json, os, re, stat, sys
+
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError()
+        result[key] = value
+    return result
+
+try:
+    with os.fdopen(os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK), "rb") as source:
+        file = os.fstat(source.fileno())
+        if file.st_uid != 0 or file.st_mode & 0o022 or not stat.S_ISREG(file.st_mode) or not 0 < file.st_size <= 2048:
+            raise ValueError()
+        marker = json.loads(source.read(2049), object_pairs_hook=unique)
+    if (set(marker) != {"schema", "kind", "baseImageSha256", "hermesVersion", "hermesCommit", "hermesInstallerSha256"}
+            or type(marker["schema"]) is not int or marker["schema"] != 1 or marker["kind"] != "official-hermes"):
+        raise ValueError()
+    for name, pattern in (("baseImageSha256", "[0-9a-f]{64}"), ("hermesInstallerSha256", "[0-9a-f]{64}"),
+                          ("hermesCommit", "[0-9a-f]{40}"), ("hermesVersion", r"[0-9]{1,6}(\.[0-9]{1,6}){2}")):
+        if not re.fullmatch(pattern, marker[name]):
+            raise ValueError()
+    print(marker["hermesVersion"], marker["hermesCommit"])
+except (OSError, ValueError, KeyError, TypeError, RecursionError):
+    sys.exit(1)
+PY
+)" || die "baked Hermes image marker is missing or invalid"
+  [ "$(sudo -u "${AGENT_USER}" -H git -C "$source_dir" rev-parse --verify HEAD)" = "${pin#* }" ] \
+    || die "baked Hermes checkout differs from its marker"
+  BAKED_HERMES_VERSION="$(read_hermes_version)" || die "baked Hermes CLI is unavailable"
+  [ "$BAKED_HERMES_VERSION" = "${pin% *}" ] || die "baked Hermes version differs from its marker"
+  [ -s "$source_dir/apps/desktop/dist-webapp/index.html" ] \
+    && [ -s "$source_dir/apps/desktop/dist-webapp/hermes-build.json" ] \
+    || die "baked Hermes Webapp is missing"
+  [ "$(node --version)" = "v${NODE_VERSION}" ] && command -v npm >/dev/null && [ -x /usr/local/bin/ttyd ] \
+    && cloudflared --version | grep -Fq "$CLOUDFLARED_VERSION" && command -v gh >/dev/null \
+    || die "baked Hermes access dependencies are missing or stale"
+}
+
 # The pinned Google Chrome build ships as data too (chrome-pin.json), so this
 # installer and the runtime updater (hivra-guest-runtime-update.sh), which moves
 # an existing computer to the pin, read the same file.
@@ -197,6 +263,54 @@ fi
 [[ "$NODE_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid Node.js checksum"
 [[ "$TTYD_LINUX_X64_SHA256" =~ ^[0-9a-f]{64}$ ]] || die "invalid ttyd checksum"
 [ -z "$AGENT_ZERO_IMAGE_DIGEST" ] || [[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "invalid Agent Zero image digest"
+case "$AGENT_ZERO_BAKED" in
+  0) ;;
+  1) [ "$AGENT_KIND:$COMPUTER_SUBSTRATE" = agent-zero:proxmox-kvm ] || die "Agent Zero bake requires an Agent Zero Proxmox guest" ;;
+  *) die "invalid Agent Zero baked image flag" ;;
+esac
+read_agent_zero_bake_digest() {
+  python3 -I -B - "$1" <<'PYTHON'
+import json
+import os
+import re
+import stat
+import sys
+
+def unique(pairs):
+    if len({key for key, _ in pairs}) != len(pairs):
+        raise ValueError()
+    return dict(pairs)
+
+try:
+    with os.fdopen(os.open(sys.argv[1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW), "rb") as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022 or not 0 < info.st_size <= 2048:
+            raise ValueError()
+        data = json.loads(source.read(2049), object_pairs_hook=unique)
+    if (set(data) != {"schema", "kind", "baseImageSha256", "imageDigest", "archiveSha256"}
+            or type(data["schema"]) is not int or data["schema"] != 1 or data["kind"] != "agent-zero"):
+        raise ValueError()
+    for key in ("baseImageSha256", "archiveSha256", "imageDigest"):
+        if not re.fullmatch(("sha256:" if key == "imageDigest" else "") + "[0-9a-f]{64}", data[key]):
+            raise ValueError()
+    print(data["imageDigest"])
+except (OSError, ValueError, TypeError, KeyError, RecursionError):
+    sys.exit(1)
+PYTHON
+}
+
+if [ "$AGENT_ZERO_BAKED" = 1 ]; then
+  BAKED_A0_DIGEST="$(read_agent_zero_bake_digest /etc/hivra/agent-zero-bake.json)" \
+    || die "Agent Zero baked image marker is missing or invalid"
+  [ -z "$AGENT_ZERO_IMAGE_DIGEST" ] || [ "$AGENT_ZERO_IMAGE_DIGEST" = "$BAKED_A0_DIGEST" ] \
+    || die "Agent Zero digest does not match the selected baked image"
+  AGENT_ZERO_IMAGE_DIGEST="$BAKED_A0_DIGEST"
+  if [ -e /etc/systemd/system/hivra-agent-zero.service ] \
+    && ! grep -Eq "^ExecStart=.* agent0ai/agent-zero@${AGENT_ZERO_IMAGE_DIGEST}$" /etc/systemd/system/hivra-agent-zero.service; then
+    die "Agent Zero has already changed version; baked provisioning will not roll it back"
+  fi
+fi
+
 [[ "$CDP_PORT" =~ ^[0-9]+$ ]] && [ "$CDP_PORT" -ge 1 ] && [ "$CDP_PORT" -le 65535 ] \
   || die "CDP_PORT must be an integer from 1 to 65535"
 if [ -n "$ACCESS_HOSTNAME" ]; then
@@ -266,12 +380,25 @@ with_retries() {
   done
   return 1
 }
-apt_get update -y || die "apt-get update failed after retries"
-apt_get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils \
-  || die "base package installation failed after retries"
-
+if [ "$HERMES_BAKED" = 1 ]; then
+  verify_hermes_bake
+elif [ "$BUX_BAKED" = 1 ]; then
+  if [ -e "$BUX_DIR" ] || [ -L "$BUX_DIR" ] || [ -e "$AGENT_HOME" ] || [ -L "$AGENT_HOME" ] \
+    || id "$AGENT_USER" >/dev/null 2>&1 || command -v claude >/dev/null 2>&1 || command -v codex >/dev/null 2>&1; then
+    die "baked bux dependencies require a fresh tenant"
+  fi
+  python3 -I "$SRC_DIR/hivra-bux-bake.py" verify "$BUX_REF" "$GH_VERSION" \
+    || die "baked bux dependency verification failed"
+  ok "verified baked bux dependencies"
+else
+  apt_get update -y || die "apt-get update failed after retries"
+  apt_get install -y curl ca-certificates git wget gnupg tmux sudo xz-utils \
+    || die "base package installation failed after retries"
+  if [ "$COMPUTER_SUBSTRATE" = "proxmox-kvm" ]; then
+    apt_get install -y qemu-guest-agent || die "qemu-guest-agent installation failed after retries"
+  fi
+fi
 if [ "$COMPUTER_SUBSTRATE" = "proxmox-kvm" ]; then
-  apt_get install -y qemu-guest-agent || die "qemu-guest-agent installation failed after retries"
   systemctl enable --now qemu-guest-agent \
     || die "qemu-guest-agent failed to start"
 fi
@@ -293,11 +420,13 @@ latest_or_die() {
   value="$(with_retries npm_latest_version "$1")" || die "could not find the newest $1 release on npm"
   printf '%s\n' "$value"
 }
-if [ -z "${CLAUDE_CODE_VERSION:-}" ]; then CLAUDE_CODE_VERSION="$(latest_or_die @anthropic-ai/claude-code)"; fi
-if [ -z "${CODEX_CLI_VERSION:-}" ]; then CODEX_CLI_VERSION="$(latest_or_die @openai/codex)"; fi
-[[ "$CLAUDE_CODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CLAUDE_CODE_VERSION must be an x.y.z version"
-[[ "$CODEX_CLI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CODEX_CLI_VERSION must be an x.y.z version"
-ok "newest releases: Claude Code ${CLAUDE_CODE_VERSION}, Codex ${CODEX_CLI_VERSION}"
+if [ "$HERMES_BAKED" != 1 ]; then
+  if [ -z "${CLAUDE_CODE_VERSION:-}" ]; then CLAUDE_CODE_VERSION="$(latest_or_die @anthropic-ai/claude-code)"; fi
+  if [ -z "${CODEX_CLI_VERSION:-}" ]; then CODEX_CLI_VERSION="$(latest_or_die @openai/codex)"; fi
+  [[ "$CLAUDE_CODE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CLAUDE_CODE_VERSION must be an x.y.z version"
+  [[ "$CODEX_CLI_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die "CODEX_CLI_VERSION must be an x.y.z version"
+  ok "newest releases: Claude Code ${CLAUDE_CODE_VERSION}, Codex ${CODEX_CLI_VERSION}"
+fi
 case "$AGENT_KIND" in
   openclaw)
     if [ -z "${OPENCLAW_VERSION:-}" ]; then OPENCLAW_VERSION="$(latest_or_die openclaw)"; fi
@@ -365,11 +494,15 @@ fi
 # ===========================================================================
 say "2/7  install stock bux into ${BUX_DIR} (dummy BU key, WITH_ZTK=0)"
 # ===========================================================================
-if is_linux_computer; then
+if uses_standalone_access_base; then
   # A plain computer must not depend on an agent distribution. Install only
   # the small host-side access base used by Files and the two terminals; the
   # contained desktop itself is installed later by remote-desktop/install-guest.py.
-  say "installing standalone Linux Desktop access base"
+  if is_linux_computer; then
+    say "installing standalone Linux Desktop access base"
+  else
+    say "installing standalone baked Hermes access base"
+  fi
   if ! id "${AGENT_USER}" >/dev/null 2>&1; then
     useradd --create-home --home-dir "${AGENT_HOME}" --shell /bin/bash "${AGENT_USER}"
   fi
@@ -378,6 +511,7 @@ if is_linux_computer; then
 
   NODE_ROOT="/opt/hivra/node-v${NODE_VERSION}-linux-x64"
   if [ ! -x "${NODE_ROOT}/bin/node" ] || [ "$("${NODE_ROOT}/bin/node" --version 2>/dev/null || true)" != "v${NODE_VERSION}" ]; then
+    [ "$HERMES_BAKED" != 1 ] || die "baked Hermes Node.js is missing or stale"
     [ ! -e "${NODE_ROOT}" ] || die "existing Node.js runtime differs from the pinned desktop runtime"
     NODE_TMP_DIR="$(mktemp -d /tmp/hivra-node.XXXXXX)"
     trap 'rm -rf -- "${NODE_TMP_DIR:-}"' EXIT
@@ -402,6 +536,7 @@ if is_linux_computer; then
   [ "$(node --version)" = "v${NODE_VERSION}" ] || die "pinned Node.js runtime is unavailable"
 
   if [ ! -x /usr/local/bin/ttyd ] || ! /usr/local/bin/ttyd --version 2>&1 | grep -Fq "$TTYD_VERSION"; then
+    [ "$HERMES_BAKED" != 1 ] || die "baked Hermes ttyd is missing or stale"
     TTYD_TMP="$(mktemp /tmp/hivra-ttyd.XXXXXX)"
     trap 'rm -f -- "${TTYD_TMP:-}"' EXIT
     curl --fail --location --proto '=https' --tlsv1.2 --retry 3 --retry-connrefused --retry-delay 3 \
@@ -488,7 +623,7 @@ run_public_bootstrap() (
 )
 
 ensure_bux_installed() {
-if id "${AGENT_USER}" >/dev/null 2>&1 && [ -x /usr/bin/claude ]; then
+if [ "${BUX_BAKED:-0}" != 1 ] && id "${AGENT_USER}" >/dev/null 2>&1 && [ -x /usr/bin/claude ]; then
   ok "bux already installed (user ${AGENT_USER} + claude present); skipping installer"
 else
   # HEAD identifies the checkout, not its mutable working-tree bytes. Never
@@ -496,6 +631,10 @@ else
   # (or a dashboard runtime which stripped the coding CLIs) needs trusted repair.
   [ "$BUX_CHECKOUT_CREATED" = 1 ] \
     || die "existing bux base is incomplete; trusted base repair is required"
+  if [ "${BUX_BAKED:-0}" = 1 ]; then
+    python3 -I "$SRC_DIR/hivra-bux-bake.py" patch "${BUX_DIR}/install.sh" \
+      || die "could not apply the baked dependency bypass to the reviewed bux installer"
+  fi
   # Only the checkout created by this invocation is eligible for root execution.
   # Point its two CLI downloads at the newest releases found above, so the
   # version installed is the one Hivra records.
@@ -1285,6 +1424,7 @@ A0_REPO="agent0ai/agent-zero"
 
 # --- Docker engine (boxes are full VMs — no LXC-nesting problem here) ---
 if ! command -v docker >/dev/null 2>&1; then
+  [ "$AGENT_ZERO_BAKED" = 0 ] || die "baked Docker engine is missing"
   say "installing Docker from Ubuntu's signed package repository"
   apt_get install -y docker.io || die "docker.io package installation failed"
 fi
@@ -1299,6 +1439,12 @@ if [ -z "$AGENT_ZERO_IMAGE_DIGEST" ]; then
   [[ "$AGENT_ZERO_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || die "could not read the Agent Zero image digest"
 fi
 A0_IMAGE="${A0_REPO}@${AGENT_ZERO_IMAGE_DIGEST}"
+A0_PULL_POLICY=""
+if [ "$AGENT_ZERO_BAKED" = 1 ]; then
+  [ "$(docker image inspect --format '{{.Id}} {{.Os}}/{{.Architecture}}' "$A0_IMAGE")" = "$AGENT_ZERO_IMAGE_DIGEST linux/amd64" ] \
+    || die "baked Agent Zero store is missing the pinned linux/amd64 image"
+  A0_PULL_POLICY="--pull=never "
+fi
 ok "Agent Zero image ${A0_IMAGE}"
 
 # --- Persisted state + basic-auth + (optional) managed model -> /opt/a0/.env ---
@@ -1435,10 +1581,12 @@ else
 fi
 
 # Pull the image by digest so the unit's first `docker run` starts fast.
-docker pull "${A0_IMAGE}" >/tmp/az-pull.log 2>&1 \
-  || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
-docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
-  || die "Agent Zero image digest is unavailable after pull"
+if [ "$AGENT_ZERO_BAKED" = 0 ]; then
+  docker pull "${A0_IMAGE}" >/tmp/az-pull.log 2>&1 \
+    || die "Agent Zero image pull failed (see /tmp/az-pull.log)"
+  docker image inspect "${A0_IMAGE}" >/dev/null 2>&1 \
+    || die "Agent Zero image digest is unavailable after pull"
+fi
 record_agent_app agent-zero "$AGENT_ZERO_IMAGE_DIGEST"
 
 # --- systemd unit: run the pinned image loopback-bound, env + state mounted ---
@@ -1460,7 +1608,7 @@ TimeoutStopSec=30
 Restart=always
 RestartSec=5
 ExecStartPre=-/usr/bin/docker rm -f hivra-agent-zero
-ExecStart=/usr/bin/docker run --rm --name hivra-agent-zero -v ${A0_ROOT}/.env:/a0/.env -v ${A0_ROOT}/usr:/a0/usr -p 127.0.0.1:${A0_PORT}:80 ${A0_IMAGE}
+ExecStart=/usr/bin/docker run ${A0_PULL_POLICY}--rm --name hivra-agent-zero -v ${A0_ROOT}/.env:/a0/.env -v ${A0_ROOT}/usr:/a0/usr -p 127.0.0.1:${A0_PORT}:80 ${A0_IMAGE}
 ExecStop=/usr/bin/docker stop -t 25 hivra-agent-zero
 [Install]
 WantedBy=multi-user.target
@@ -1721,8 +1869,8 @@ fi
 if [ "$AGENT_KIND" = "hermes" ]; then
 say "5e/7  Hermes Agent (official installer + Hermes's own web UI)"
 # ===========================================================================
-# Hermes Agent is installed with ITS OWN installer, unmodified: no fork, no
-# overlay, no patches, no version pin. Hivra only creates the computer, points
+# Hermes Agent uses its own unmodified installer, at launch on the stock path
+# or at bake time on the opted-in Proxmox image. Hivra points
 # Hermes at managed inference, and fronts its dashboard (loopback :9119) with
 # the box token gate under /hermes. The owner updates it with `hermes update`
 # (Terminal) or the Update button, which runs exactly that.
@@ -1730,6 +1878,8 @@ HERMES_PORT=9119
 HERMES_DIR="${AGENT_HOME}/.hermes"
 HERMES_BIN="${AGENT_HOME}/.local/bin/hermes"
 HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
+HERMES_TMP="$(sudo -u "${AGENT_USER}" -H mktemp -d /tmp/hivra-hermes.XXXXXX)" \
+  || die "could not create a Hermes install directory"
 
 # The first install builds a Python environment and a web UI; ensure swap so a
 # small box does not run out of memory half way through.
@@ -1739,6 +1889,11 @@ if ! swapon --show=NAME --noheadings 2>/dev/null | grep -q .; then
   grep -q '^/swapfile ' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
   ok "2G swapfile enabled (install headroom for small boxes)"
 fi
+
+if [ "$HERMES_BAKED" = 1 ]; then
+  HERMES_VERSION="$BAKED_HERMES_VERSION"
+  ok "using pre-baked official Hermes ${HERMES_VERSION}"
+else
 
 # Hermes's installer downloads the official Node.js build, which links the host's
 # libatomic.so.1. The Ubuntu cloud image leaves that library out, and the installer
@@ -1752,8 +1907,6 @@ apt_get install -y libatomic1 \
 # never run as root), then run it as the agent user. Its stable channel is the
 # latest published release; --non-interactive/--skip-browser keep it unattended
 # and leave the browser stack off (this computer has no desktop).
-HERMES_TMP="$(sudo -u "${AGENT_USER}" -H mktemp -d /tmp/hivra-hermes.XXXXXX)" \
-  || die "could not create a Hermes install directory"
 sudo -u "${AGENT_USER}" -H curl --proto '=https' --tlsv1.2 -fsSL --max-time 120 \
   "${HERMES_INSTALL_URL}" -o "${HERMES_TMP}/install.sh" \
   || die "could not download the Hermes installer"
@@ -1768,6 +1921,7 @@ HERMES_VERSION="$(timeout 60 sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}"
 [[ "$HERMES_VERSION" =~ ^[0-9]{1,6}\.[0-9]{1,6}\.[0-9]{1,6}$ ]] \
   || die "could not read the installed Hermes version"
 ok "hermes installed (${HERMES_VERSION})"
+fi
 record_agent_app hermes "$HERMES_VERSION"
 
 # Managed inference: Venice through the Hivra gateway, as a custom
@@ -1831,6 +1985,7 @@ hermes_webapp_setup() {
   sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
     PATH="${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin" \
     "${HERMES_BIN}" config set webapp.enabled true >/dev/null </dev/null || return 1
+  [ "$HERMES_BAKED" != 1 ] || return 0
   timeout -k 30 1800 sudo -u "${AGENT_USER}" -H env HOME="${AGENT_HOME}" HERMES_HOME="${HERMES_DIR}" \
     PATH="${AGENT_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin" \
     "${HERMES_BIN}" webapp --build-only </dev/null || return 1
@@ -1838,6 +1993,7 @@ hermes_webapp_setup() {
 if hermes_webapp_setup; then
   ok "Hermes Webapp turned on and built (the gateway serves it on 127.0.0.1:${HERMES_WEBAPP_PORT}, mounted at /hermes)"
 else
+  [ "$HERMES_BAKED" != 1 ] || die "could not enable the baked Hermes Webapp"
   warn "Hermes Webapp could not be turned on or built; /hermes shows Hermes's dashboard until: hermes webapp --build-only"
 fi
 
@@ -2087,6 +2243,8 @@ if [ "$AGENT_KIND" = "hermes" ]; then
   if hermes_gateway_setup; then
     rm -f -- "${HERMES_GATEWAY_NOTE}"
     ok "Hermes gateway installed as a user service with linger (scheduled tasks and chat channels)"
+  elif [ "$HERMES_BAKED" = 1 ]; then
+    die "baked Hermes gateway did not start"
   else
     warn "Hermes gateway could not be installed or started; the dashboard works but scheduled tasks and chat channels will not run until you run: hermes gateway install"
     printf 'hermes gateway install failed at launch\n' > "${HERMES_GATEWAY_NOTE}" 2>/dev/null \
@@ -2208,6 +2366,11 @@ wait_for_browser_ready() {
   done
   return 1
 }
+if [ "$HERMES_BAKED" = 1 ]; then
+  wait_for_exact_http_200 "http://127.0.0.1:${HERMES_WEBAPP_PORT}/" &
+  HERMES_WEBAPP_PID=$!
+  trap 'kill "$HERMES_WEBAPP_PID" 2>/dev/null || true; wait "$HERMES_WEBAPP_PID" 2>/dev/null || true' EXIT
+fi
 verify_native_terminals
 if [ "$WANT_BROWSER" = 1 ]; then
   if ! wait_for_browser_ready "${AGENT_HOME}/.claude/browser.env" "${CDP_PORT}"; then
@@ -2296,10 +2459,16 @@ elif [ "$AGENT_KIND" = "hermes" ]; then
   ok "Hermes passed runtime-specific readiness"
   if hermes_as_agent systemctl --user is-active --quiet "${HERMES_GATEWAY_UNIT}"; then
     ok "Hermes gateway is active (scheduled tasks and chat channels can run)"
+  elif [ "$HERMES_BAKED" = 1 ]; then
+    die "baked Hermes gateway is not active"
   else
     warn "Hermes gateway is not active; scheduled tasks and chat channels will not run (dashboard is unaffected)"
   fi
-  if wait_for_exact_http_200 "http://127.0.0.1:${HERMES_WEBAPP_PORT:-9120}/"; then
+  if [ "$HERMES_BAKED" = 1 ]; then
+    wait "$HERMES_WEBAPP_PID" || die "baked Hermes Webapp is not served"
+    trap - EXIT
+    ok "baked Hermes Webapp passed local readiness"
+  elif wait_for_exact_http_200 "http://127.0.0.1:${HERMES_WEBAPP_PORT:-9120}/"; then
     ok "Hermes Webapp is served (the agent page opens it at /hermes)"
   else
     warn "Hermes Webapp is not served; the agent page shows Hermes's dashboard at /hermes until it is"

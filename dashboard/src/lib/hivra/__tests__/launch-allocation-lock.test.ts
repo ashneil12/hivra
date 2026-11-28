@@ -1,7 +1,8 @@
 /** @jest-environment node */
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -30,7 +31,10 @@ it("revalidates the selected Canary seal while holding the allocation lock, befo
   expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
 });
 
-function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex") {
+function renderedPhase1(
+  portableRuntime: boolean, canaryProvisionerVersion?: string, agentKind = "codex",
+  preparedImage?: Parameters<typeof phase1Script>[0]["preparedImage"], wantBrowser = false,
+) {
   return phase1Script({
     cpu: 2,
     cpuLimit: 2,
@@ -39,7 +43,7 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
     agentKind,
     tunnelToken: "",
     tunnelUrl: "",
-    wantBrowser: false,
+    wantBrowser,
     subnetPrefix: "10.251.20",
     gateway: "10.251.20.1",
     vmidStart: 200,
@@ -50,6 +54,7 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
     infrastructureBindingTag: BINDING_TAG,
     managedRuntimePaths: MANAGED_PATHS,
     canaryProvisionerVersion,
+    preparedImage,
     portableRuntime: portableRuntime
       ? {
           node: "pve-synthetic",
@@ -72,7 +77,81 @@ function renderedPhase1(portableRuntime: boolean, canaryProvisionerVersion?: str
   });
 }
 
+it("checks the selected digest, immutable file and standalone qcow2 before any allocation", () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), "hivra-deepseek-image-"));
+  try {
+    const content = "fixture image";
+    const digest = createHash("sha256").update(content).digest("hex");
+    const file = path.join(fixture, `hivra-deepseek-harness-${digest}.qcow2`);
+    writeFileSync(file, content);
+    const script = renderedPhase1(false, "2026.11.27.4", "deepseek-harness", { kind: "deepseek-harness", digest });
+    const begin = script.indexOf("PREPARED_IMAGE=");
+    const end = script.indexOf("# Inventory is intentionally", begin);
+    expect(begin).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
+    expect(end).toBeGreaterThan(begin);
+    const gate = script.slice(begin, end).replace("/var/lib/vz/template/iso", fixture);
+    const run = (info: object, mode = "0:0:444:1") => spawnSync("bash", ["-s"], {
+      input: `set -euo pipefail
+stat() { echo "$MODE"; }
+qemu-img() { printf '%s' "$IMAGE_INFO"; }
+${gate}`,
+      env: { ...process.env, MODE: mode, IMAGE_INFO: JSON.stringify(info) },
+      encoding: "utf8",
+    });
+    const good = { format: "qcow2", "virtual-size": 8 * 1024 ** 3 };
+    expect(run(good).status).toBe(0);
+    expect(run(good, "0:0:644:1").status).toBe(1);
+    expect(run({ ...good, "backing-filename": "other.img" }).status).toBe(1);
+    expect(run({ ...good, "format-specific": { data: { "data-file": "other.img" } } }).status).toBe(1);
+    expect(run({ ...good, "virtual-size": 1 }).status).toBe(1);
+    writeFileSync(file, "different");
+    expect(run(good).status).toBe(1);
+    rmSync(file);
+    writeFileSync(path.join(fixture, "elsewhere"), content);
+    symlinkSync("elsewhere", file);
+    expect(run(good).status).toBe(1);
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+it("keeps the prepared Ubuntu disk within the five stock-agent profiles and the managed .4 bundle", () => {
+  const image = { kind: "ubuntu-qga", digest: "a".repeat(64) } as const;
+  for (const kind of ["claude", "codex", "openclaw", "deepseek-harness", "agent-zero"]) {
+    const script = renderedPhase1(false, "2026.11.27.4", kind, image);
+    expect(script).toContain(`HIVRA_UBUNTU_IMG='/var/lib/vz/template/iso/hivra-ubuntu-qga-${image.digest}.qcow2'`);
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    expect(renderedPhase1(true, "2026.11.27.4", kind, image)).not.toContain("PREPARED_IMAGE=");
+    expect(renderedPhase1(false, "2026.11.27.3", kind, image)).not.toContain("PREPARED_IMAGE=");
+  }
+  expect(renderedPhase1(false, "2026.11.27.4", "hermes", image)).not.toContain("PREPARED_IMAGE=");
+});
+
 describe("host allocation lock lifecycle", () => {
+  it.each(["hermes", "claude", "codex", "openclaw", "deepseek-harness", "agent-zero"])(
+    "batches capacity and IP reads under the allocation lock for managed %s on the reviewed Canary release", (kind) => {
+      for (const version of ["2026.11.27.3", "2026.11.27.4", "2026.11.27.5", "2026.11.27.6", "2026.11.27.7"]) {
+        const script = renderedPhase1(false, version, kind);
+        const admission = script.indexOf("HIVRA_CAPACITY_BATCH_QEMU=1 bash ");
+        expect(admission).toBeGreaterThan(script.indexOf("flock -w"));
+        expect(admission).toBeGreaterThan(script.indexOf("OBSERVED_MANIFEST_SHA="));
+        expect(admission).toBeLessThan(script.indexOf("claimed_octets="));
+        expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+        expect(script).toContain('configs=(/etc/pve/qemu-server/*.conf)');
+        expect(script).not.toContain("qm list");
+      }
+      expect(renderedPhase1(false, "2026.11.27.2", kind)).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+      expect(renderedPhase1(true, undefined, kind)).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+    },
+  );
+
+  it("keeps the original inventory path for unmeasured profiles", () => {
+    const script = renderedPhase1(false, "2026.11.27.3", "linux-desktop");
+    expect(script).not.toContain("HIVRA_CAPACITY_BATCH_QEMU");
+    expect(script).toContain("qm list");
+  });
+
   it("reads managed Hermes IP claims in one pmxcfs scan under the allocation lock", () => {
     const script = renderedPhase1(false, undefined, "hermes");
     const start = script.indexOf('claimed_octets="$(');
@@ -104,6 +183,42 @@ printf '%s' "$claimed_octets"`], { encoding: "utf8" });
       expect(run()).toMatchObject({ status: 0, stdout: "50\n51\n52\n53" });
       rmSync(root, { recursive: true });
       expect(run()).toMatchObject({ status: 1, stdout: "", stderr: expect.stringContaining("inventory is unavailable") });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips both the VMID and private IP of a native portable slot when allocating an ordinary launch", () => {
+    const script = renderedPhase1(false, undefined, "hermes");
+    const inventoryStart = script.indexOf('cluster_resources="$(');
+    const inventoryEnd = script.indexOf('intent_vmids="$(', inventoryStart);
+    const pickStart = script.indexOf('claimed_vmids="$(', inventoryEnd);
+    const pickEnd = script.indexOf("install -d -m 0750 ", pickStart);
+    const root = mkdtempSync(path.join(tmpdir(), "hivra-slot-allocation-"));
+    try {
+      mkdirSync(path.join(root, "locks"));
+      const launch = script.slice(inventoryStart, inventoryEnd) + script.slice(pickStart, pickEnd)
+        .replaceAll("/run/lock/hivra-vmids", path.join(root, "locks"))
+        .replaceAll("/etc/pve/qemu-server", root)
+        .replaceAll("/var/lib/hivra/provision-operations", root);
+      const run = (clusterResources: object[]) => spawnSync("bash", ["-s"], {
+        input: `set -euo pipefail
+pvesh() { printf '%s' "$INVENTORY"; }
+RESERVED_VMIDS=
+intent_vmids=
+${launch}
+printf '%s:%s' "$VMID" "$OCTET"`,
+        env: { ...process.env, INVENTORY: JSON.stringify(clusterResources) },
+        encoding: "utf8",
+      });
+      expect(run([])).toMatchObject({ status: 0, stdout: "200:50" });
+      writeFileSync(path.join(root, "200.conf"), [
+        "ipconfig0: ip=10.251.20.51/24", "lock: backup", "name: hivra-slot-200", "onboot: 0",
+        `tags: hivra-slot-${"a".repeat(32)}`, "",
+      ].join("\n"));
+      expect(run([{ vmid: 200, type: "qemu", status: "stopped" }])).toMatchObject({ status: 0, stdout: "201:50" });
+      rmSync(path.join(root, "200.conf"));
+      expect(run([{ vmid: 200, type: "qemu", status: "stopped" }])).toMatchObject({ status: 0, stdout: "201:51" });
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -178,3 +293,20 @@ ${line!.trim()}
   });
 
 });
+
+it.each([["agent-zero", "agent-zero", 24], ["bux-dependencies", "claude", 8], ["bux-dependencies", "codex", 8]] as const)(
+  "limits the prepared %s runtime for %s to .5 and its reviewed disk size", (kind, agent, size) => {
+    const image = { kind, digest: "a".repeat(64) };
+    const script = renderedPhase1(false, "2026.11.27.6", agent, image);
+    expect(script).toContain(`HIVRA_PREPARED_RUNTIME='${kind}'`);
+    expect(script).toContain(`== ${size} * 1024**3`);
+    expect(script).toContain("HIVRA_DISK_GB=40");
+    expect(spawnSync("bash", ["-n"], { input: script }).status).toBe(0);
+    for (const fallback of [
+      renderedPhase1(false, "2026.11.27.4", agent, image),
+      renderedPhase1(false, "2026.11.27.6", "openclaw", image),
+      renderedPhase1(false, "2026.11.27.6", agent, image, true),
+      renderedPhase1(true, "2026.11.27.6", agent, image),
+    ]) expect(fallback).not.toContain("HIVRA_PREPARED_RUNTIME=");
+  },
+);

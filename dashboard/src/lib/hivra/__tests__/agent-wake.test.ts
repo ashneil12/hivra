@@ -62,7 +62,7 @@ jest.mock("../after-response", () => ({ runAfterResponse: (...a: unknown[]) => m
 const mockRunStorage = jest.fn();
 jest.mock("../sleep-storage", () => ({ runSleepStorage: (...a: unknown[]) => mockRunStorage(...a) }));
 
-import { ensureHivraAgentAwake, isStuckTransient, pollPublicHealthz, resetStorageKicks, wakesAtOncePerHost, WAKE_TURN_RETRY_MS, WAKE_TURN_WAIT_MS } from "../agent-wake";
+import { ensureHivraAgentAwake, isStuckTransient, MANAGED_WAKE_WORK_BUDGET_MS, pollPublicHealthz, resetStorageKicks, wakesAtOncePerHost, WAKE_TURN_WAIT_SECONDS } from "../agent-wake";
 
 const AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const VMID = 1234;
@@ -249,22 +249,56 @@ describe("ensureHivraAgentAwake", () => {
     expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "wake_failed" }));
   });
 
-  it("waits its turn when the server's wakes are all taken, then wakes, instead of failing", async () => {
-    // Seen on Canary: five deep-sleeping agents woken together, two came back and three were told the wake failed.
+  it("keeps the same wake lease and leaves it running after the interactive wait", async () => {
     jest.useFakeTimers();
     try {
-      const taken = { admitted: false, reason: "concurrency", freeMb: 9000, activeWakes: 2, cap: 2, retryAfterSeconds: 30 };
+      const onBackground = jest.fn();
       mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
-      mockAcquire.mockResolvedValueOnce(taken).mockResolvedValueOnce(taken).mockResolvedValue({ admitted: true, freeMb: 9000, activeWakes: 1 });
-      mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" });
-      const pending = ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
-      await jest.advanceTimersByTimeAsync(WAKE_TURN_RETRY_MS * 2 + 2_000);
-      expect((await pending).state).toBe("awake");
-      expect(mockAcquire).toHaveBeenCalledTimes(3);
-      expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "awake" }));
+      mockAcquire.mockImplementation(() => new Promise((resolve) => setTimeout(() =>
+        resolve({ admitted: true, freeMb: 9000, activeWakes: 3, waitedForConcurrency: true }), 75_000)));
+      mockRunScript.mockImplementation(() => new Promise((resolve) => setTimeout(() =>
+        resolve({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" }), 120_000)));
+      for (let i = 0; i < 5; i++) {
+        mockSsrfFetch.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve({ status: 503 }), 4_000)));
+      }
+      mockSsrfFetch.mockImplementationOnce(() => new Promise((resolve) => setTimeout(() => resolve({ status: 200 }), 4_000)));
+      const pending = ensureHivraAgentAwake(AGENT_ID, {
+        trigger: "open", onBackground, workDeadlineMs: Date.now() + MANAGED_WAKE_WORK_BUDGET_MS, ...fast,
+      });
+      await jest.advanceTimersByTimeAsync(45_000);
+      expect(await pending).toEqual({ state: "waking", reason: "in_progress" });
+      expect(mockRunScript).not.toHaveBeenCalled();
+      expect(mockFinish).not.toHaveBeenCalled();
+      expect(onBackground).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(75_000 + 120_000 + 29_000 - 45_000);
+      await expect(onBackground.mock.calls[0][0]).resolves.toMatchObject({ state: "awake" });
+      expect(mockClaim).toHaveBeenCalledTimes(1);
+      expect(mockAcquire).toHaveBeenCalledTimes(1);
+      expect(mockAcquire).toHaveBeenCalledWith({ vmid: VMID }, expect.objectContaining({ waitForConcurrencySeconds: WAKE_TURN_WAIT_SECONDS }));
+      expect(mockFinish).toHaveBeenCalledWith({ ...mockClaim.mock.calls[0][0], result: "awake" });
+      expect(mockRunScript.mock.calls[0][2]).toEqual({ timeoutMs: 120_000 });
+      expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({
+        durationMs: 224_000, detail: expect.objectContaining({ slot_admission_ms: 75_000 }),
+      }));
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it("releases the host slot before waiting for public readiness, but keeps the wake lease", async () => {
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" });
+    let resolveHealth!: (response: { status: number }) => void;
+    let healthStarted!: () => void;
+    const waitingForHealth = new Promise<void>((resolve) => { healthStarted = resolve; });
+    mockSsrfFetch.mockImplementation(() => new Promise((resolve) => { resolveHealth = resolve; healthStarted(); }));
+    const pending = ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
+    await waitingForHealth;
+    expect(mockRelease).toHaveBeenCalledTimes(1);
+    expect(mockFinish).not.toHaveBeenCalled();
+    resolveHealth({ status: 200 });
+    await expect(pending).resolves.toMatchObject({ state: "awake" });
+    expect(mockRelease).toHaveBeenCalledTimes(1);
   });
 
   it("asks the server again when the connection for the wake was refused, and wakes", async () => {
@@ -298,16 +332,61 @@ describe("ensureHivraAgentAwake", () => {
     jest.useFakeTimers();
     try {
       mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
-      mockAcquire.mockResolvedValue({ admitted: false, reason: "concurrency", freeMb: 9000, activeWakes: 2, cap: 2, retryAfterSeconds: 30 });
-      const pending = ensureHivraAgentAwake(AGENT_ID, { trigger: "open", waitMs: 120_000, ...fast });
-      await jest.advanceTimersByTimeAsync(WAKE_TURN_WAIT_MS + 5_000);
+      mockAcquire.mockImplementation(() => new Promise((resolve) => setTimeout(() =>
+        resolve({ admitted: false, reason: "concurrency", freeMb: 9000, activeWakes: 4, cap: 4, retryAfterSeconds: 30 }),
+      WAKE_TURN_WAIT_SECONDS * 1000)));
+      const pending = ensureHivraAgentAwake(AGENT_ID, {
+        trigger: "open", waitMs: 120_000, workDeadlineMs: Date.now() + MANAGED_WAKE_WORK_BUDGET_MS, ...fast,
+      });
+      await jest.advanceTimersByTimeAsync(WAKE_TURN_WAIT_SECONDS * 1000);
       expect(await pending).toEqual({ state: "failed", reason: "capacity_concurrency" });
       expect(mockRunScript).not.toHaveBeenCalled();
-      expect(mockAcquire.mock.calls.length).toBeGreaterThan(5);
+      expect(mockAcquire).toHaveBeenCalledTimes(1);
+      expect(mockFinish).toHaveBeenCalledWith({ ...mockClaim.mock.calls[0][0], result: "wake_failed" });
+      expect(mockMakeRoom).not.toHaveBeenCalled();
       expect(mockRelease).toHaveBeenCalled();
     } finally {
       jest.useRealTimers();
     }
+  });
+
+  it("does not wait for a slot when the caller cannot retain a full restore", async () => {
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockAcquire.mockResolvedValue({ admitted: false, reason: "concurrency", freeMb: 9000, activeWakes: 4, cap: 4, retryAfterSeconds: 30 });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "action", ...fast }))
+      .resolves.toEqual({ state: "failed", reason: "capacity_concurrency" });
+    expect(mockAcquire).toHaveBeenCalledTimes(1);
+    expect(mockAcquire).toHaveBeenCalledWith({ vmid: VMID }, expect.objectContaining({ waitForConcurrencySeconds: 0 }));
+    expect(mockRunScript).not.toHaveBeenCalled();
+  });
+
+  it("reserves the disk boot budgets instead of granting the full hibernate wait", async () => {
+    const env = jest.replaceProperty(process, "env", { ...process.env, HIVRA_SLEEP_DROP_MEMORY_AFTER_DAYS: "7" });
+    jest.useFakeTimers();
+    try {
+      mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+      mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "cold_started" }), stderr: "" });
+      const pending = ensureHivraAgentAwake(AGENT_ID, {
+        trigger: "open", workDeadlineMs: Date.now() + MANAGED_WAKE_WORK_BUDGET_MS, ...fast,
+      });
+      await jest.advanceTimersByTimeAsync(0);
+      await expect(pending).resolves.toMatchObject({ state: "awake" });
+      expect(mockAcquire).toHaveBeenCalledWith({ vmid: VMID }, expect.objectContaining({ waitForConcurrencySeconds: 20 }));
+      expect(mockRunScript.mock.calls[0][2]).toEqual({ timeoutMs: 170_000 });
+    } finally {
+      jest.useRealTimers();
+      env.restore();
+    }
+  });
+
+  it("does not start a restore when strict slot admission is unavailable", async () => {
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockAcquire.mockResolvedValue({ admitted: false, reason: "unavailable", freeMb: null, activeWakes: null, cap: 4, retryAfterSeconds: 30 });
+    await expect(ensureHivraAgentAwake(AGENT_ID, {
+      trigger: "open", workDeadlineMs: Date.now() + MANAGED_WAKE_WORK_BUDGET_MS, ...fast,
+    })).resolves.toEqual({ state: "failed", reason: "capacity_unavailable" });
+    expect(mockRunScript).not.toHaveBeenCalled();
+    expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "wake_failed" }));
   });
 
   it("finishes as wake_failed when the host defers the wake, and runs no script", async () => {
@@ -316,6 +395,7 @@ describe("ensureHivraAgentAwake", () => {
     const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "open", ...fast });
     expect(result).toEqual({ state: "failed", reason: "capacity_host_ram" });
     expect(mockRunScript).not.toHaveBeenCalled();
+    expect(mockAcquire).toHaveBeenCalledTimes(1);
     expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "wake_failed" }));
     expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ kind: "fail", reason: "capacity_host_ram" }));
     expect(mockRelease).toHaveBeenCalled();

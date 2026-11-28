@@ -45,6 +45,12 @@ SUBNET_PREFIX="${HIVRA_SUBNET_PREFIX:-10.251.20}"
 GW="${HIVRA_GW:-${SUBNET_PREFIX}.1}"
 BRIDGE="${HIVRA_BRIDGE:-hivra0}"
 IMG="${HIVRA_UBUNTU_IMG:-/var/lib/vz/template/iso/hivra-ubuntu-jammy.img}"
+HERMES_IMAGE_SHA256="${HIVRA_HERMES_IMAGE_SHA256:-}"
+STANDBY_ACTION="${HIVRA_HERMES_STANDBY_ACTION:-}"
+STANDBY_GENERATION="${HIVRA_HERMES_STANDBY_CLAIM_GENERATION:-}"
+if [ -z "$STANDBY_ACTION" ] && [ -n "$STANDBY_GENERATION" ]; then STANDBY_ACTION=continue; fi
+case "$STANDBY_ACTION" in ''|stage|claim|continue|retire) ;; *) echo "invalid standby action" >&2; exit 1 ;; esac
+PREPARED_RUNTIME="${HIVRA_PREPARED_RUNTIME:-}"
 PROV_DIR="${HIVRA_PROV_DIR:-/opt/hivra/provisioner}"
 STORAGE="${HIVRA_STORAGE:-local-lvm}"
 DISK_GB="${HIVRA_DISK_GB:-40}"
@@ -61,12 +67,27 @@ SECRET_TMP=""
 SECRET_ENV_FILE="${HIVRA_SECRET_ENV_FILE:-}"
 ALLOCATION_RECEIPT_FILE="/run/hivra-provision/${VMID}.allocated"
 GUEST_SSH_IDENTITY_DIR=""
+STANDBY_INPUT_OWNED=0
 CLOUD_INIT_SNIPPET=""
 CLOUD_INIT_SNIPPET_STORAGE="${HIVRA_CLOUD_INIT_SNIPPET_STORAGE:-local}"
 CLOUD_INIT_SNIPPET_DIR="${HIVRA_CLOUD_INIT_SNIPPET_DIR:-/var/lib/vz/snippets}"
 
 log() { echo "[hivra-prov] $*" >&2; }
 fail() { log "$*"; exit 1; }
+launch_stage() {
+  local elapsed uptime ignored
+  IFS=' ' read -r uptime ignored < /proc/uptime || return 0
+  [[ "$uptime" =~ ^[0-9]+[.][0-9]{2}$ ]] || return 0
+  elapsed="${uptime/./}"
+  if [ -n "${LAUNCH_STAGE_CLOCK:-}" ]; then
+    local duration=$((10#$elapsed - 10#$LAUNCH_STAGE_CLOCK))
+    printf 'HIVRA_LAUNCH_STAGE %s %s %d\n' "$OPERATION_ID" "$1" "$duration" >&2
+    if [ "$AGENT_KIND" = hermes ]; then
+      printf 'HIVRA_HERMES_STAGE %s %d\n' "$1" "$duration" >&2
+    fi
+  fi
+  LAUNCH_STAGE_CLOCK="$elapsed"
+}
 
 [[ "$VMID" =~ ^[0-9]+$ ]] && [ "$VMID" -ge 100 ] || fail "invalid VMID"
 [[ "$OCTET" =~ ^[0-9]+$ ]] && [ "$OCTET" -ge 2 ] && [ "$OCTET" -le 254 ] || fail "invalid IP octet"
@@ -74,17 +95,22 @@ fail() { log "$*"; exit 1; }
 [[ "$CPU_LIMIT" =~ ^[0-9]+([.][0-9]+)?$ ]] || fail "invalid CPU limit"
 [[ "$MEM_MB" =~ ^[0-9]+$ ]] && [ "$MEM_MB" -ge 512 ] || fail "invalid memory size"
 [[ "$DISK_GB" =~ ^[0-9]+$ ]] && [ "$DISK_GB" -ge 8 ] || fail "invalid disk size"
-[[ "$OPERATION_ID" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$ ]] \
-  || fail "HIVRA_OPERATION_ID must be a lowercase UUID"
-OPERATION_TAG="hivra-op-${OPERATION_ID//-/}"
-[[ "$BINDING_TAG" =~ ^hivra-bind-[0-9a-f]{32}$ ]] \
-  || fail "HIVRA_BINDING_TAG must be an exact Hivra binding tag"
+UUID_PATTERN='^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+case "$STANDBY_ACTION" in
+  stage|retire)
+    [ -z "$OPERATION_ID$BINDING_TAG" ] || fail "standby maintenance does not accept a tenant binding" ;;
+  *)
+    [[ "$OPERATION_ID" =~ $UUID_PATTERN ]] || fail "HIVRA_OPERATION_ID must be a lowercase UUID"
+    OPERATION_TAG="hivra-op-${OPERATION_ID//-/}"
+    [[ "$BINDING_TAG" =~ ^hivra-bind-[0-9a-f]{32}$ ]] || fail "HIVRA_BINDING_TAG must be an exact Hivra binding tag" ;;
+esac
 [[ "$SECRET_RESULT_FILE" =~ ^/var/lib/hivra/provision-results/${VMID}\.secret$ ]] \
   || fail "invalid secret result path"
-[ ! -e "/etc/pve/qemu-server/${VMID}.conf" ] || fail "refusing to overwrite existing VMID $VMID"
-qm status "$VMID" >/dev/null 2>&1 && fail "refusing to overwrite existing VMID $VMID"
+if [ -z "$STANDBY_ACTION" ]; then
+  [ ! -e "/etc/pve/qemu-server/${VMID}.conf" ] || fail "refusing to overwrite existing VMID $VMID"
+  qm status "$VMID" >/dev/null 2>&1 && fail "refusing to overwrite existing VMID $VMID"
+fi
 
-[ -f "$IMG" ] || { echo "ubuntu image $IMG missing" >&2; exit 1; }
 [ -d "$PROV_DIR" ] || { echo "provisioner dir $PROV_DIR missing" >&2; exit 1; }
 [ -f "$PROV_DIR/hivra-install-agent.py" ] || fail "shared guest launch entrypoint is missing"
 [ -f "$VM_KEY" ] || { echo "VM ssh key $VM_KEY missing" >&2; exit 1; }
@@ -93,6 +119,51 @@ command -v python3 >/dev/null 2>&1 || fail "python3 is required for the guest la
 [ "$CLOUD_INIT_SNIPPET_STORAGE" = "local" ] || fail "unsupported cloud-init snippet storage"
 [ "$CLOUD_INIT_SNIPPET_DIR" = "/var/lib/vz/snippets" ] || fail "unsupported cloud-init snippet directory"
 [ -r /proc/uptime ] || fail "Linux monotonic uptime is required for guest boot checks"
+launch_stage validation_start
+
+if [ -n "$STANDBY_ACTION" ]; then
+  case "$STANDBY_ACTION" in
+    stage|claim|retire)
+      [ -z "$SECRET_ENV_FILE${HIVRA_MODEL_KEY:-}${HIVRA_TUNNEL_TOKEN:-}${HIVRA_TUNNEL_URL:-}${HIVRA_ACTIVITY_TELEMETRY:-}${HIVRA_COMPUTER_ID:-}" ] \
+        || fail "standby maintenance and claim do not accept tenant launch credentials" ;;
+    continue)
+      [ -n "$SECRET_ENV_FILE" ] || fail "standby continuation requires the standard secret file" ;;
+  esac
+  source "$PROV_DIR/hivra-hermes-standby.sh"
+  standby_init
+  standby_lock
+fi
+
+if [ -n "$PREPARED_RUNTIME" ]; then
+  case "$PROVISION_MODE:$AGENT_KIND:$PREPARED_RUNTIME:${HIVRA_WANT_BROWSER:-0}:$HERMES_IMAGE_SHA256" in
+    install:agent-zero:agent-zero:0:|install:claude:bux-dependencies:0:|install:codex:bux-dependencies:0:) ;;
+    *) fail "invalid prepared runtime selection" ;;
+  esac
+fi
+if [ -n "$HERMES_IMAGE_SHA256" ] && [[ "${STANDBY_ACTION:-}" != @(claim|continue|retire) ]]; then
+  [ "$PROVISION_MODE" = install ] && [ "$AGENT_KIND" = hermes ] \
+    && [ "$PROV_DIR" = /root/hivra-provisioner-canary ] \
+    && [[ "$HERMES_IMAGE_SHA256" =~ ^[0-9a-f]{64}$ ]] \
+    || fail "invalid baked Hermes image selection"
+  IMG="/var/lib/vz/template/iso/hivra-hermes-${HERMES_IMAGE_SHA256}.qcow2"
+  [ -f "$IMG" ] && [ ! -L "$IMG" ] \
+    && [ "$(stat -c '%u:%g:%a:%h' -- "$IMG")" = "0:0:444:1" ] \
+    || fail "baked Hermes image is missing or not a read-only root-owned host file"
+  printf '%s  %s\n' "$HERMES_IMAGE_SHA256" "$IMG" | sha256sum --check --status \
+    || fail "baked Hermes image digest mismatch"
+  qemu-img info --output=json "$IMG" | python3 -I -B -c '
+import json, sys
+data = json.load(sys.stdin)
+sys.exit(0 if data.get("format") == "qcow2"
+         and not any(key in data for key in ("backing-filename", "full-backing-filename"))
+         and not data.get("format-specific", {}).get("data", {}).get("data-file")
+         and 0 < data.get("virtual-size", 0) <= int(sys.argv[1]) * 1024**3 else 1)
+' "$DISK_GB" || fail "baked Hermes image is not a standalone qcow2 within the disk envelope"
+fi
+if [[ "${STANDBY_ACTION:-}" != @(claim|continue|retire) ]]; then
+  [ -f "$IMG" ] || { echo "ubuntu image $IMG missing" >&2; exit 1; }
+fi
+launch_stage image_verified
 
 # Cloud-init authorized keys: the VM-orchestrator pub (host->guest) plus any
 # optional operator key configured explicitly for direct access. The guest
@@ -106,6 +177,23 @@ release_allocation_lock() {
     ALLOCATION_LOCK_FD=""
   fi
 }
+set_guest_ssh_identity() {
+  local host_key="$1"
+  if [ -z "$GUEST_SSH_IDENTITY_DIR" ]; then
+    GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
+  fi
+  GUEST_SSH_KNOWN_HOSTS="$GUEST_SSH_IDENTITY_DIR/known_hosts"
+  GUEST_SSH_HOST_ALIAS="hivra-vmid-$VMID"
+  printf '%s %s\n' "$GUEST_SSH_HOST_ALIAS" "$host_key" > "$GUEST_SSH_KNOWN_HOSTS"
+  chmod 0600 "$GUEST_SSH_KNOWN_HOSTS"
+}
+write_allocation_receipt() {
+  local receipt_tmp
+  install -d -m 0755 /run/hivra-provision
+  receipt_tmp="$(mktemp "${ALLOCATION_RECEIPT_FILE}.XXXXXXXX")"
+  printf 'operation_id=%s\nbinding_tag=%s\nvmid=%s\n' "$OPERATION_ID" "$BINDING_TAG" "$VMID" > "$receipt_tmp"
+  mv -fT -- "$receipt_tmp" "$ALLOCATION_RECEIPT_FILE"
+}
 vm_owned_by_operation() {
   local tags
   tags="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')" || return 1
@@ -116,7 +204,9 @@ cleanup() {
   local status=$? cleanup_failed=0 volume_list=""
   rm -f -- "$CIKEYS"
   [ -z "$SECRET_TMP" ] || rm -f -- "$SECRET_TMP"
-  [ -z "$SECRET_ENV_FILE" ] || rm -f -- "$SECRET_ENV_FILE"
+  if [ -n "$SECRET_ENV_FILE" ] && { [ "$STANDBY_ACTION" != continue ] || [ "$STANDBY_INPUT_OWNED" = 1 ]; }; then
+    rm -f -- "$SECRET_ENV_FILE"
+  fi
   case "${GUEST_SSH_IDENTITY_DIR:-}" in
     /run/hivra-guest-ssh-identity."${VMID}".*) rm -rf -- "$GUEST_SSH_IDENTITY_DIR" ;;
     "") ;;
@@ -163,8 +253,12 @@ cleanup() {
   # Keep FD8 through ownership checks, destroy retries, and absence/storage
   # verification. Releasing it earlier would let a concurrent allocator reuse
   # this VMID while cleanup was still deciding what it owned.
-  release_allocation_lock
+  [ "$STANDBY_ACTION" = claim ] || release_allocation_lock
   if [ "$status" -ne 0 ]; then
+    if [ -n "$STANDBY_ACTION" ]; then
+      log "standby $STANDBY_ACTION failed; no replacement attempted; inspect the exact slot and claim"
+      return
+    fi
     rm -f -- "$ALLOCATION_RECEIPT_FILE"
     rm -f -- "$SECRET_RESULT_FILE"
     if [ "$cleanup_failed" = "1" ]; then
@@ -177,10 +271,17 @@ cleanup() {
   fi
 }
 trap cleanup EXIT
+case "$STANDBY_ACTION" in
+  retire) standby_retire; exit 0 ;;
+  claim) standby_claim; exit 0 ;;
+  stage) standby_stage_reserve ;;
+  continue) standby_continue; STANDBY_INPUT_OWNED=1; launch_stage standby_guest_attested ;;
+esac
+if [[ "$STANDBY_ACTION" != stage ]]; then
 if [ -n "$SECRET_ENV_FILE" ]; then
   [[ "$SECRET_ENV_FILE" =~ ^/run/hivra-provision/${VMID}\.env$ ]] \
     || fail "invalid secret input path"
-  [ -f "$SECRET_ENV_FILE" ] || fail "secret input file is missing"
+  [ -f "$SECRET_ENV_FILE" ] && [ ! -L "$SECRET_ENV_FILE" ] || fail "secret input file is missing or not regular"
   [ "$(stat -c '%a:%U:%G' "$SECRET_ENV_FILE" 2>/dev/null)" = "600:root:root" ] \
     || fail "secret input file has unsafe ownership or mode"
   read_secret_b64() {
@@ -258,49 +359,60 @@ validate_linux_desktop_input
 if [ "$PROVISION_MODE" != empty ] && [ "$AGENT_KIND" = "deepseek-harness" ] && { [ -z "${HIVRA_TUNNEL_TOKEN:-}" ] || [ -z "${HIVRA_TUNNEL_URL:-}" ]; }; then
   fail "DeepSeek Harness requires pre-journaled named HTTPS access"
 fi
+if [ "$STANDBY_ACTION" = continue ]; then
+  [ -n "$HIVRA_TUNNEL_TOKEN" ] && [ -n "$HIVRA_TUNNEL_URL" ] || fail "standby continuation requires a named tunnel"
+fi
+fi
+
+if [ "$STANDBY_ACTION" != continue ]; then
 install -m 0600 "${VM_KEY}.pub" "$CIKEYS"
-if [ -n "${HIVRA_OPERATOR_PUBLIC_KEY_PATH:-}" ] && [ -f "${HIVRA_OPERATOR_PUBLIC_KEY_PATH}" ]; then
+if [ "$STANDBY_ACTION" != stage ] && [ -n "${HIVRA_OPERATOR_PUBLIC_KEY_PATH:-}" ] && [ -f "${HIVRA_OPERATOR_PUBLIC_KEY_PATH}" ]; then
   cat "${HIVRA_OPERATOR_PUBLIC_KEY_PATH}" >> "$CIKEYS"
 fi
 
-# The stock Ubuntu cloud image does not consistently include QEMU Guest Agent.
-# Install it through VMID-owned vendor data so the hypervisor channel can
-# attest the guest SSH key before any network connection carries credentials.
-# apt runs from runcmd, not cloud-config's package_update/packages: on Ubuntu
-# that module also runs `snap refresh`, so an unreachable snap store (its IPv4
-# front ends refusing connections, our guests are IPv4 only) failed cloud-init
-# and with it every launch, though nothing here needs a snap.
-if [ "$PROVISION_MODE" = install ]; then
+# Stock Ubuntu uses VMID-owned vendor data for QGA. Use runcmd, not Ubuntu's
+# cloud-init package module, which also refreshes unused snaps.
+if [ "$PROVISION_MODE" = install ] && [ -z "$HERMES_IMAGE_SHA256" ]; then
 install -d -o root -g root -m 0700 "$CLOUD_INIT_SNIPPET_DIR"
 CLOUD_INIT_SNIPPET="$CLOUD_INIT_SNIPPET_DIR/hivra-qga-${VMID}-${OPERATION_ID}.yaml"
 ( set -o noclobber
   cat > "$CLOUD_INIT_SNIPPET" <<'HIVRA_QGA_VENDOR_DATA'
 #cloud-config
 runcmd:
-  - [env, DEBIAN_FRONTEND=noninteractive, apt-get, -o, Acquire::Retries=3, update]
-  - [env, DEBIAN_FRONTEND=noninteractive, apt-get, -o, Acquire::Retries=3, install, -y, --no-install-recommends, qemu-guest-agent]
-  - [systemctl, enable, --now, qemu-guest-agent.service]
+  - |
+    set -eu
+    if [ ! -x /usr/sbin/qemu-ga ] || [ "$(dpkg-query -W -f='${db:Status-Status}' qemu-guest-agent 2>/dev/null)" != installed ]; then
+      export DEBIAN_FRONTEND=noninteractive
+      apt-get -o Acquire::Retries=3 -o Acquire::Languages=none \
+        -o Acquire::IndexTargets::deb::CNF::DefaultEnabled=false \
+        -o Acquire::IndexTargets::deb::DEP-11::DefaultEnabled=false update
+      apt-get -o Acquire::Retries=3 install -y --no-install-recommends qemu-guest-agent
+    fi
+    systemctl enable --now qemu-guest-agent.service
 HIVRA_QGA_VENDOR_DATA
 ) 2>/dev/null || fail "could not create operation-scoped QEMU Guest Agent vendor data"
 chmod 0600 "$CLOUD_INIT_SNIPPET"
 fi
 
 log "creating VM $VMID (${CORES} vCPU / ${MEM_MB} MB) at $IP"
+TAGS="${BINDING_TAG};${OPERATION_TAG}"
+CREATE_OPTIONS=()
+if [ "$STANDBY_ACTION" = stage ]; then
+  TAGS="$STANDBY_TAG"
+  CREATE_OPTIONS=(--description "$STANDBY_DESCRIPTION" --ipconfig0 "ip=${IP}/24,gw=${GW}" --onboot 0 --balloon 0)
+fi
 qm create "$VMID" --name "hivra-cc-${VMID}" --memory "$MEM_MB" --cores "$CORES" --cpu host \
   --cpulimit "$CPU_LIMIT" \
-  --tags "${BINDING_TAG};${OPERATION_TAG}" \
+  --tags "$TAGS" "${CREATE_OPTIONS[@]}" \
   --net0 "virtio,bridge=${BRIDGE}" --scsihw virtio-scsi-single --serial0 socket --vga serial0 \
   --ostype l26 --agent enabled=1 >/dev/null
-CREATED=1
 # This receipt is emitted only after atomic VM creation stamped both ownership
 # tags. The dashboard never persists or rolls back a VMID merely observed in a
 # stale inventory snapshot; it waits for this exact operation/binding proof.
-install -d -m 0755 /run/hivra-provision
-ALLOCATION_RECEIPT_TMP="${ALLOCATION_RECEIPT_FILE}.tmp.$$"
-install -m 0600 /dev/null "$ALLOCATION_RECEIPT_TMP"
-printf 'operation_id=%s\nbinding_tag=%s\nvmid=%s\n' \
-  "$OPERATION_ID" "$BINDING_TAG" "$VMID" > "$ALLOCATION_RECEIPT_TMP"
-mv "$ALLOCATION_RECEIPT_TMP" "$ALLOCATION_RECEIPT_FILE"
+if [ "$STANDBY_ACTION" != stage ]; then
+  CREATED=1
+  write_allocation_receipt
+fi
 if [ "$PROVISION_MODE" = empty ]; then
   # A blank disk of the asked size; the storage box fills it. The guest already
   # carries its agent and guest agent, so no vendor data is attached.
@@ -324,26 +436,28 @@ if [ "$PROVISION_MODE" = empty ]; then
   CREATED=0
   exit 0
 fi
+launch_stage disk_import_start
 qm set "$VMID" --scsi0 "${STORAGE}:0,import-from=${IMG},discard=on,ssd=1" >/dev/null
+launch_stage disk_imported
 qm disk resize "$VMID" scsi0 "${DISK_GB}G" >/dev/null
 qm set "$VMID" --ide2 "${STORAGE}:cloudinit" >/dev/null
-# Proxmox's generated user-data carries `package_upgrade: true` unless
-# ciupgrade is off. That runs a full apt upgrade and, on Ubuntu, `snap refresh`
-# at first boot: an unreachable snap store then fails cloud-init and the launch.
-# The guest still takes Ubuntu's security updates from its daily
-# unattended-upgrades run. Hosts older than Proxmox VE 8.1 have no ciupgrade
-# option, so a refusal there is ignored and the VM behaves as before.
+# Disable the first-boot apt/snap upgrade, not daily unattended security
+# updates. Older Proxmox releases don't recognize ciupgrade.
 qm set "$VMID" --ciupgrade 0 >/dev/null 2>&1 || true
 qm set "$VMID" --boot order=scsi0 --ciuser ubuntu --sshkeys "$CIKEYS" >/dev/null
 qm set "$VMID" --ipconfig0 "ip=${IP}/24,gw=${GW}" >/dev/null
-qm set "$VMID" --cicustom "vendor=${CLOUD_INIT_SNIPPET_STORAGE}:snippets/$(basename "$CLOUD_INIT_SNIPPET")" >/dev/null
+if [ -n "$CLOUD_INIT_SNIPPET" ]; then
+  qm set "$VMID" --cicustom "vendor=${CLOUD_INIT_SNIPPET_STORAGE}:snippets/$(basename "$CLOUD_INIT_SNIPPET")" >/dev/null
+fi
 qm set "$VMID" --nameserver "$NAMESERVERS" >/dev/null
 # qm forks a long-lived kvm child; without 8>&- and 9>&- it would inherit the
 # allocation-lock fds and pin the lock open for the whole VM lifetime.
 qm start "$VMID" 8>&- 9>&- >/dev/null
+launch_stage vm_started
 # Keep capacity, VMID, and IP allocation serialized until the new guest is an
 # active member of the inventory. Guest setup continues concurrently afterward.
 release_allocation_lock
+fi
 
 guest_boot_uptime() {
   local uptime
@@ -353,17 +467,33 @@ guest_boot_uptime() {
   printf '%s\n' "$uptime"
 }
 
+guest_probe_pause() {
+  local pause=$(($2 - $1)) interval=$4
+  [ "$(($1 - $3))" -ge "$5" ] || interval=2
+  [ "$pause" -le "$interval" ] || pause=$interval
+  sleep "$pause"
+}
+
 prepare_guest_ssh_identity() {
-  local started now deadline attempt qga_document host_key=""
-  vm_owned_by_operation || fail "VM ownership changed before guest SSH identity binding"
-  qm config "$VMID" 2>/dev/null | grep -Eq "^ipconfig0: .*ip=${IP}/24([,]|$)" \
+  local started now deadline remaining probe_budget qga_document host_key=""
+  if [ "$STANDBY_ACTION" = stage ]; then
+    standby_verify_config standby
+  else
+    vm_owned_by_operation || fail "VM ownership changed before guest SSH identity binding"
+  fi
+  qm config "$VMID" 2>/dev/null | sed -n 's/^ipconfig0:[[:space:]]*//p' | tr ',' '\n' | grep -Fx "ip=${IP}/24" >/dev/null \
     || fail "VM private IP changed before guest SSH identity binding"
   started="$(guest_boot_uptime)" || fail "guest boot clock is unavailable"
   deadline=$((started + 600))
-  for attempt in $(seq 1 120); do
+  while :; do
+    now="$(guest_boot_uptime)" || fail "guest boot clock is unavailable"
+    remaining=$((deadline - now))
+    [ "$remaining" -gt 2 ] || break
+    probe_budget=$((remaining - 2))
+    [ "$probe_budget" -le 8 ] || probe_budget=8
+    qga_document="$(timeout --kill-after=2s "${probe_budget}s" qm guest exec "$VMID" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null || true)"
     now="$(guest_boot_uptime)" || fail "guest boot clock is unavailable"
     [ "$now" -lt "$deadline" ] || break
-    qga_document="$(qm guest exec "$VMID" -- /bin/cat /etc/ssh/ssh_host_ed25519_key.pub 2>/dev/null || true)"
     if [ -n "$qga_document" ]; then
       host_key="$(printf '%s' "$qga_document" | /usr/bin/python3 -c '
 import base64, binascii, json, sys
@@ -382,38 +512,33 @@ print("ssh-ed25519 " + fields[1])
 ' 2>/dev/null || true)"
       [ -z "$host_key" ] || break
     fi
-    sleep 5
+    guest_probe_pause "$now" "$deadline" "$started" 5 60
   done
   [ -n "$host_key" ] || fail "guest SSH host identity could not be attested through QEMU Guest Agent"
-  GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.${VMID}.XXXXXXXX")"
-  chmod 0700 "$GUEST_SSH_IDENTITY_DIR"
-  GUEST_SSH_KNOWN_HOSTS="$GUEST_SSH_IDENTITY_DIR/known_hosts"
-  GUEST_SSH_HOST_ALIAS="hivra-vmid-$VMID"
-  printf '%s %s\n' "$GUEST_SSH_HOST_ALIAS" "$host_key" > "$GUEST_SSH_KNOWN_HOSTS"
-  chmod 0600 "$GUEST_SSH_KNOWN_HOSTS"
+  set_guest_ssh_identity "$host_key"
 }
 
 log "attesting guest SSH host identity through VMID $VMID"
-prepare_guest_ssh_identity
-GSSH=(ssh -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
+[ "$STANDBY_ACTION" = continue ] || prepare_guest_ssh_identity
+launch_stage ssh_attested
+STANDBY_SSH_OPTIONS=()
+if [ -n "$STANDBY_ACTION" ]; then STANDBY_SSH_OPTIONS=(-F /dev/null); fi
+GSSH=(ssh "${STANDBY_SSH_OPTIONS[@]}" -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no \
   -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$GUEST_SSH_KNOWN_HOSTS" \
   -o HostKeyAlias="$GUEST_SSH_HOST_ALIAS" -o ConnectTimeout=10)
-GSCP=(scp -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
+GSCP=(scp "${STANDBY_SSH_OPTIONS[@]}" -i "$VM_KEY" -o BatchMode=yes -o IdentitiesOnly=yes \
   -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 -o UpdateHostKeys=no \
   -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile="$GUEST_SSH_KNOWN_HOSTS" \
   -o HostKeyAlias="$GUEST_SSH_HOST_ALIAS" -o ConnectTimeout=10)
 
 wait_for_guest_cloud_init() {
-  local started now deadline remaining probe_budget pause attempt output exit_code
+  local started now deadline remaining probe_budget output exit_code
   local last_state="SSH unavailable"
   rm -f -- "${CLOUD_INIT_KEEP_DIR:-/root}/hivra-prov-${VMID}.cloud-init.txt"
   started="$(guest_boot_uptime)" || fail "guest boot clock is unavailable"
   deadline=$((started + 600))
-  # SSH and cloud-init are expected to be unavailable/running during first
-  # boot. Poll their read-only state; never mask a completed failure as ready.
-  # Each probe is killable, and late success cannot outlive the overall budget.
-  for attempt in $(seq 1 60); do
+  while :; do
     now="$(guest_boot_uptime)" || fail "guest boot clock is unavailable"
     remaining=$((deadline - now))
     [ "$remaining" -gt 2 ] || break
@@ -441,19 +566,12 @@ wait_for_guest_cloud_init() {
       *) log_guest_cloud_init_failure
          fail "guest cloud-init check failed (exit ${exit_code}); inspect cloud-init status and logs before retrying" ;;
     esac
-    # Guest diagnostics can contain user-data. Log only the classified reason,
-    # not command output. The caller's existing EXIT trap owns VM cleanup.
-    pause=$((deadline - now))
-    [ "$pause" -le 8 ] || pause=8
-    sleep "$pause"
+    guest_probe_pause "$now" "$deadline" "$started" 8 30
   done
   fail "guest boot timed out (${last_state}); runtime installation was not started"
 }
 
-# The failed guest is removed by the EXIT trap, taking its logs with it. Keep
-# cloud-init's own account of why it stopped in a root-only file on this host
-# (never in the host log, which carries only the classified reason): the
-# status summary and the tail of its output, capped. Overwritten on VMID reuse.
+# Cloud-init diagnostics may contain user-data; retain them root-only.
 log_guest_cloud_init_failure() {
   local keep="${CLOUD_INIT_KEEP_DIR:-/root}/hivra-prov-${VMID}.cloud-init.txt"
   if ( umask 077; timeout --kill-after=2s 20s "${GSSH[@]}" \
@@ -468,14 +586,27 @@ log_guest_cloud_init_failure() {
 }
 
 log "waiting for guest ssh + cloud-init"
-wait_for_guest_cloud_init
+[ "$STANDBY_ACTION" = continue ] || wait_for_guest_cloud_init
+launch_stage cloud_init_ready
+if [ "$STANDBY_ACTION" = stage ]; then
+  standby_guest_proof
+  standby_verify_config standby
+  standby_check_expiry
+  STANDBY_STATE=ready
+  standby_write
+  printf '{"generation":"%s","vmid":%s,"ip":"%s","imageSha256":"%s","expiresAtEpoch":%s}\n' \
+    "$STANDBY_GENERATION" "$VMID" "$IP" "$HERMES_IMAGE_SHA256" "$STANDBY_EXPIRY"
+  exit 0
+fi
 
 # The package and generated SSH host key now live on the guest disk. Remove the
 # operation-scoped vendor-data reference and host file so no bootstrap material
 # survives or can be replayed by a later VMID reuse.
-qm set "$VMID" --delete cicustom >/dev/null
-rm -f -- "$CLOUD_INIT_SNIPPET"
-CLOUD_INIT_SNIPPET=""
+if [ -n "$CLOUD_INIT_SNIPPET" ]; then
+  qm set "$VMID" --delete cicustom >/dev/null
+  rm -f -- "$CLOUD_INIT_SNIPPET"
+  CLOUD_INIT_SNIPPET=""
+fi
 
 copy_prepared_desktop_image() {
   [ "$AGENT_KIND" = "linux-desktop" ] || return 0
@@ -506,12 +637,10 @@ copy_prepared_desktop_image
 
 log "copying provisioner + running it (kind=${AGENT_KIND}, this takes several minutes)"
 GUEST_PROVISIONER=/tmp/hivra-provisioner
-if [ "$AGENT_KIND" = "deepseek-harness" ]; then
-  # Native modules are imported under root authority and deliberately reject
-  # an agent-writable /tmp handoff. Stream only this reviewed root-owned bundle
-  # into a fresh non-listable root directory; no guest user may replace it
-  # between validation and import.
-  command -v tar >/dev/null 2>&1 || fail "tar is required for the native provisioner handoff"
+if [ "$AGENT_KIND" = "deepseek-harness" ] || [ -n "$PREPARED_RUNTIME" ]; then
+  # Native and prepared runtimes verify or import assets as root. Stream the
+  # reviewed bundle into a root-only directory instead of an ubuntu-owned path.
+  command -v tar >/dev/null 2>&1 || fail "tar is required for the root-owned provisioner handoff"
   [ -z "$(find "$PROV_DIR" -xdev ! -user root -print -quit)" ] \
     || fail "native provisioner source is not root-owned"
   [ -z "$(find "$PROV_DIR" -xdev \( -type l -o \( ! -type f ! -type d \) \) -print -quit)" ] \
@@ -528,13 +657,21 @@ else
     -r "$PROV_DIR" "ubuntu@${IP}:${GUEST_PROVISIONER}" >/dev/null \
     || fail "copying the provisioner into the guest failed or timed out"
 fi
+launch_stage guest_bundle_transferred
+if [ "$STANDBY_ACTION" = continue ]; then
+  standby_check_expiry
+  standby_verify_config claimed
+  standby_guest_proof
+  STANDBY_STATE=consumed
+  standby_write
+fi
 # Model and tunnel credentials travel only through stdin. The shared guest
 # entrypoint owns runtime selection, strict decoding and named-tunnel setup;
 # the host retains VM allocation, public reachability and result convergence.
 guest_launch_document() {
   printf '%s\0' "$AGENT_KIND" "${HIVRA_WANT_BROWSER:-}" "$HIVRA_MODEL_KEY" \
     "$HIVRA_MODEL_BASE_URL" "$HIVRA_HERMES_MODEL" "${HIVRA_TUNNEL_TOKEN:-}" "${HIVRA_TUNNEL_URL:-}" \
-    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" "${HIVRA_CATALOG_APP:-}" \
+    "$HIVRA_COMPUTER_ID" "$HIVRA_CONTROL_ORIGIN" "${HIVRA_ACTIVITY_TELEMETRY:-}" "${HIVRA_CATALOG_APP:-}" "${HERMES_IMAGE_SHA256:-}" "${PREPARED_RUNTIME:-}" \
     | python3 -I -B -c '
 import datetime, json, re, sys
 def unique_object(pairs):
@@ -570,7 +707,7 @@ try:
     if len(raw) > 32768:
         raise ValueError()
     values = raw.decode("utf-8").split("\0")
-    if len(values) != 12 or values[-1] != "" or values[1] not in ("", "0", "1"):
+    if len(values) != 14 or values[-1] != "" or values[1] not in ("", "0", "1"):
         raise ValueError()
     native = values[0] == "deepseek-harness"
     desktop = values[0] in ("linux-desktop", "linux-server")
@@ -596,6 +733,15 @@ try:
         document["controlOrigin"] = values[8]
     if catalog_app:
         document["catalogApp"] = json.loads(values[10], object_pairs_hook=unique_object)
+    if values[11]:
+        if values[0] != "hermes" or not re.fullmatch(r"[0-9a-f]{64}", values[11]):
+            raise ValueError()
+        document["hermesBaked"] = True
+    if values[12]:
+        if values[1] != "0" or (values[0], values[12]) not in (
+            ("agent-zero", "agent-zero"), ("claude", "bux-dependencies"), ("codex", "bux-dependencies")):
+            raise ValueError()
+        document["preparedRuntime"] = values[12]
     if values[9]:
         # Only Claude Code and Codex write the transcripts the reporter reads.
         if values[0] not in ("claude", "codex"):
@@ -616,6 +762,7 @@ guest_launch_document | timeout --kill-after=30s 2700s "${GSSH[@]}" \
   -o ServerAliveInterval=15 -o ServerAliveCountMax=8 "ubuntu@${IP}" \
   "sudo -n /usr/bin/python3 -I -B ${GUEST_PROVISIONER}/hivra-install-agent.py" >&2 \
   || fail "guest runtime installation failed, lost its connection, or ran past 45 minutes"
+launch_stage guest_runtime_installed
 
 TUNNEL=""
 # The shared guest entrypoint has configured the reboot-safe named tunnel.
@@ -657,6 +804,7 @@ fi
 if [ "$READY" != true ]; then
   fail "quick tunnel did not become healthy"
 fi
+launch_stage public_tunnel_ready
 APITOKEN="$("${GSSH[@]}" "ubuntu@${IP}" 'sudo cat /home/bux/.hivra/api-token 2>/dev/null' 2>/dev/null | tr -d '[:space:]')"
 [ "${#APITOKEN}" -eq 64 ] && [[ "$APITOKEN" =~ ^[0-9a-f]+$ ]] || fail "guest API token is missing or invalid"
 install -d -m 0700 /var/lib/hivra /var/lib/hivra/provision-results

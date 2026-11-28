@@ -14,7 +14,6 @@ import {
   supportsIdleNap,
   isSleepMemoryTrimEnabled,
   parseSleepMode,
-  type SleepMode,
 } from "./agent-sleep-policy";
 import {
   claimAgentSleep,
@@ -39,8 +38,6 @@ import {
   type SleepReceipt,
 } from "./agent-sleep-scripts";
 import {
-  effectiveAlwaysOn,
-  effectiveSleepPolicy,
   holderHibernateBoundaryReason,
   HOLDER_SEAT_HIBERNATE_AFTER_NAP_SECONDS,
   HOLDER_SEAT_NAP_AFTER_SECONDS,
@@ -156,7 +153,6 @@ export interface SleepFacts {
 export interface SleepEligibilityOptions {
   /** A manual test sleep: it skips the owner's policy, but never the server or host switch. */
   manual?: boolean;
-  serverMode?: SleepMode;
   tier?: AgentSleepTier;
 }
 
@@ -213,7 +209,9 @@ export function sleepEligibility(
   const kind = typeof row.type === "string" ? row.type : "";
   if (!supportsIdleNap(kind)) reasons.push(`kind_${kind}`);
 
-  if (effectiveAlwaysOn(row) || (row.always_on !== false && !isHolderFundedSeat(row))) reasons.push("always_on");
+  if (row.always_on !== false && !(manual && isHolderFundedSeat(row))) {
+    reasons.push("always_on");
+  }
   reasons.push(...seedsPending(row));
 
   if (facts.activeMove === null) reasons.push("move_unknown");
@@ -233,9 +231,9 @@ export function sleepEligibility(
   }
 
   if (!manual) {
-    const policy = effectiveSleepPolicy(row);
-    if (options.serverMode === "canary" && policy === "off") reasons.push("policy_off");
-    else if (policy !== "off" && options.tier && !policyAllowsTier(policy, options.tier)) {
+    const policy = row.sleep_policy;
+    if (policy !== "t1" && policy !== "t3" && policy !== "full") reasons.push("policy_off");
+    else if (options.tier && !policyAllowsTier(policy, options.tier)) {
       reasons.push("policy_tier_not_allowed");
     }
   }
@@ -410,7 +408,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
 
   const timings = resolveSeatSleepTimings(row, env);
   const [facts, host] = await Promise.all([readSleepFacts(row), readSleepHostRow(row)]);
-  const eligibility = sleepEligibility(row, host, facts, { manual, serverMode, tier });
+  const eligibility = sleepEligibility(row, host, facts, { manual, tier });
   if (!eligibility.eligible) {
     return { outcome: "ineligible", reason: eligibility.reasons[0], reasons: eligibility.reasons };
   }
@@ -630,7 +628,7 @@ export async function sleepHivraAgent(agentId: string, options: SleepOptions): P
   // Takes its inputs as parameters so their checked (non-null) types hold inside.
   async function sleepAfterChecks(row: AgentRow, target: SleepTarget, expectedGeneration: number): Promise<SleepOutcome> {
     const operationId = randomUUID();
-    const generation = await claimAgentSleep({ agentId, operationId, tier, expectedGeneration });
+    const generation = await claimAgentSleep({ agentId, operationId, tier, expectedGeneration, manual });
     if (generation === null) return { outcome: "skipped", reason: "claim_refused" };
 
     // From here the lease is ours. Every path below gives it back.

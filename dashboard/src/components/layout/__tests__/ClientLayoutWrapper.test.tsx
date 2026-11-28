@@ -2,6 +2,7 @@
 import '@testing-library/jest-dom';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { createPortal } from 'react-dom';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ClientLayoutWrapper } from '../ClientLayoutWrapper';
 import { usePathname } from 'next/navigation';
@@ -13,6 +14,7 @@ import { FleetControlPane } from '@/components/hivra/FleetControlPane';
 import { resetResourceInventory, resourceInventory } from '@/lib/workspace/resource-inventory';
 import { recordVisit } from '@/lib/workspace/recents';
 import { useAppShell } from '../AppShellContext';
+import { CookieConsentDockProvider, useCookieConsentDock } from '@/components/consent/CookieConsentDock';
 
 jest.mock('../ClientLayoutWrapper.module.css', () => ({
   __esModule: true,
@@ -39,6 +41,11 @@ jest.mock('next-themes', () => ({
 function WorkspaceModalProbe({ active }: { active: boolean }) {
   useWorkspaceModalLayer('agent-picker', active);
   return <div data-testid="workspace-modal-probe">Workspace</div>;
+}
+
+function ConsentDockProbe() {
+  const dock = useCookieConsentDock();
+  return dock ? createPortal(<span>Docked consent</span>, dock) : null;
 }
 
 describe('ClientLayoutWrapper', () => {
@@ -87,6 +94,28 @@ describe('ClientLayoutWrapper', () => {
     render(<ClientLayoutWrapper {...mockProps} resourceOwnerKey="user_123">{mockChildren}</ClientLayoutWrapper>);
     // accountCode("user_123"), the same fixed vector as account-code.test.ts.
     expect(screen.getAllByText('Account code QJK7-53FK').length).toBeGreaterThan(0);
+  });
+
+  it('reserves a consent slot below the agent workspace without changing other dashboard routes', () => {
+    (usePathname as jest.Mock).mockReturnValue('/dashboard/agent/hermes');
+    const layout = (
+      <CookieConsentDockProvider>
+        <ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>
+        <ConsentDockProbe />
+      </CookieConsentDockProvider>
+    );
+    const view = render(layout);
+    const docked = within(screen.getByRole('main')).getByText('Docked consent');
+    expect(screen.getByTestId('test-content').nextElementSibling).toContainElement(docked);
+
+    (usePathname as jest.Mock).mockReturnValue('/dashboard/workspace');
+    view.rerender(
+      <CookieConsentDockProvider>
+        <ClientLayoutWrapper {...mockProps}>{mockChildren}</ClientLayoutWrapper>
+        <ConsentDockProbe />
+      </CookieConsentDockProvider>
+    );
+    expect(screen.queryByText('Docked consent')).not.toBeInTheDocument();
   });
 
   it('leaves web chrome to a desktop app that wraps the page, but opens the metadata bridge only with both injected capabilities', () => {

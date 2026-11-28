@@ -406,6 +406,15 @@ describe("manageCapabilitiesFor", () => {
       expect(busy.connectionServiceUpdate).toMatchObject({ state: "blocked", code: "operation_in_progress" });
     });
 
+    it("does not offer a generic image update for a pinned Claude terminal workload", () => {
+      const manage = manageCapabilitiesFor({
+        ...rows.gvisor, gvisor_claude_terminal_image: `sha256:${"a".repeat(64)}`,
+      }, { preparedMatch: true });
+      expect(manage.connectionServiceUpdate).toBeNull();
+      expect(manage.selfUpdate).toBeNull();
+      expect(manage.sections).not.toContain("updates");
+    });
+
     it("tells an Omarchy owner the desktop connection updates itself", () => {
       expect(map("preparedOmarchy").selfUpdate?.lines).toContain(
         "Hivra's desktop connection updates itself: when Hivra releases a new one, it is installed the next time you open Desktop.");

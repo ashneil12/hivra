@@ -67,7 +67,7 @@ const RESOURCE_ID = /^[A-Za-z0-9_-]{1,256}$/;
 
 export const NATIVE_LAUNCH_PROFILES = everyMember<LaunchProfileId>()([
   "claude-code", "codex", "hermes", "hermes-computer", "openclaw", "agent-zero", "openbot", "nuphos", "aeon", "deepseek-harness",
-  "ubuntu-desktop", "ubuntu-server", "linux-terminal", "omarchy", "windows",
+  "ubuntu-desktop", "ubuntu-server", "linux-terminal", "claude-code-sandbox", "omarchy", "windows",
   ...UNIVERSAL_CATALOG_IDS,
 ]);
 /** Launch history stages, and the names used before Choose merged its steps

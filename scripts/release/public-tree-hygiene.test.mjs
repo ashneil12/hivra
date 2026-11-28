@@ -151,6 +151,28 @@ test('hosted identities, live fleet pairs, and public infrastructure addresses f
   ]);
 });
 
+test('the reviewed Debian package version is not an IP exception elsewhere in the lock or tree', (t) => {
+  const f = fixture(t);
+  const version = ['6', '9', '7', '1'].join('.') + '-2build1';
+  const lock = 'dashboard/provisioner/bux-bake-lock.json';
+  const asset = `libonig5_${version}_amd64.deb`;
+  const content = JSON.stringify({
+    assets: [{ name: asset, url: `https://snapshot.ubuntu.com/ubuntu/pool/libonig/${asset}` }],
+    packages: { libonig5: version },
+  }, null, 2);
+  f.write(lock, content);
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root), []);
+
+  f.write(lock, content.replace('snapshot.ubuntu.com', ['6', '9', '7', '1'].join('.')));
+  f.write('fixtures/version.json', content);
+  f.add();
+  assert.deepEqual(inspectPublicTree(f.root), [
+    { category: 'public-network-address', path: lock },
+    { category: 'public-network-address', path: 'fixtures/version.json' },
+  ]);
+});
+
 test('renamed fleet metadata, private workflows, contextual ids, customer incidents, and omitted audit links fail closed', (t) => {
   const f = fixture(t);
   f.write('fixtures/fleet.txt', 'targets compute1,compute7 and redzero via example-node\n');

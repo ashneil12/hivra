@@ -106,6 +106,7 @@ describe("/pricing comparison table", () => {
       { header: "Hivra software", cells: ["Free", "Included", "Included"] },
       { header: "Monthly Hivra Cloud price", cells: ["$0", "$9.99", "$19.99"] },
       { header: "CPU and memory", cells: ["Your server", "2 vCPU and 4 GB", "4 vCPU and 8 GB"] },
+      { header: "Disk storage", cells: ["Your server", "Persistent storage; no plan-level disk allowance published", "Persistent storage; no plan-level disk allowance published"] },
       { header: "Who operates the server?", cells: ["You", "Hivra", "Hivra"] },
       { header: "Browser access", cells: ["According to your setup", "Yes", "Yes"] },
       { header: "Remains available when your laptop closes", cells: ["If your server stays on", "Yes", "Yes"] },

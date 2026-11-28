@@ -34,6 +34,7 @@ export const PRICING_SUPPORT_EMAIL = "info@hivra.cloud";
 export interface HostedSize {
   planKey: "operator" | "fleet";
   price: string;
+  monthlyCents: number;
   cpu: number;
   ramGb: number;
   body: string;
@@ -43,13 +44,22 @@ export interface HostedSize {
 
 function hostedSize(planKey: HostedSize["planKey"], price: string, body: string): HostedSize {
   const plan = PLANS[planKey];
-  return { planKey, price, cpu: plan.totalCpu, ramGb: plan.totalRam / 1024, body, href: `/get-started?plan=${planKey}` };
+  return { planKey, price, monthlyCents: plan.price, cpu: plan.totalCpu, ramGb: plan.totalRam / 1024, body, href: `/get-started?plan=${planKey}` };
 }
 
 export const HOSTED_SIZES: HostedSize[] = [
   hostedSize("operator", ENTRY_PLAN_PRICE, "Hivra runs the computer for you."),
   hostedSize("fleet", LARGER_PLAN_PRICE, "The same, with twice the CPU and memory, for bigger builds and heavier workloads."),
 ];
+
+export const HOSTED_DISK = "Persistent storage; no plan-level disk allowance published";
+export const HOSTED_AI = "No recurring AI credit included. Bring a supported account or key, or pay with Hivra credits.";
+
+export function hostedSizes(entryMonthlyCents?: number): HostedSize[] {
+  return HOSTED_SIZES.map((size) => size.planKey === "operator" && entryMonthlyCents !== undefined
+    ? { ...size, monthlyCents: entryMonthlyCents, price: `$${(entryMonthlyCents / 100).toFixed(2)}` }
+    : size);
+}
 
 /**
  * What the page calls each option. Never checkout's "Pro" or "Power" and never
@@ -174,6 +184,24 @@ export function buildPricingOffers(siteUrl: string, entryPrice = ENTRY_PLAN_PRIC
   });
 }
 
+export function buildHostedProducts(siteUrl: string, entryMonthlyCents?: number) {
+  const sizes = hostedSizes(entryMonthlyCents);
+  const offers = buildPricingOffers(siteUrl, sizes[0].price).slice(1);
+  return sizes.map((size, index) => ({
+    "@type": "Product",
+    "@id": `${siteUrl}/pricing#cloud-${size.planKey}`,
+    name: `Hivra Cloud, ${size.cpu} vCPU and ${size.ramGb} GB`,
+    description: "A managed computer for your agent. CPU and RAM are a pool for your computers on the plan.",
+    brand: { "@type": "Brand", name: "Hivra" },
+    url: `${siteUrl}/pricing#cloud-${size.planKey}`,
+    additionalProperty: [
+      { "@type": "PropertyValue", name: "vCPU", value: size.cpu },
+      { "@type": "PropertyValue", name: "RAM", value: size.ramGb, unitText: "GB" },
+    ],
+    offers: offers[index],
+  }));
+}
+
 const ENTRY = planSizeParts("entry");
 const LARGER = planSizeParts("larger");
 
@@ -243,6 +271,7 @@ export const PRICING_COMPARISON = {
     { label: "Monthly Hivra Cloud price", cells: ["$0", ENTRY.price, LARGER.price] },
     // "and", not the md's slash: copy-rules.ts reads "$19.99" only with "4 vCPU and 8 GB" in the same sentence.
     { label: "CPU and memory", cells: ["Your server", `${ENTRY.cpu} and ${ENTRY.ram}`, `${LARGER.cpu} and ${LARGER.ram}`] },
+    { label: "Disk storage", cells: ["Your server", HOSTED_DISK, HOSTED_DISK] },
     { label: "Who operates the server?", cells: ["You", "Hivra", "Hivra"] },
     { label: "Browser access", cells: ["According to your setup", "Yes", "Yes"] },
     { label: "Remains available when your laptop closes", cells: ["If your server stays on", "Yes", "Yes"] },

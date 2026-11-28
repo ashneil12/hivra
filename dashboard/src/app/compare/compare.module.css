@@ -412,3 +412,69 @@ ul.sourceList a {
     display: none;
   }
 }
+.hostedDirectory,
+.hostedDetail section:first-child {
+  padding: clamp(1rem, 3vw, 2rem);
+  border: 1px solid currentColor;
+  border-color: color-mix(in srgb, currentColor 20%, transparent);
+  border-radius: 0.75rem;
+}
+
+.hostedDirectory h2,
+.hostedDetail h2 {
+  margin: 0 0 0.85rem;
+  font-size: clamp(1.25rem, 2.4vw, 1.8rem);
+  line-height: 1.2;
+  font-weight: 600;
+}
+
+.hostedDirectory {
+  margin-block: 0 3rem;
+}
+
+.hostedIntro {
+  margin-block-start: 0.75rem;
+  max-width: 60ch;
+}
+
+.hostedDetail {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2rem;
+  padding-block-end: 4rem;
+}
+
+.hostedDetail section {
+  scroll-margin-top: 6rem;
+}
+
+.hostedDetail section > p,
+.hostedDirectory p {
+  margin-block: 0.7rem;
+}
+
+.hostedDirectory a,
+.hostedDetail a {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.hostedLinks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: 1rem;
+  margin-block: 1rem;
+}
+
+.hostedLinks > li,
+.tierLinks > li {
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.tierLinks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

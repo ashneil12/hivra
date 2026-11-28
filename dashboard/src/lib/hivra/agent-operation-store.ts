@@ -376,14 +376,20 @@ export async function beginHivraAgentVmAllocation(input: {
   userId: string;
   agentId: string;
   operationId: string;
+  hermesStandbyGeneration?: string;
 }): Promise<boolean> {
   const { data, error } = await database().from("hivra_agents")
-    .update({ operation_payload: null })
+    .update({ operation_payload: input.hermesStandbyGeneration
+      ? { stage: "hermes_standby_allocation", hermes_standby_generation: input.hermesStandbyGeneration }
+      : null })
     .eq("user_id", input.userId).eq("id", input.agentId)
     .eq("operation_id", input.operationId).eq("operation_kind", "provision")
     .eq("desired_state", "running").eq("status", "provisioning")
     .is("vmid", null)
-    .contains("operation_payload", { stage: "pre_allocation_access" })
+    .contains("operation_payload", {
+      stage: "pre_allocation_access",
+      ...(input.hermesStandbyGeneration ? { hermes_standby_generation: input.hermesStandbyGeneration } : {}),
+    })
     .select("id").maybeSingle();
   if (error) throw operationError(error);
   return Boolean(data);

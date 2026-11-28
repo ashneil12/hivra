@@ -6,7 +6,7 @@
 
 export const runtime = "nodejs";
 // Turning a sleeping agent's settings off wakes it, and that work runs after the answer.
-export const maxDuration = 180;
+export const maxDuration = 350;
 
 import { after, type NextRequest } from "next/server";
 import { auth } from "@clerk/nextjs/server";
@@ -14,8 +14,7 @@ import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-lim
 import { isSameOriginMutationRequest } from "@/app/api/infrastructure/connections/request-security";
 import { supabaseAdmin } from "@/lib/supabase";
 import { apiSuccess, apiError, handleApiError } from "@/lib/api-response";
-import { ensureHivraAgentAwake } from "@/lib/hivra/agent-wake";
-import { parseSleepMode } from "@/lib/hivra/agent-sleep-policy";
+import { ensureHivraAgentAwake, MANAGED_WAKE_WORK_BUDGET_MS } from "@/lib/hivra/agent-wake";
 import {
   alwaysOnLimitMessage,
   countAlwaysOnAgents,
@@ -30,6 +29,7 @@ import {
 } from "@/lib/hivra/seat-funding";
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const workDeadlineMs = Date.now() + MANAGED_WAKE_WORK_BUDGET_MS;
   try {
     const { id } = await params;
     const { userId } = await auth();
@@ -116,17 +116,14 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return apiError("Could not save this setting.", 503);
     }
     if (!data) return apiError("Agent not found", 404);
-    // In `on` mode the policy column does not decide who sleeps (every agent that is not kept
-    // awake does), so turning "Sleep when idle" off there would only wake an agent the next
-    // sweep puts back to sleep. Keep awake always counts.
     const effective = { always_on: effectiveAlwaysOn(data), sleep_policy: effectiveSleepPolicy(data) };
-    const policyOptsOut = effective.sleep_policy === "off" && parseSleepMode(process.env.HIVRA_SLEEP_MODE) !== "on";
-    if (effective.always_on === true || policyOptsOut) {
+    if (effective.always_on === true || effective.sleep_policy === "off") {
       // A no-op for an awake agent (one read). The wake itself carries on after the answer.
       try {
         await ensureHivraAgentAwake(String(data.id), {
           trigger: "action",
           waitMs: 0,
+          workDeadlineMs,
           onBackground: (work) => after(() => work),
         });
       } catch {

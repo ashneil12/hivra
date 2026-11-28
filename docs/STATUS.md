@@ -39,6 +39,7 @@ apps are listed separately.
 | Agent | Status | Where it runs |
 | --- | --- | --- |
 | Claude Code | Available | Hivra Cloud or a Proxmox server you connected |
+| Claude Code (sandbox) | Canary pilot only when configured; not generally available | One enrolled owner on an exact connected gVisor target. The pilot opens the official Claude Code terminal in a browser and stores project files and agent state in the sandbox workspace. This does not extend the VM's Hivra credits support to sandboxes. |
 | Codex | Available | Hivra Cloud or a Proxmox server you connected |
 | Hermes | Available | Hivra Cloud only. Existing Hermes agents keep running on their current lane. New launches on Canary go to a Hivra computer running the official Hermes Agent (its own installer and web UI, updated with `hermes update`). The paid path on that computer was verified on Canary; availability on hivra.cloud requires owner-approved promotion and separate production verification |
 | OpenClaw | Available | Hivra Cloud or a Proxmox server you connected |
@@ -90,8 +91,9 @@ when capacity is unavailable. Grandfathered usage can remain above the ceiling.
 
 Managed holder launches require a runtime that can nap and save memory,
 `HIVRA_SLEEP_MODE` set to `canary` or `on`, and a configured wake connection.
-On eligible computers, the policy naps after four idle minutes and saves
-memory after twelve more minutes in nap. Host controls, activity checks and
+On eligible computers with sleep enabled in their stored settings, the policy
+naps after four idle minutes and saves memory after twelve more minutes in nap.
+Funding alone does not opt a computer in. Host controls, activity checks and
 wake readiness still apply.
 
 Canary evidence is limited to a separately gated, expiring standing-account QA

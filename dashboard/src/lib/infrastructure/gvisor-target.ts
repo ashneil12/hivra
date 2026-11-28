@@ -21,7 +21,7 @@ import {
   loadCurrentHostDiscoverySnapshot,
 } from "./host-authority";
 import { resolveProxmoxHostCapacityPolicy } from "./host-capacity-policy";
-import { HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_BUNDLE_SHA256, HIVRA_GVISOR_IMAGE } from "@/lib/hivra/gvisor-computer-contract";
+import { HIVRA_GVISOR_ADAPTER_VERSION, HIVRA_GVISOR_BUNDLE_SHA256, HIVRA_GVISOR_IMAGE, HIVRA_GVISOR_PREVIOUS_ADAPTERS } from "@/lib/hivra/gvisor-computer-contract";
 
 const MARKER = "HIVRA_GVISOR_PREFLIGHT_V1 ";
 
@@ -82,13 +82,19 @@ printf '${MARKER}{"adapterVersion":"${HIVRA_GVISOR_ADAPTER_VERSION}","adapterSha
 `;
 }
 
-async function probeGvisorTarget(userId: string, connection: LoadedInfrastructureConnection, expectedBundleSha: string) {
+async function probeGvisorTarget(userId: string, connection: LoadedInfrastructureConnection, expectedBundleSha: string,
+  expectedBoundAdapterSha?: string) {
   const destination = await resolveValidatedSshDestination(connection.endpoint.sshHost, { userId });
   const env = buildUserProxmoxEnvironment({ id: connection.id, sshHost: connection.endpoint.sshHost,
     sshPort: connection.endpoint.sshPort, sshUser: connection.endpoint.sshUser,
     sshHostFingerprintSha256: connection.endpoint.sshHostFingerprintSha256!, sshPrivateKey: connection.credentials.sshPrivateKey,
     sshPrivilege: connection.endpoint.sshPrivilege, sshHostKeyType: connection.endpoint.sshHostKeyType }, destination);
-  const sha = await adapterDigest();
+  const currentSha = await adapterDigest();
+  const sha = expectedBoundAdapterSha ?? currentSha;
+  if (sha !== currentSha && !HIVRA_GVISOR_PREVIOUS_ADAPTERS.some(entry =>
+    entry.version === HIVRA_GVISOR_ADAPTER_VERSION && entry.sha256 === sha)) {
+    throw new GvisorTargetError("remote_failed", "The managed gVisor adapter is not a recognized release.");
+  }
   const result = await runProxmoxHostScript(preflightScript(sha, expectedBundleSha), env, { timeoutMs: 60_000, maxOutputBytes: 16 * 1024 });
   if (!result.ok) throw new GvisorTargetError("remote_failed", "The gVisor adapter did not pass its strict readiness check.");
   const line = result.stdout.split("\n").find(value => value.startsWith(MARKER));
@@ -192,7 +198,7 @@ export async function refreshManagedGvisorTarget(config: ManagedGvisorAuthorityC
     || discovery.snapshot.host.environment.cgroupVersion !== 2) {
     throw new GvisorTargetError("discovery_required", "The managed gVisor host identity could not be renewed.");
   }
-  const { sha, report } = await probeGvisorTarget(userId, connection, HIVRA_GVISOR_BUNDLE_SHA256);
+  const { sha, report } = await probeGvisorTarget(userId, connection, HIVRA_GVISOR_BUNDLE_SHA256, target.capabilities.adapter.sha256);
   if (sha !== target.capabilities.adapter.sha256 || report.runscSha256 !== target.capabilities.runtime.sha256) {
     throw new GvisorTargetError("remote_failed", "The managed gVisor runtime has changed.");
   }
