@@ -1681,7 +1681,8 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
       host = placement.targetId ?? env.PROXMOX_NODE ?? resolveHivraProxmoxHost();
       checkpointLaunchTiming("hostSelectedMs");
       const pilotKind = managedGitCanary && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline
-        ? hermesCanary ? "hermes" : agentKind === "claude" || agentKind === "codex" ? "bux-dependencies" : null
+        ? hermesCanary ? "hermes" : agentKind === "agent-zero" ? "agent-zero"
+          : agentKind === "claude" || agentKind === "codex" ? "bux-dependencies" : null
         : null;
       let pilot: { image_sha256: string; owner_id: string | null; standby_enabled: boolean } | null = null;
       if (pilotKind) {
@@ -1711,8 +1712,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
       if (managedGitCanary && STOCK_QGA_AGENT_KINDS.includes(agentKind) && !wantBrowser && !options?.moveFromInstanceId && !qaHolderDeadline) {
         const trials = [
           ...(type === "deepseek-harness" ? [["deepseek-harness", "HIVRA_CANARY_DEEPSEEK_IMAGE"]] as const : []),
-          ...(type === "agent-zero" ? [["agent-zero", "HIVRA_CANARY_AGENT_ZERO_IMAGE"]] as const : []),
-          ...(pilotKind === "bux-dependencies" && pilot ? [["bux-dependencies", null]] as const : []),
+          ...(pilot && (pilotKind === "agent-zero" || pilotKind === "bux-dependencies") ? [[pilotKind, null]] as const : []),
           ["ubuntu-qga", "HIVRA_CANARY_UBUNTU_QGA_IMAGE"],
         ] as const;
         for (const [kind, prefix] of trials) {
