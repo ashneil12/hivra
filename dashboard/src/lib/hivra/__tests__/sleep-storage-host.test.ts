@@ -7,7 +7,7 @@
 jest.mock("@/lib/logger", () => require("@/test-utils").createLoggerMock());
 
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { backupJobFiles, type BackupDisk, type BackupJobKind } from "../computer-backups/scripts";
@@ -21,7 +21,12 @@ const RESTIC = `#!/usr/bin/env bash
 echo "restic $*" >> "$STUB_DIR/calls.log"
 REPO="$STUB_DIR/repo"
 case "$1" in
-  cat) [ -d "$REPO" ] ;;
+  cat)
+    if [ -n "\${STUB_RAW_CHANGE_ON_REPO_CHECK:-}" ]; then
+      printf '\\n[PENDING]\\ncores: 3\\n' >> "$STUB_DIR/pve-qemu-server/${VMID}.conf"
+    fi
+    [ -d "$REPO" ]
+    ;;
   init) mkdir -p "$REPO" ;;
   unlock|forget|check) exit 0 ;;
   backup)
@@ -42,6 +47,9 @@ case "$1" in
     printf '{"message_type":"summary","snapshot_id":"%s","data_added":%s}\\n' "$id" "$(stat -c %s "$REPO/$id/$name")"
     ;;
   dump)
+    if [ -n "\${STUB_RAW_CHANGE_ON_DISK_READBACK:-}" ] && [ "$4" = /scsi0.raw ]; then
+      printf '\\n[PENDING]\\ncores: 3\\n' >> "$STUB_DIR/pve-qemu-server/${VMID}.conf"
+    fi
     # The owner's computer changes while its copy is being checked.
     if [ -n "\${STUB_TOUCH_DISK_ON_DUMP:-}" ]; then
       python3 - "$STUB_DIR/vg0/vm-1234-disk-0" <<'PY'
@@ -83,6 +91,8 @@ const NOOP = `#!/usr/bin/env bash\necho "$(basename "$0") $*" >> "$STUB_DIR/call
 
 const JOB = "00000000-0000-4000-8000-000000000001";
 const AGENT = "00000000-0000-4000-8000-000000000002";
+const CLOUDINIT_CACHE = "\n[special:cloudinit]\nadded: nameserver\n";
+const sha256 = (value: string) => createHash("sha256").update(value).digest("hex");
 
 host("store and unstore jobs against a fake host", () => {
   let h: HostHarness;
@@ -92,6 +102,7 @@ host("store and unstore jobs against a fake host", () => {
   const markDir = () => path.join(h.dir, "var-lib-hivra-sleep");
   const coldMark = () => path.join(markDir(), `cold-${VMID}`);
   const storedMark = () => path.join(markDir(), `stored-${VMID}`);
+  const rawConfigFile = () => path.join(h.dir, "pve-qemu-server", `${VMID}.conf`);
 
   beforeAll(() => {
     h = makeHostHarness();
@@ -118,7 +129,7 @@ if [ "$2" = '%u:%a:%h' ]; then printf '%s\\n' '0:600:1'; else exec /usr/bin/stat
     mkdirSync(markDir(), { recursive: true });
   });
 
-  type Result = { status: string; reason: string; disks: BackupDisk[]; kind: string };
+  type Result = { status: string; reason: string; disks: BackupDisk[]; kind: string; configuration?: { sha256: string; snapshotId: string } };
   function runJob(kind: BackupJobKind, state: HostState, opts: { disks?: BackupDisk[]; env?: Record<string, string> } = {}) {
     const files = backupJobFiles(kind);
     const jobDir = path.join(h.dir, "job");
@@ -167,20 +178,31 @@ if [ "$2" = '%u:%a:%h' ]; then printf '%s\\n' '0:600:1'; else exec /usr/bin/stat
     expect(run.state).toEqual(COLD);
   });
 
-  it("verifies portable config and data without discarding a fenced source", () => {
+  function fencedSource() {
     markCold();
     mkdirSync(path.join(markDir(), "portable-kvm-fences"));
     const state = { ...COLD, lock: "backup", onboot: 0 };
     const file = path.join(markDir(), "portable-kvm-fences", String(VMID));
     writeFileSync(file, "bound fixture proof\n", { mode: 0o600 });
     const config = h.run(`qm config ${VMID} --current 1`, state).stdout.trimEnd() + "\n";
+    const raw = config + CLOUDINIT_CACHE;
+    mkdirSync(path.dirname(rawConfigFile()), { recursive: true });
+    writeFileSync(rawConfigFile(), raw);
     const env = {
       PORTABLE_FENCE: "bound fixture proof",
-      PORTABLE_CONFIG_SHA: createHash("sha256").update(config).digest("hex"),
+      PORTABLE_CONFIG_SHA: sha256(config),
+      PORTABLE_RAW_CONFIG_SHA: sha256(raw),
     };
+    return { state, config, raw, env };
+  }
+
+  it("uploads only the canonical portable config when the fenced raw file includes trusted generated cache", () => {
+    const { config, raw, state, env } = fencedSource();
     const run = runJob("portable_checkpoint", state, { env });
     expect(run.result).toMatchObject({ status: "succeeded", reason: "portable_checkpointed",
       configuration: { sha256: env.PORTABLE_CONFIG_SHA, snapshotId: expect.stringMatching(/^[0-9a-f]{64}$/) } });
+    expect(readFileSync(path.join(h.dir, "repo", run.result.configuration!.snapshotId, "vm.conf"), "utf8")).toBe(config);
+    expect(readFileSync(rawConfigFile(), "utf8")).toBe(raw);
     expect(run.result.disks).toHaveLength(1);
     expect(run.calls.some(call => call.startsWith("blkdiscard"))).toBe(false);
     expect(readFileSync(disk).equals(original)).toBe(true);
@@ -188,6 +210,48 @@ if [ "$2" = '%u:%a:%h' ]; then printf '%s\\n' '0:600:1'; else exec /usr/bin/stat
     expect(existsSync(storedMark())).toBe(false);
     expect(runJob("portable_checkpoint", state, { env: { ...env, PORTABLE_FENCE: "different" } }).result)
       .toMatchObject({ status: "skipped", reason: "fence_changed" });
+  });
+
+  it.each([
+    ["raw config", (raw: string) => raw.replace("cores: 2", "cores: 3")],
+    ["pending config", (raw: string) => raw + "\n[PENDING]\ncores: 3\n"],
+    ["generated cache", (raw: string) => raw.replace("added: nameserver", "added: net0")],
+  ])("refuses drift in the %s before restic work even when current config is unchanged", (_name, mutateRaw) => {
+    const { raw, state, env } = fencedSource();
+    writeFileSync(rawConfigFile(), mutateRaw(raw));
+    const run = runJob("portable_checkpoint", state, { env });
+    expect(run.result).toMatchObject({ status: "skipped", reason: "raw_configuration_changed" });
+    expect(run.calls.some(call => call.startsWith("restic "))).toBe(false);
+  });
+
+  it("does not follow a symlink to matching raw bytes outside the fixed config file", () => {
+    const { raw, state, env } = fencedSource();
+    const other = path.join(h.dir, "other.conf");
+    writeFileSync(other, raw);
+    rmSync(rawConfigFile());
+    symlinkSync(other, rawConfigFile());
+    try {
+      const run = runJob("portable_checkpoint", state, { env });
+      expect(run.result).toMatchObject({ status: "skipped", reason: "raw_configuration_changed" });
+      expect(run.calls.some(call => call.startsWith("restic "))).toBe(false);
+    } finally {
+      rmSync(rawConfigFile());
+    }
+  });
+
+  it("refuses raw drift discovered during repository preflight before uploading", () => {
+    const { state, env } = fencedSource();
+    const run = runJob("portable_checkpoint", state, { env: { ...env, STUB_RAW_CHANGE_ON_REPO_CHECK: "1" } });
+    expect(run.result).toMatchObject({ status: "skipped", reason: "raw_configuration_changed" });
+    expect(run.calls.some(call => call.startsWith("restic backup"))).toBe(false);
+  });
+
+  it("does not certify a portable checkpoint if raw config drifts during readback", () => {
+    const { state, env } = fencedSource();
+    const run = runJob("portable_checkpoint", state, { env: { ...env, STUB_RAW_CHANGE_ON_DISK_READBACK: "1" } });
+    expect(run.calls.some(call => call.startsWith("restic dump") && call.endsWith(" /scsi0.raw"))).toBe(true);
+    expect(run.result).toMatchObject({ status: "skipped", reason: "raw_configuration_changed" });
+    expect(readFileSync(disk).equals(original)).toBe(true);
   });
 
   it("leaves alone anything that is not an off, dropped computer", () => {

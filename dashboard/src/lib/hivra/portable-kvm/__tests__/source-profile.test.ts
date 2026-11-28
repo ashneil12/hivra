@@ -17,12 +17,13 @@ const approved = [
   "scsi0: local-lvm:vm-9343-disk-0,discard=on,ssd=1", "tags: qa;" + placement.bindingTag,
 ].join("\n") + "\n";
 
-function eligible(config: string, status = "stopped", launchProfile: Parameters<typeof buildPortableKvmSourceProfileCheck>[1] = profile) {
+function eligible(config: string, status = "stopped", launchProfile: Parameters<typeof buildPortableKvmSourceProfileCheck>[1] = profile, raw = config) {
   const root = mkdtempSync(join(tmpdir(), "hivra-kvm-profile-"));
   try {
     const bin = join(root, "bin");
     mkdirSync(bin);
-    writeFileSync(join(root, "9343.conf"), config);
+    writeFileSync(join(root, "9343.conf"), raw);
+    writeFileSync(join(root, "current.conf"), config);
     writeFileSync(join(root, "cold-9343"), placement.bindingTag + "\n");
     writeFileSync(join(bin, "hostname"), "#!/bin/sh\nprintf '%s\\n' qa-source\n", { mode: 0o700 });
     writeFileSync(join(bin, "qm"), "#!/bin/sh\ncase \"$1\" in status) echo \"status: $TEST_STATUS\";; config) cat \"$TEST_CONFIG\";; *) exit 65;; esac\n",
@@ -32,7 +33,7 @@ function eligible(config: string, status = "stopped", launchProfile: Parameters<
       .replaceAll("/run/qemu-server", root).replace("marker.stat().st_uid != 0", `marker.stat().st_uid != ${process.getuid?.() ?? 0}`);
     const result = spawnSync("bash", ["-c", command], {
       encoding: "utf8", timeout: 5000, env: { NODE_ENV: "test", PATH: bin + ":/usr/bin:/bin",
-        TEST_STATUS: status, TEST_CONFIG: join(root, "9343.conf") },
+        TEST_STATUS: status, TEST_CONFIG: join(root, "current.conf") },
     });
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
@@ -79,4 +80,21 @@ it("accepts the ordinary serial console and generated seed only with their quali
   expect(eligible(ordinary + "cicustom: user=local:snippets/arbitrary.yaml\n", "stopped", measured)).toBe(false);
   expect(eligible(ordinary.replace("serial0: socket", "serial0: /dev/ttyS0"), "stopped", measured)).toBe(false);
   expect(eligible(ordinary.replace("ip=192.0.2.43", "ip=192.0.2.44"), "stopped", measured)).toBe(false);
+  const resources = { ...measured, managed: { ...measured.managed!, resources: { balloonMb: 2048, cpuUnits: 100 } } };
+  const current = ordinary + "balloon: 2048\ncpuunits: 100\n";
+  const cache = "cicustom: vendor=local:snippets/hivra-qga-9343-" + allocationOperationId + ".yaml\n";
+  const section = "\n[special:cloudinit]\n" + cache;
+  expect(eligible(current, "stopped", resources, current + section)).toBe(true);
+  for (const bad of [
+    section.replace("9343", "9344"), section.replace(allocationOperationId, "00000000-0000-4000-8000-000000000009"),
+    section + "nameserver: 192.0.2.53\n", section + section, section.replace("[special:cloudinit]", "[PENDING]"),
+    section.replace("vendor=", "user="), "\n[saved]\nvmstate: local-lvm:vm-9343-state\n",
+  ]) {
+    expect(eligible(current, "stopped", resources, current + bad)).toBe(false);
+  }
+  expect(eligible(current + cache, "stopped", resources)).toBe(false);
+  expect(eligible(current, "stopped", resources, current.replace("balloon: 2048", "balloon: 1024") + section)).toBe(false);
+  expect(eligible(current.replace("cpuunits: 100", "cpuunits: 50"), "stopped", resources)).toBe(false);
+  expect(eligible(current.replace("balloon: 2048", "balloon: 1024"), "stopped", resources)).toBe(false);
+  expect(eligible(current, "stopped", measured)).toBe(false);
 });

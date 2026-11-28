@@ -1,5 +1,7 @@
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import { z } from "zod";
+import type { PortableKvmDestinationPrepareInput } from "./destination-prepare";
+import { portableKvmSourceConfigurationPython } from "./source-configuration";
 
 const prefix = "HIVRA_KVM_PORTABLE_FENCE_V1 ";
 const scopeSchema = z.object({
@@ -12,13 +14,34 @@ const scopeSchema = z.object({
 }).strict();
 const fenceSchema = scopeSchema.extend({
   configurationSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  rawConfigurationSha256: z.string().regex(/^[0-9a-f]{64}$/),
   state: z.literal("fenced"),
 }).strict();
 
 export type PortableKvmSourceScope = z.infer<typeof scopeSchema>;
 export type PortableKvmSourceFence = z.infer<typeof fenceSchema>;
 
-export function buildPortableKvmSourceFenceScript(input: PortableKvmSourceScope, mode: "acquire" | "verify" = "acquire") {
+const checkConfig = String.raw`
+import hashlib
+import json
+import re
+import sys
+from pathlib import Path
+${portableKvmSourceConfigurationPython}
+vmid, tag, managed = json.loads(sys.argv[1])
+try:
+    raw = Path("/etc/pve/qemu-server", vmid + ".conf").read_bytes()
+    source_configuration(raw.decode(), sys.stdin.read(), vmid, tag, managed)
+except (OSError, ValueError, TypeError, KeyError):
+    sys.exit("unsupported native portable KVM source configuration")
+print(hashlib.sha256(raw).hexdigest())
+`;
+
+export function buildPortableKvmSourceFenceScript(
+  input: PortableKvmSourceScope,
+  mode: "acquire" | "verify" = "acquire",
+  managed?: PortableKvmDestinationPrepareInput["profile"]["managed"],
+) {
   const scope = scopeSchema.parse(input);
   const evidence = JSON.stringify({ ...scope, state: "fenced" }).slice(0, -1);
   return `set -euo pipefail
@@ -42,10 +65,8 @@ check_stopped() {
   [ "$(timeout 12 qm status "$VMID" </dev/null)" = 'status: stopped' ]
   [ ! -e "/run/qemu-server/$VMID.pid" ]
   [ -r "/etc/pve/qemu-server/$VMID.conf" ]
-  if grep -Eq '^\\[' "/etc/pve/qemu-server/$VMID.conf" ||
-    grep -Eq '^vmstate:|^template:[[:space:]]+1$|^onboot:[[:space:]]+1$' <<<"$CONFIG"; then return 1; fi
-  TAGS="$(sed -n 's/^tags:[[:space:]]*//p' <<<"$CONFIG" | tr ';' '\\n' | grep '^hivra-bind-' || true)"
-  [ "$TAGS" = "$TAG" ] || return 1
+  if grep -Eq '^vmstate:|^template:[[:space:]]+1$|^onboot:[[:space:]]+1$' <<<"$CONFIG"; then return 1; fi
+  RAW_SHA="$(timeout -k 2 10 python3 -I -c ${shellQuote(checkConfig)} ${shellQuote(JSON.stringify([String(scope.vmid), scope.bindingTag, managed ?? null]))} <<<"$CONFIG")" || return 1
   [ ! -L "$ROOT/cold-$VMID" ] && [ "$(cat "$ROOT/cold-$VMID")" = "$TAG" ] || return 1
   [ ! -e "$ROOT/stored-$VMID" ] && [ ! -L "$ROOT/stored-$VMID" ] || return 1
 }
@@ -70,7 +91,7 @@ ${mode === "acquire" ? 'if [ -z "$LOCK" ]; then timeout 12 qm set "$VMID" --lock
 check_stopped
 [ "$(sed -n 's/^lock:[[:space:]]*//p' <<<"$CONFIG")" = backup ]
 SHA="$(printf '%s\\n' "$CONFIG" | sha256sum | cut -d' ' -f1)"
-printf '%s%s,"configurationSha256":"%s"}\\n' ${shellQuote(prefix)} ${shellQuote(evidence)} "$SHA"
+printf '%s%s,"configurationSha256":"%s","rawConfigurationSha256":"%s"}\\n' ${shellQuote(prefix)} ${shellQuote(evidence)} "$SHA" "$RAW_SHA"
 `;
 }
 

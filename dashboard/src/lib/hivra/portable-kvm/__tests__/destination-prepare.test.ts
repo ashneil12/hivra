@@ -9,6 +9,7 @@ import {
   buildPortableKvmDestinationPrepareScript,
   buildPortableKvmHostCpuCompatibilityProbeScript,
   parsePortableKvmDestinationPrepareReceipt,
+  portableKvmManagedDestinationProfileSchema,
   serializePortableKvmDestinationPreparePermit,
   type PortableKvmDestinationPrepareInput,
 } from "../destination-prepare";
@@ -48,6 +49,10 @@ const managedPlan: PortableKvmDestinationPrepareInput = {
       cloudInit: { instanceId, gateway: "10.251.10.1", nameservers: ["10.251.10.1", "192.0.2.53"] },
     },
   },
+};
+const resources = { balloonMb: 2048, cpuUnits: 200 };
+const managedResourcePlan = {
+  ...managedPlan, profile: { ...managedPlan.profile, managed: { ...managedPlan.profile.managed!, resources } },
 };
 const roots = new Set<string>();
 afterEach(() => {
@@ -157,6 +162,8 @@ elif name == "qm" and args[0:2] == (["set", "9344"] if managed else ["create", "
             "--cicustom": "meta=local:snippets/" + snippet,
         })
         assert meta.read_text() == seed["meta-data"] and meta.stat().st_mode & 0o777 == 0o600
+    if env.get("RESOURCE_ENVELOPE"):
+        expected.update({"--balloon": "2048", "--cpuunits": "200"})
     assert options == expected
     assert (r / "state/portable-kvm-destinations/.attempt-9344").exists()
     with (r / "events").open("a") as f:
@@ -173,6 +180,8 @@ elif name == "qm" and args[0:2] == (["set", "9344"] if managed else ["create", "
         data = data.replace(",link_down=1", "")
     if env.get("READBACK_TAGS"):
         data = data.replace("tags: " + options["--tags"], "tags: " + env["READBACK_TAGS"])
+    if env.get("ALTER_RESOURCE"):
+        data = data.replace(env["ALTER_RESOURCE"] + "\n", env.get("ALTERED_RESOURCE", "") + "\n").replace("\n\n", "\n")
     cfg.write_text(data + env.get("EXTRA_CONFIG", "") + ("\n[special:cloudinit]\nadded: nameserver\n" if managed else ""))
     (r / "devices/pve/vm-9344-disk-0").symlink_to(r / "devices/dm-0")
 elif name == "perl" and managed and args[-2:] == ["9344", hashlib.sha256(cfg.read_bytes()).hexdigest()]:
@@ -265,6 +274,7 @@ function fixture(input = plan) {
         encoding: "utf8", timeout: 5000, env: {
           NODE_ENV: "test", PATH: join(root, "bin") + ":/usr/bin:/bin", MOCK_ROOT: root,
           MANAGED: current.profile.managed ? "yes" : "", MOCK_MAC: current.profile.network.macAddress, ...flags,
+          RESOURCE_ENVELOPE: current.profile.managed?.resources ? "yes" : "",
         },
       });
   };
@@ -441,13 +451,24 @@ it("recreates only the generated managed NoCloud seed and preserves the source i
   expect(host.events()).toBe("create\nregenerate\n");
 });
 
-it("lets signed Delete destroy the released managed destination using its original allocation identity", () => {
-  const host = fixture(managedPlan);
+it.each([
+  ["without explicit resources", managedPlan], ["with explicit resources", managedResourcePlan],
+] as const)("lets signed Delete destroy the released managed destination %s using its original allocation identity", (_, input) => {
+  const host = fixture(input);
   const result = host.run();
   expect({ status: result.status, error: result.stderr }).toEqual({ status: 0, error: "" });
   const cfg = `qemu/${vmid}.conf`;
   const prepared = readFileSync(join(host.root, cfg), "utf8");
   expect(prepared).toContain(`tags: ${managedPlan.bindingTag};${allocationTag}\n`);
+  const reservation = parsePortableKvmDestinationPrepareReceipt(result.stdout, input);
+  expect(reservation?.resources).toEqual(input.profile.managed!.resources);
+  expect(readFileSync(host.marker, "utf8")).toBe(serializePortableKvmDestinationReservation(reservation!));
+  if (input.profile.managed!.resources) {
+    expect(prepared).toContain("balloon: 2048\n");
+    expect(prepared).toContain("cpuunits: 200\n");
+    expect(parsePortableKvmDestinationPrepareReceipt(result.stdout, managedPlan)).toBeNull();
+    expect(parsePortableKvmDestinationPrepareReceipt(result.stdout.replace('"cpuUnits":200', '"cpuUnits":100'), input)).toBeNull();
+  }
 
   const released = prepared.replace("lock: backup\n", "");
   expect(released).not.toBe(prepared);
@@ -472,6 +493,42 @@ it("lets signed Delete destroy the released managed destination using its origin
   });
   expect(existsSync(join(host.root, cfg))).toBe(false);
   expect(host.events()).toBe("create\nregenerate\nstop\ndestroy\n");
+});
+
+it.each([
+  [{ balloonMb: 2048 }], [{ cpuUnits: 200 }], [{ balloonMb: 1024, cpuUnits: 200 }],
+  [{ balloonMb: 16385, cpuUnits: 200 }], [{ balloonMb: 2048, cpuUnits: 0 }],
+  [{ balloonMb: 2048, cpuUnits: 10001 }], [{ balloonMb: 2048, cpuUnits: 50.1 }],
+  [{ balloonMb: 2048, cpuUnits: 200, source: true }],
+])("rejects an invalid or mismatched managed resource envelope: %j", invalid => {
+  const profile = managedResourcePlan.profile;
+  expect(() => serializePortableKvmDestinationPreparePermit({
+    ...managedResourcePlan, profile: { ...profile, managed: { ...profile.managed, resources: invalid as typeof resources } },
+  })).toThrow();
+});
+
+it("does not accept allocation resources in the base managed runtime profile", () => {
+  const { cpu, cpuLimit, cloudInit } = managedResourcePlan.profile.managed;
+  expect(portableKvmManagedDestinationProfileSchema.safeParse({ cpu, cpuLimit, cloudInit, resources }).success).toBe(false);
+});
+
+it.each([
+  ["memory: 2048", "memory: 4096"], ["balloon: 2048", "balloon: 1024"], ["cpuunits: 200", "cpuunits: 100"],
+  ["balloon: 2048", ""], ["cpuunits: 200", ""],
+])("does not reserve a destination with resource readback drift (%s → %s)", (key, value) => {
+  const host = fixture(managedResourcePlan);
+  const result = host.run({ ALTER_RESOURCE: key, ALTERED_RESOURCE: value });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("unexpected_destination_configuration");
+  expect(existsSync(host.marker)).toBe(false);
+});
+
+it.each([plan, managedPlan])("rejects unauthorized resource fields in prepared config", input => {
+  const host = fixture(input);
+  const result = host.run({ EXTRA_CONFIG: "balloon: 2048\ncpuunits: 200\n" });
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("unsupported_destination_configuration");
+  expect(existsSync(host.marker)).toBe(false);
 });
 
 const invalidOwnershipTags = [

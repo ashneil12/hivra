@@ -42,6 +42,8 @@ const managedConfig = config.replace("vmbr1", "hivra0").replace("tags: " + bindi
   `ipconfig0: ip=${destination.ip}/24,gw=${managedProfile.cloudInit.gateway}`,
   `nameserver: ${managedProfile.cloudInit.nameservers.join(" ")}`, "",
 ].join("\n");
+const resources = { balloonMb: 2048, cpuUnits: 200 };
+const resourceConfig = managedConfig + "balloon: 2048\ncpuunits: 200\n";
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const saved = process.env;
 const roots = new Set<string>();
@@ -191,7 +193,7 @@ else:
     raise RuntimeError("unexpected fixture command")
 `;
 
-function host(current = config, managed = false) {
+function host(current = config, managed = false, resources?: NonNullable<PortableKvmDestinationBootProfile["managed"]>["resources"]) {
   const root = mkdtempSync(join(tmpdir(), "portable-boot-"));
   roots.add(root);
   for (const dir of ["bin", "sleep/portable-kvm-destinations", "pve", "lxc", "run", "lock", "net/vmbr1/bridge",
@@ -199,9 +201,9 @@ function host(current = config, managed = false) {
   const disk = { key: "scsi0" as const, bytes: 512, sha256: "6".repeat(64), snapshotId: "7".repeat(64) };
   const reservation = { agentId, operationId, generation: 2, hostId: destination.hostId, vmid: destination.vmid,
     bindingTag, checkpointSha256: "8".repeat(64), configurationSha256: digest(current), rawConfigurationSha256: digest(current),
-    storageId: "local-lvm", volumeName: "vm-9344-disk-0", volumeGroup: "pve", deviceMapperUuid: "LVM-" + "A".repeat(64), disk,
+    storageId: "local-lvm", volumeName: "vm-9344-disk-0", volumeGroup: "pve", deviceMapperUuid: "LVM-" + "A".repeat(64), disk, resources,
   };
-  const profile = { reservation, machineId, ip: destination.ip, ...(managed ? { managed: managedProfile } : {}) };
+  const profile = { reservation, machineId, ip: destination.ip, ...(managed ? { managed: { ...managedProfile, resources } } : {}) };
   const diskReceipt = { state: "disk_restored_verified" as const, reservation, readback: { sha256: disk.sha256, bytes: disk.bytes } };
   const registry = join(root, "sleep/portable-kvm-destinations");
   const bootMarker = join(registry, "9344.boot");
@@ -307,8 +309,10 @@ it("recovers a lost pre-CAS response without issuing a second start or booting a
   expect(h.events()).toBe("install_fence\nstart\nqga_0\nqga_0\n");
 });
 
-it("preserves the ordinary managed console, seed identity and leased route across cold boot and cutover", async () => {
-  const h = host(managedConfig, true);
+it.each([
+  ["legacy", managedConfig, undefined], ["explicit", resourceConfig, resources],
+] as const)("preserves the ordinary managed console, seed identity, leased route and %s resource profile across cold boot and cutover", async (_, current, envelope) => {
+  const h = host(current, true, envelope);
   h.env.TEST_RUN_GUEST = "true";
   const bootReceipt = await h.boot();
   const input = { ownerId, profile: h.profile, bootReceipt };
@@ -329,7 +333,36 @@ it("preserves the ordinary managed console, seed identity and leased route acros
   writeFileSync(join(h.root, "pve/9344.conf"), raw);
   await expect(release()).resolves.toMatchObject({ state: "destination_lock_released" });
   expect(h.events()).toMatch(/qga_1\nclear_link_cache\nqga_1\nunlock\n$/);
-  expect(readFileSync(join(h.root, "pve/9344.conf"), "utf8")).not.toContain("[");
+  const released = readFileSync(join(h.root, "pve/9344.conf"), "utf8");
+  expect(released).not.toContain("[");
+  expect(released).toContain(`tags: ${bindingTag};${allocationTag}\n`);
+  if (envelope) {
+    expect(released).toContain("balloon: 2048\n");
+    expect(released).toContain("cpuunits: 200\n");
+  }
+});
+
+it.each([
+  ["maximum memory", resourceConfig.replace("memory: 2048", "memory: 4096"), resources],
+  ["balloon floor", resourceConfig.replace("balloon: 2048", "balloon: 1024"), resources],
+  ["CPU weight", resourceConfig.replace("cpuunits: 200", "cpuunits: 100"), resources],
+  ["omitted balloon floor", resourceConfig.replace("balloon: 2048\n", ""), resources],
+  ["resources without authority", resourceConfig, undefined],
+] as const)("does not boot with %s even when the registered hashes match", async (_, current, envelope) => {
+  const h = host(current, true, envelope);
+  await expect(h.boot()).rejects.toThrow("observation failed");
+  expect(h.events()).toBe("");
+});
+
+it("refuses boot and reservation wires that disagree on the resource authority", () => {
+  const h = host(resourceConfig, true, resources);
+  expect(JSON.parse(serializePortableKvmDestinationBootProfile(h.profile)).managed.resources).toEqual(resources);
+  for (const managed of [undefined, managedProfile, { ...managedProfile, resources: { ...resources, cpuUnits: 100 } }]) {
+    expect(() => serializePortableKvmDestinationBootProfile({ ...h.profile, managed })).toThrow("resources do not match");
+  }
+  expect(() => serializePortableKvmDestinationBootProfile({
+    ...h.profile, reservation: { ...h.profile.reservation, resources: undefined },
+  })).toThrow("resources do not match");
 });
 
 it.each([
