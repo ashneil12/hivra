@@ -35,6 +35,7 @@ import {
 const ADAPTER = "/opt/hivra/gvisor-adapter/hivra-gvisor-adapter";
 const RESULT = "HIVRA_GVISOR_V1 ";
 const EXEC_RESULT = "HIVRA_GVISOR_EXEC_V1 ";
+const EXEC_MAX_WIRE_OUTPUT_BYTES = 800 * 1024;
 const TIER_RESULT = "HIVRA_GVISOR_TIER_V1 ";
 const ADMISSION_RESULT = "HIVRA_GVISOR_ADMISSION_V1 ";
 const PREPARE_FAILURE = "HIVRA_GVISOR_PREPARE_FAILED_V1 ";
@@ -252,7 +253,8 @@ async function invokeOnTarget(userId: string, targetId: string, request: GvisorC
     : `exec '${ADAPTER}'`;
   const guard = identityGuard(expectedAdapterSha, expectedRuntimeSha, runAdapter);
   const result = await runProxmoxHostScriptWithStdin(guard, JSON.stringify(parsed), authority.env,
-    { timeoutMs: parsed.operation === "create" || parsed.operation === "update" ? 360_000 : 90_000, maxOutputBytes: 96 * 1024 });
+    { timeoutMs: parsed.operation === "create" || parsed.operation === "update" ? 360_000 : 90_000,
+      maxOutputBytes: parsed.operation === "exec" ? EXEC_MAX_WIRE_OUTPUT_BYTES : 96 * 1024 });
   if (!result.ok) {
     const output = `${result.stdout}\n${result.stderr}`;
     if (output.includes("HIVRA_GVISOR_IDENTITY_MISMATCH")) {

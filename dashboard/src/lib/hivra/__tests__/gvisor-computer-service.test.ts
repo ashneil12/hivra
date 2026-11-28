@@ -586,6 +586,25 @@ describe("ready managed sandbox lifecycle", () => {
     expect(expectCommand()).toEqual(["exec"]);
   });
 
+  it("receives both full terminal streams even when JSON escapes every byte", async () => {
+    const adapter = readFileSync("provisioner/gvisor/hivra-gvisor-adapter.py", "utf8");
+    const streamLimit = Number(adapter.match(/^EXEC_OUTPUT_LIMIT = (\d+)$/m)?.[1]);
+    expect(streamLimit).toBeGreaterThan(0);
+    const output = "\0".repeat(streamLimit);
+    mockRpc.mockResolvedValueOnce({ data: { ...claim, status: "observe" }, error: null });
+    mockRunWithStdin.mockImplementationOnce(async (script, _stdin, _env, options) => {
+      const result = acknowledgeManaged(script, {
+        ok: true,
+        stdout: `HIVRA_GVISOR_EXEC_V1 ${JSON.stringify({ exitCode: 0, stdout: output, stderr: output })}\n`,
+        stderr: "sudo transport diagnostic\n",
+      });
+      return Buffer.byteLength(result.stdout) + Buffer.byteLength(result.stderr) <= options.maxOutputBytes
+        ? result : { ok: false, stdout: "", stderr: "" };
+    });
+    await expect(executeGvisorComputerCommand(userId, computerId, ["true"]))
+      .resolves.toEqual({ exitCode: 0, stdout: output, stderr: output });
+  });
+
   it("requires a confirmed paid entitlement before wake", async () => {
     agent.status = "stopped";
     mockResolveEntitlement.mockResolvedValueOnce(null);
