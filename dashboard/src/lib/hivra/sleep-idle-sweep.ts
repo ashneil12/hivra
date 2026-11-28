@@ -13,6 +13,7 @@ import {
   type SleepOutcome,
 } from "./agent-sleep";
 import { HOLDER_SEAT_HIBERNATE_AFTER_NAP_SECONDS, HOLDER_SEAT_NAP_AFTER_SECONDS } from "./seat-funding";
+import { CANARY_DISK_IDLE_SECONDS, canaryIdleHibernateEnabled } from "./canary-idle-hibernate";
 import { ensureHivraAgentAwake, type AgentRow, type EnsureAwakeResult } from "./agent-wake";
 import { STALE_LEASE_MS, reconcileAgentSleep, sleepLeaseKind } from "./sleep-reconcile";
 import { markAgentAwake } from "./sleep-aware";
@@ -939,10 +940,11 @@ async function recentlyActive(ctx: Context, ids: string[], sinceIso: string): Pr
   return active;
 }
 
-async function loadNapCandidates(ctx: Context, hosts: Map<string, HostInfo>): Promise<Candidate[]> {
+async function loadAwakeCandidates(ctx: Context, hosts: Map<string, HostInfo>, tier: "nap" | "hibernate"): Promise<Candidate[]> {
   const timings = candidateTimings(ctx.env);
   const nowMs = ctx.now();
-  const windowStart = new Date(nowMs - timings.napAfterSeconds * 1000).toISOString();
+  const idleSeconds = tier === "hibernate" ? CANARY_DISK_IDLE_SECONDS : timings.napAfterSeconds;
+  const windowStart = new Date(nowMs - idleSeconds * 1000).toISOString();
   const query = ctx.db
     .from("hivra_agents")
     .select("id, proxmox_host")
@@ -954,18 +956,21 @@ async function loadNapCandidates(ctx: Context, hosts: Map<string, HostInfo>): Pr
     .eq("computer_substrate", "proxmox-kvm")
     .is("deployment_target_id", null)
     .eq("always_on", false)
-    .in("sleep_policy", ["t1", "full"])
     .not("cf_hostname", "is", null)
     .not("vmid", "is", null)
     .not("bootstrapped_at", "is", null)
     .not("type", "in", "(aeon,linux-desktop)")
     // No wake, abort or other change inside the nap window.
     .or(`sleep_tier_changed_at.is.null,sleep_tier_changed_at.lte.${windowStart}`);
-  const { data, error } = await query
+  const policies = tier === "hibernate"
+    ? query.eq("sleep_policy", "t3").eq("seat_funding", "paid").lte("bootstrapped_at", windowStart)
+    : query.in("sleep_policy", ["t1", "full"]);
+  const { data, error } = await policies
     .order("sleep_tier_changed_at", { ascending: true, nullsFirst: true })
     .limit(CANDIDATE_SCAN_LIMIT);
   if (error) {
-    fail(ctx, "failed to load nap candidates", error, "sleep_sweep_nap_query_failed");
+    fail(ctx, `failed to load awake ${tier} candidates`, error, tier === "nap"
+      ? "sleep_sweep_nap_query_failed" : "sleep_sweep_direct_hibernate_query_failed");
     return [];
   }
   const candidates = toCandidates((data ?? []) as Array<{ id: string; proxmox_host: string | null }>, hosts);
@@ -1081,7 +1086,10 @@ async function runSleepSteps(ctx: Context): Promise<void> {
   if (![...hosts.values()].some(hostActs)) return;
 
   const hibernates = await loadHibernateCandidates(ctx, hosts);
-  const naps = remaining(ctx) > MIN_NAP_START_MS ? await loadNapCandidates(ctx, hosts) : [];
+  if (canaryIdleHibernateEnabled(ctx.env) && remaining(ctx) >= MIN_HIBERNATE_START_MS) {
+    hibernates.push(...await loadAwakeCandidates(ctx, hosts, "hibernate"));
+  }
+  const naps = remaining(ctx) > MIN_NAP_START_MS ? await loadAwakeCandidates(ctx, hosts, "nap") : [];
   ctx.summary.hibernate.candidates = hibernates.length;
   ctx.summary.nap.candidates = naps.length;
 

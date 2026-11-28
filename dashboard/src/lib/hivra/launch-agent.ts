@@ -46,6 +46,7 @@ import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement
 import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
 import { CANARY_QA_HOLDER_NAME, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
 import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
+import { canaryIdleHibernateEnabled } from "@/lib/hivra/canary-idle-hibernate";
 import { HERMES_STANDBY_CPU_UNITS, HERMES_STANDBY_PROVISIONER_VERSIONS, parseHermesStandbyIdentity, type HermesStandby } from "@/lib/hivra/hermes-standby";
 import { parseSleepMode, supportsIdleNap } from "@/lib/hivra/agent-sleep-policy";
 import type { SeatFunding } from "@/lib/hivra/seat-funding";
@@ -1981,6 +1982,8 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
       }
       return apiError(planAgentLimitMessage(slotPlan?.planName ?? "current", Math.max(0, error.limit - slotAllowance)), 403, undefined, { code: "plan_agent_limit" });
     };
+    const diskSleepDefault = managedGitCanary && seatFunding === "paid" && !options?.moveFromInstanceId
+      && supportsIdleNap(type) && canaryIdleHibernateEnabled();
     let reservedLaunch;
     try {
       reservedLaunch = launchAdmission && launchModels ? await launchModels.reserve(launchAdmission, {
@@ -1993,7 +1996,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
         proxmox_host: deployment.mode === "self-managed" ? SELF_MANAGED_HIVRA_PROXMOX_HOST_SENTINEL : hermesStandby ? "" : host,
         infrastructure_binding_token_hash: infrastructureBindingTokenHash, pool_id: poolId,
         goal, context, personality, emoji, template_skills: templateSkillsColumn, ...deploymentBinding,
-      }, agentLimit) : null;
+      }, agentLimit, diskSleepDefault) : null;
     } catch (error) {
       if (error instanceof LaunchPlanAgentLimitError) return await planLimitResponse(error);
       throw error;
@@ -2016,6 +2019,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
       deployment_mode: deployment.mode,
       seat_funding: seatFunding,
       computer_substrate: "proxmox-kvm",
+      ...(diskSleepDefault ? { sleep_policy: "t3" } : {}),
       managed_provisioner_channel: managedProvisionerChannel,
       desired_state: "running",
       operation_id: provisionOperationId,

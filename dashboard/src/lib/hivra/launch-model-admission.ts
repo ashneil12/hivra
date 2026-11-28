@@ -55,7 +55,7 @@ export function createLaunchModelAdmissionService(deps: Dependencies = {}) {
         userId, requestId, modelOperationId: (deps.newId ?? randomUUID)(), intent: parsed.data, fingerprints,
       } satisfies LaunchModelAdmission };
     },
-    async reserve(admission: LaunchModelAdmission, row: LaunchModelReservation, agentLimit: number) {
+    async reserve(admission: LaunchModelAdmission, row: LaunchModelReservation, agentLimit: number, diskSleepDefault = false) {
       scope(admission.userId, admission.requestId);
       const intent = admission.intent, placement = intent.deployment;
       if (row.type !== intent.type || row.name !== intent.name || row.deployment_mode !== placement.mode
@@ -74,7 +74,7 @@ export function createLaunchModelAdmissionService(deps: Dependencies = {}) {
       }
       const result = await store.reserve({ userId: admission.userId, requestId: admission.requestId,
         modelOperationId: admission.modelOperationId, fingerprints: admission.fingerprints, agent: row, llm: admission.intent.llm,
-        agentLimit });
+        agentLimit, ...(diskSleepDefault ? { diskSleepDefault } : {}) });
       const saved = await original(admission.userId, admission.requestId);
       if (!saved || saved.agent.id !== result.agentId) throw new ModelKeyStoreError();
       return { ...saved, created: result.created };

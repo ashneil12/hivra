@@ -311,6 +311,34 @@ describe("sleepHivraAgent", () => {
     expect(ranScript("HIVRA_SLEEP_RESULT")).toBe(false);
   });
 
+  it("requires the full 12 idle minutes for direct paid Canary Hibernate", async () => {
+    const env = {
+      ...canary, NEXT_PUBLIC_HIVRA_AGENT_SLEEP: "1",
+      VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+      VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+    };
+    const options = { tier: "hibernate", trigger: "sweep", env } as const;
+    mockReadRow.mockResolvedValue({ data: eligibleRow({
+      seat_funding: "paid", sleep_policy: "t3", bootstrapped_at: new Date(now() - 11 * 60_000).toISOString(),
+    }), error: null });
+    await expect(run(options)).resolves.toMatchObject({ outcome: "not_idle", reason: "hibernate_window_open" });
+    expect(mockRunScript).not.toHaveBeenCalled();
+
+    mockReadRow.mockResolvedValue({ data: eligibleRow({ seat_funding: "paid", sleep_policy: "t3" }), error: null });
+    stubScripts({ probe: probeLine({ lastUsedAt: "2026-11-12T11:49:00Z", terminalAttached: true }) });
+    await expect(run(options)).resolves.toMatchObject({
+      outcome: "not_idle", reasons: expect.arrayContaining(["terminal_attached", "recent_use"]),
+    });
+    expect(mockClaim).not.toHaveBeenCalled();
+
+    stubScripts({
+      probe: probeLine({ lastUsedAt: "2026-11-12T11:48:00Z" }),
+      sleep: sleepReceipt({ tier: "hibernate", to: "hibernated", reason: "hibernated" }),
+    });
+    await expect(run(options)).resolves.toMatchObject({ outcome: "slept", state: "hibernated" });
+    expect(mockClaim).toHaveBeenCalledWith(expect.objectContaining({ tier: "hibernate", manual: false }));
+  });
+
   it("skips when the probe is refused or unreadable", async () => {
     stubScripts({ probe: "HIVRA_IDLE_REFUSED asleep\n" });
     await expect(run({ tier: "nap", trigger: "sweep" })).resolves.toEqual({ outcome: "skipped", reason: "asleep" });

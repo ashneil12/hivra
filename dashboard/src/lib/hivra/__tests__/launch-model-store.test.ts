@@ -102,6 +102,14 @@ describe("private launch custody store", () => {
     await store.reserve({ ...input, agent: { ...reservation, cpu_max: 4, ram_max: 8 } });
     expect(db.rpc.mock.calls[0][1].p_agent).toEqual(expect.objectContaining({ cpu_max: 4, ram_max: 8 }));
   });
+  it("routes the trusted paid launch default without changing the reservation arguments", async () => {
+    const { db, store, input } = fixture();
+    const agent = { ...reservation, managed_provisioner_channel: "canary" as const };
+    expect(await store.reserve({ ...input, agent, diskSleepDefault: true })).toEqual({ created: true, agentId, phase: "waiting" });
+    expect(db.rpc).toHaveBeenCalledWith("reserve_canary_hivra_disk_sleep_launch", expect.objectContaining({
+      p_agent_limit: 3, p_agent: agent, p_request_id: requestId,
+    }));
+  });
   it("requires the server's funding decision on managed reservations", async () => {
     const { db, store, input } = fixture();
     await store.reserve(input);

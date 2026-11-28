@@ -125,6 +125,7 @@ type Tables = Partial<{
   leases: Result;
   hosts: Result;
   hibernate: Result;
+  directHibernate: Result;
   nap: Result;
   events: Result;
   activity: Result;
@@ -143,7 +144,9 @@ function setTables(tables: Tables) {
       if (hasOp(call, "in", "operation_kind", ["sleep", "wake"])) return tables.leases ?? empty;
       if (opsOf(call, "lte").some((a) => a[0] === "next_wake_at")) return tables.wakes ?? empty;
       if (isCandidateQuery(call, "napping")) return tables.hibernate ?? empty;
-      if (isCandidateQuery(call, "awake")) return tables.nap ?? empty;
+      if (isCandidateQuery(call, "awake")) {
+        return (hasOp(call, "eq", "sleep_policy", "t3") ? tables.directHibernate : tables.nap) ?? empty;
+      }
       if (hasOp(call, "select", "*")) return tables.drift ?? empty;
       if (hasOp(call, "eq", "status", "stopped")) return tables.stopped ?? empty;
     }
@@ -175,6 +178,34 @@ beforeEach(() => {
 });
 
 describe("runSleepIdleSweep: switches", () => {
+  it("hibernates paid disk-policy candidates directly only on canonical, wake-enabled Canary", async () => {
+    const canary = {
+      HIVRA_SLEEP_MODE: "canary", NEXT_PUBLIC_HIVRA_AGENT_SLEEP: "1",
+      VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+      VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+    };
+    setTables({
+      hosts: { data: hostsTable([{ id: "a", sleep_mode: "canary" }, { id: "b", sleep_mode: "off" }]) },
+      directHibernate: { data: [{ id: id(1), proxmox_host: "a" }, { id: id(2), proxmox_host: "a" }, { id: id(3), proxmox_host: "b" }] },
+      events: { data: [{ agent_id: id(2) }] },
+    });
+    const summary = await run(canary);
+    const direct = mockCalls.find((call) => hasOp(call, "eq", "sleep_policy", "t3"));
+    expect(direct?.ops).toEqual(expect.arrayContaining([
+      ["eq", ["sleep_state", "awake"]], ["eq", ["seat_funding", "paid"]], ["eq", ["always_on", false]],
+      ["lte", ["bootstrapped_at", iso(12 * MIN)]], ["is", ["operation_id", null]],
+    ]));
+    expect(summary.hibernate).toMatchObject({ attempted: 1, slept: 1 });
+    expect(mockSleep).toHaveBeenCalledTimes(1);
+    expect(mockSleep).toHaveBeenCalledWith(id(1), expect.objectContaining({ tier: "hibernate", trigger: "sweep" }));
+    mockSleep.mockClear();
+    mockCalls.length = 0;
+    await run({ ...canary, VERCEL_GIT_COMMIT_REF: "main" });
+    await run({ ...canary, NEXT_PUBLIC_HIVRA_AGENT_SLEEP: undefined });
+    expect(mockCalls.some(call => hasOp(call, "eq", "sleep_policy", "t3"))).toBe(false);
+    expect(mockSleep).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, "", "off", "nonsense"])("never sleeps anything, and reads only sleepers, when HIVRA_SLEEP_MODE is %p", async (mode) => {
     const summary = await run({ HIVRA_SLEEP_MODE: mode });
     expect(summary).toMatchObject({ skipped: true, reason: "sleep_mode_off", errors: 0 });

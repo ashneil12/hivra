@@ -525,6 +525,8 @@ describe("POST /api/hivra/agents", () => {
     "VERCEL_GIT_COMMIT_REF",
     "VERCEL_GIT_REPO_OWNER",
     "VERCEL_GIT_REPO_SLUG",
+    "HIVRA_SLEEP_MODE",
+    "NEXT_PUBLIC_HIVRA_AGENT_SLEEP",
   ] as const;
   const originalManagedGvisorEnv = new Map(managedGvisorEnvKeys.map(key => [key, process.env[key]]));
 
@@ -1445,6 +1447,24 @@ describe("POST /api/hivra/agents", () => {
       computer_substrate: "proxmox-kvm",
       managed_provisioner_channel: "canary",
     }));
+  });
+
+  it("persists the disk-idle default when launching a paid KVM on Git Canary", async () => {
+    Object.assign(process.env, {
+      VERCEL_TARGET_ENV: "canary", VERCEL: "1", VERCEL_ENV: "production",
+      VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud", VERCEL_GIT_COMMIT_REF: "canary",
+      VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+      HIVRA_SLEEP_MODE: "canary", NEXT_PUBLIC_HIVRA_AGENT_SLEEP: "1",
+    });
+    mockSelectAvailableProxmoxProvisionTarget.mockResolvedValueOnce({
+      ok: true, targetId: "fixturenode7", provisionerVersion: PORTABLE_HIVRA_PROVISIONER_VERSION,
+      env: { PROXMOX_NODE: "fixturenode7", PROXMOX_VMID_START: "200", PROXMOX_VMID_END: "249",
+        PROXMOX_IP_LAST_OCTET_START: "50", PROXMOX_PRIVATE_SUBNET_PREFIX: "10.250.21",
+        PROXMOX_PRIVATE_GATEWAY: "10.250.21.1" },
+    });
+    const response = await POST(makeRequest({ type: "claude-code", name: "CANARY_DISK_IDLE", cpu: 0.5, ram: 1 }));
+    expect(response.status).toBe(201);
+    expect(mockAgentInsert).toHaveBeenCalledWith(expect.objectContaining({ seat_funding: "paid", sleep_policy: "t3" }));
   });
 
   it("rejects a model ID that the official Hermes installer cannot apply", async () => {
