@@ -1,3 +1,4 @@
+import { allocationLockAuditPython } from "@/lib/hivra/allocation-lock-audit";
 import { isIPv4 } from "node:net";
 import { z } from "zod";
 
@@ -65,6 +66,7 @@ def fields(raw):
 
 ${portableKvmSlotPython}
 
+${allocationLockAuditPython}
 def take(stack, path):
     fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     stack.callback(os.close, fd)
@@ -81,6 +83,7 @@ def run(action, slot):
     locks = Path("/run/lock")
     with ExitStack() as stack:
         take(stack, locks / "hivra-allocation.lock")
+        allocation_lock_acquired("portable-slot-claim")
         vmids = locks / "hivra-vmids"
         vmids.mkdir(mode=0o755, exist_ok=True)
         info = vmids.lstat()

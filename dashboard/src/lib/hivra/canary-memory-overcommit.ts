@@ -4,7 +4,7 @@ import { isCanonicalGitCanaryDeployment } from "./canonical-git-canary";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import {
-  CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS,
   CANARY_MEMORY_HOST_ID,
   parseCanaryMemoryOvercommit,
   type CanaryMemoryOvercommit,
@@ -19,7 +19,7 @@ export async function readCanaryMemoryOvercommit(input: {
   bundleVersion?: string;
 }): Promise<CanaryMemoryOvercommit | null> {
   if ((input.host !== null && !CANARY_MEMORY_HOST_ID.test(input.host)) || input.channel !== "canary"
-    || (input.bundleVersion !== undefined && input.bundleVersion !== CANARY_MEMORY_OVERCOMMIT_PROVISIONER)
+    || (input.bundleVersion !== undefined && !CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS.includes(input.bundleVersion))
     || !OWNER.test(input.ownerId) || !isCanonicalGitCanaryDeployment() || !supabaseAdmin) return null;
   try {
     const { data, error } = await supabaseAdmin.rpc("get_hivra_canary_memory_overcommit", {

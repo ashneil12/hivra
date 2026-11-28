@@ -1,3 +1,4 @@
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { parseDesktopPrepareReceipt } from "./desktop-prepare-guest";
@@ -64,6 +65,7 @@ FENCE_DIRECTORY=${shellQuote(DESKTOP_PREPARE_FENCE_DIRECTORY)}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for desktop preparation recovery lock" >&2; exit 1; }
+${allocationLockAcquired("desktop-prepare-recovery")}
 ${buildVmidBoundGuestExecPrelude()}
 report() { printf '${MARKER}%s\\n' "$1"; exit 0; }
 fence_operation() {

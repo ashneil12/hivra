@@ -37,13 +37,15 @@ const previousRecovery = () => {
 const encodedRequest = (script: string) => JSON.parse(Buffer.from(script.match(/base64.b64decode\("([A-Za-z0-9+/=]+)"/)![1], "base64").toString());
 
 describe("staged private native provider controller", () => {
-  it("keeps .28.1 recovery on its sealed worker", () => {
+  it.each([
+    ["2026.11.28.1", "0b8a869f7690b010cf92033f8947ee625f311883677f9e8a63690e4733511b50", "3e6f9d451d2f62e22ccfb71caf98621acc371860f7e2398e7b0d4bc14c72e832"],
+    ["2026.11.28.2", "dd1edf73e6bb8d5344ac8ef8e385e8cdbdb0efccdd32760ae99a9cdf502e0b27", "e2e2e50840f78364472900c1ac606c719e7d3936d04c8551fd46c3098645cb9c"],
+  ])("keeps %s recovery on its sealed worker", (provisionerVersion, bundleSha256, workerSha256) => {
     const request = recovery();
-    const bundle = { ...request.identity.bundle, provisionerVersion: "2026.11.28.1",
-      bundleSha256: "0b8a869f7690b010cf92033f8947ee625f311883677f9e8a63690e4733511b50" };
+    const bundle = { ...request.identity.bundle, provisionerVersion, bundleSha256 };
     const prior = parseProviderNativeWorkerIdentity({ ...request.identity, bundle });
     expect(buildProviderNativeWorkerPlan({ ...request, identity: prior }, clock).script)
-      .toContain("3e6f9d451d2f62e22ccfb71caf98621acc371860f7e2398e7b0d4bc14c72e832");
+      .toContain(workerSha256);
     expect(() => parseProviderNativeWorkerIdentity({ ...prior, bundle: { ...bundle,
       bundleSha256: request.identity.bundle.bundleSha256 } })).toThrow();
   });

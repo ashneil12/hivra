@@ -1,3 +1,4 @@
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import "server-only";
 
 import { Buffer } from "node:buffer";
@@ -240,6 +241,7 @@ set_install_phase lifecycle_lock
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { printf 'HIVRA_REMOTE_DESKTOP_HOST_FAILURE lifecycle_lock\n' >&2; exit 1; }
+${allocationLockAcquired("guest-desktop-install")}
 # Stale-lease recovery fences an operation under this lock once it has proven
 # the guest installer quiescent and released the lease; never dispatch it again.
 set_install_phase operation_fence

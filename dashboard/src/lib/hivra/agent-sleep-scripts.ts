@@ -22,6 +22,7 @@
 // receipt rather than the exit code. An unexpected shell failure still prints a
 // receipt (reason script_error, state unknown) and keeps its non-zero exit.
 
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { isIPv4 } from "node:net";
 import { buildProxmoxVmOwnedByInstanceCheck } from "@/lib/services/proxmox/script-builders";
 import { isSafeGatewayHostname } from "@/lib/services/proxmox-gateway-caddy-site";
@@ -30,7 +31,7 @@ import { hibernationDiscardBody } from "./agent-power-scripts";
 import { buildVmidBoundGuestExecPrelude } from "@/lib/hivra/vmid-bound-guest-exec";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
-  CANARY_MEMORY_OVERCOMMIT_PROVISIONER,
+  CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS,
   canaryMemoryOvercommitShell,
   type CanaryMemoryOvercommit,
 } from "@/lib/infrastructure/host-capacity-policy";
@@ -1538,7 +1539,10 @@ ${batchQemuAdmission && !overcommit ? `    if type -P pct >/dev/null; then
       export VMID
       export -f pct
     fi
-` : ""}${overcommit ? `    [ "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" = ${shellQuote(CANARY_MEMORY_OVERCOMMIT_PROVISIONER)} ] || return 1
+` : ""}${overcommit ? `    case "$(tr -d '[:space:]' < "$PROVISIONER_DIR/VERSION")" in
+      ${CANARY_MEMORY_OVERCOMMIT_PROVISIONER_VERSIONS.map(shellQuote).join("|")}) ;;
+      *) return 1 ;;
+    esac
     [ "$(sha256sum "$PROVISIONER_DIR/hivra-host-capacity-admission" | cut -d ' ' -f1)" = ${shellQuote(overcommit.helperSha256)} ] || return 1
 ` : ""}    ${canaryMemoryOvercommitShell(overcommit?.grant)}${batchQemuAdmission && !overcommit ? "HIVRA_CAPACITY_BATCH_QEMU=1 " : ""}bash "$PROVISIONER_DIR/hivra-host-capacity-admission" "$@"
   )
@@ -1610,6 +1614,7 @@ ${coldStart ? `    EXPECT=hibernated
     phase_clock PHASE
     flock -w 60 8 || { phase_mark allocation_lock "$PHASE"; finish false lock_timeout ${expect}; }
     phase_mark allocation_lock "$PHASE"
+    ${allocationLockAcquired("agent-disk-wake")}
     # The state may have changed while this waited for the lock.
     phase_clock PHASE
 ${overcommit ? "    require_binding\n" : ""}    read_state || { phase_mark locked_recheck "$PHASE"; finish false state_unreadable; }

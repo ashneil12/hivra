@@ -23,7 +23,7 @@ type ExecReply = { stdout?: string; stderr?: string; code: number };
 
 let autoReady = true;
 const execReplies: Array<(command: string, stream: FakeStream) => ExecReply | null> = [];
-const clients: Array<{ connect: jest.Mock; exec: jest.Mock; handlers: Map<string, Handler>; streams: FakeStream[] }> = [];
+const clients: Array<{ connect: jest.Mock; exec: jest.Mock; destroy: jest.Mock; emit: Handler; streams: FakeStream[] }> = [];
 
 function fakeStream(): FakeStream {
   const handlers = new Map<string, Handler[]>();
@@ -42,11 +42,11 @@ function fakeStream(): FakeStream {
 
 jest.mock("ssh2", () => {
   const Client = jest.fn().mockImplementation(() => {
-    const handlers = new Map<string, Handler>();
+    const handlers = new Map<string, Handler[]>();
     const record = {
-      handlers,
+      emit: (event: unknown, ...args: unknown[]) => (handlers.get(String(event)) ?? []).forEach(handler => handler(...args)),
       streams: [] as FakeStream[],
-      connect: jest.fn(() => { if (autoReady) setTimeout(() => handlers.get("ready")?.(), 0); }),
+      connect: jest.fn(() => { if (autoReady) setTimeout(() => record.emit("ready"), 0); }),
       exec: jest.fn((command: string, callback: (error: Error | null, stream: FakeStream) => void) => {
         const stream = fakeStream();
         record.streams.push(stream);
@@ -61,13 +61,18 @@ jest.mock("ssh2", () => {
           }, 0);
         }, 0);
       }),
+      destroy: jest.fn(),
     };
     const client = {
-      on: (event: string, handler: Handler) => { handlers.set(event, handler); return client; },
+      on: (event: string, handler: Handler) => { handlers.set(event, [...(handlers.get(event) ?? []), handler]); return client; },
+      removeListener: (event: string, handler: Handler) => {
+        handlers.set(event, (handlers.get(event) ?? []).filter(item => item !== handler));
+        return client;
+      },
       connect: record.connect,
       exec: record.exec,
       end: jest.fn(),
-      destroy: jest.fn(),
+      destroy: record.destroy,
     };
     clients.push(record);
     return client;
@@ -90,7 +95,7 @@ import {
 } from "../proxmox-sudo-transport";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { runProxmoxHostScript, runProxmoxHostScriptWithStdin } from "../proxmox-instance-service";
+import { createManagedProxmoxHostScriptSession, runProxmoxHostScript, runProxmoxHostScriptWithStdin } from "../proxmox-instance-service";
 
 const FINGERPRINT_HEX = "ab".repeat(32);
 const KEY = "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----\n";
@@ -262,7 +267,7 @@ describe("runner with the sudo transport (mocked SSH)", () => {
     const options = record.connect.mock.calls[0][0] as { algorithms?: { serverHostKey?: string[] }; hostVerifier: (fp: string) => boolean };
     expect(options.algorithms?.serverHostKey).toEqual(["ssh-ed25519"]);
     expect(options.hostVerifier("cd".repeat(32))).toBe(false);
-    record.handlers.get("error")?.(new Error("Handshake failed: host key verification failed"));
+    record.emit("error", new Error("Handshake failed: host key verification failed"));
     const result = await pending;
     expect(result).toMatchObject({ ok: false, presentedHostFingerprintSha256: "cd".repeat(32) });
     expect(record.exec).not.toHaveBeenCalled();
@@ -272,6 +277,108 @@ describe("runner with the sudo transport (mocked SSH)", () => {
     const result = await runProxmoxHostScript("true\n", userEnv("sudo", { PROXMOX_SSH_HOST_KEY_TYPE: "ssh-rsa" }), { timeoutMs: 5_000 });
     expect(result).toMatchObject({ ok: false, error: "Unsupported pinned SSH host key type." });
     expect(clients).toHaveLength(0);
+  });
+});
+
+describe("managed host script session", () => {
+  const managed = userEnv("login", { HIVRA_USER_INFRA_CONNECTION: "false" });
+  const open = () => createManagedProxmoxHostScriptSession(managed, Date.now() + 5_000)!;
+
+  it("runs separate script channels on one authenticated client, including an early-finish receipt", async () => {
+    const session = open();
+    try {
+      execReplies.push(() => ({ stdout: "slot\n", code: 0 }), () => ({ stdout: "READY\n", code: 0 }),
+        () => ({ stdout: "released\n", code: 0 }));
+      expect(await session.run("slot")).toMatchObject({ ok: true, stdout: "slot\n" });
+      const options = clients[0].connect.mock.calls[0][0] as { hostVerifier: (fp: string) => boolean };
+      expect(options.hostVerifier(FINGERPRINT_HEX)).toBe(true);
+      expect(options.hostVerifier("cd".repeat(32))).toBe(false);
+      expect(await session.run("restore", { earlyFinishMarker: "READY", earlyFinishOnLine: true, reportTimings: true }))
+        .toMatchObject({ ok: true, stdout: "READY\n", sshReadyMs: 0 });
+      expect(await session.run("release")).toMatchObject({ ok: true, stdout: "released\n" });
+      expect(clients).toHaveLength(1);
+      expect(clients[0].exec.mock.calls.map(([cmd]) => cmd)).toEqual(["bash -s", "bash -s", "bash -s"]);
+      expect(clients[0].streams.map(stream => stream.write.mock.calls[0][0])).toEqual(["slot", "restore", "release"]);
+      expect(clients[0].streams[1].destroy).toHaveBeenCalledTimes(1);
+    } finally { session.close(); }
+    expect(clients[0].destroy).toHaveBeenCalledTimes(1);
+  });
+
+  it("will not reuse a user connection, a connector, local mode or an unpinned host", () => {
+    for (const env of [userEnv("sudo"), { ...managed, PROXMOX_SSH_TRANSPORT: "connector" },
+      { ...managed, PROXMOX_EXEC_MODE: "local" }, { ...managed, PROXMOX_SSH_HOST_FINGERPRINT: undefined }]) {
+      expect(createManagedProxmoxHostScriptSession(env, Date.now() + 5_000)).toBeNull();
+    }
+    expect(clients).toHaveLength(0);
+  });
+
+  it("does not dispatch when a managed host presents the wrong key", async () => {
+    const session = open();
+    try {
+      autoReady = false;
+      const pending = session.run("slot");
+      const record = clients[0];
+      const options = record.connect.mock.calls[0][0] as { hostVerifier: (fp: string) => boolean };
+      expect(options.hostVerifier("cd".repeat(32))).toBe(false);
+      record.emit("error", new Error("Handshake failed: host key verification failed"));
+      expect(await pending).toMatchObject({ ok: false, stage: "connect", presentedHostFingerprintSha256: "cd".repeat(32) });
+      expect(record.exec).not.toHaveBeenCalled();
+    } finally { session.close(); }
+  });
+
+  it("redials only for the next command after idle disconnect or unknown dispatch", async () => {
+    const session = open();
+    try {
+      execReplies.push(() => ({ code: 0 }));
+      await session.run("slot");
+      clients[0].emit("close");
+      execReplies.push(() => {
+        clients[1].emit("error", new Error("connection lost"));
+        return null;
+      });
+      expect(await session.run("restore")).toMatchObject({ ok: false, stdout: "", stage: "command" });
+      execReplies.push(() => ({ code: 0 }));
+      expect(await session.run("release")).toMatchObject({ ok: true });
+      expect(clients.map(record => record.streams[0].write.mock.calls[0][0])).toEqual(["slot", "restore", "release"]);
+    } finally { session.close(); }
+  });
+
+  it("does not write to a late exec channel after cancellation and caps the next command's output", async () => {
+    const session = open();
+    try {
+      execReplies.push(() => ({ code: 0 }));
+      await session.run("slot");
+      clients[0].exec.mockImplementationOnce((_command, callback) => {
+        const stream = fakeStream();
+        clients[0].streams.push(stream);
+        setTimeout(() => callback(null, stream), 35);
+      });
+      expect(await session.run("restore", 10)).toMatchObject({ ok: false, stage: "ready" });
+      execReplies.push(() => ({ stdout: "long output", code: 0 }));
+      expect(await session.run("release", { maxOutputBytes: 3, timeoutMs: 1_000 }))
+        .toMatchObject({ ok: false, stdout: "lon", stage: "command", error: expect.stringContaining("exceeded") });
+      await new Promise(resolve => setTimeout(resolve, 40));
+      expect(clients[0].streams[1].write).not.toHaveBeenCalled();
+      expect(clients[0].streams[1].destroy).toHaveBeenCalledTimes(1);
+    } finally { session.close(); }
+  });
+
+  it("closes the client at the operation deadline even if the command has time left", async () => {
+    jest.useFakeTimers();
+    const session = createManagedProxmoxHostScriptSession(managed, Date.now() + 50)!;
+    try {
+      autoReady = false;
+      const pending = session.run("slot", 2_000);
+      await jest.advanceTimersByTimeAsync(50);
+      expect(await pending).toMatchObject({ ok: false, stage: "connect" });
+      expect(clients[0].destroy).toHaveBeenCalledTimes(1);
+      expect(clients[0].exec).not.toHaveBeenCalled();
+      expect(await session.run("release", 2_000)).toMatchObject({ ok: false });
+      expect(clients).toHaveLength(1);
+    } finally {
+      session.close();
+      jest.useRealTimers();
+    }
   });
 });
 

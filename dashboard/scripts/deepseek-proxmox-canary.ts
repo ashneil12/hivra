@@ -5,6 +5,7 @@
 // recorded in a local mode-0600 ledger, and reversible only after the host-side
 // claim, VM tags and private IP all match the same operation.
 
+import { allocationLockAcquired } from "../src/lib/hivra/allocation-lock-audit";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
   chmodSync,
@@ -345,6 +346,7 @@ ${bundleAdmission(params.bundleManifest)}
 admit_canary_bundle
 exec 8>/run/lock/hivra-allocation.lock
 flock -s -w 60 8 || { echo "HIVRA_DEEPSEEK_INVENTORY_LOCK_TIMEOUT" >&2; exit 5; }
+${allocationLockAcquired("deepseek-inventory", "shared")}
 admit_canary_bundle
 cluster_json="$(pvesh get /cluster/resources --type vm --output-format json)"
 cluster_vmids="$(printf '%s' "$cluster_json" | grep -oE '"vmid":[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | sort -un || true)"
@@ -447,6 +449,7 @@ install -d -m 0700 "$CLAIM_DIR"
 install -d -m 0755 /run/lock /run/hivra-provision
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "HIVRA_DEEPSEEK_ALLOCATION_LOCK_TIMEOUT" >&2; exit 5; }
+${allocationLockAcquired("deepseek-launch")}
 admit_canary_bundle
 qm_inventory="$(qm list 2>/dev/null)" \
   || { echo "HIVRA_DEEPSEEK_QM_INVENTORY_UNKNOWN" >&2; exit 6; }
@@ -543,6 +546,7 @@ for command in flock sha256sum cmp; do command -v "$command" >/dev/null 2>&1 || 
 ${bundleAdmission(params.bundleManifest)}
 exec 8>/run/lock/hivra-allocation.lock
 flock -s -w 60 8 || { echo "HIVRA_DEEPSEEK_BUNDLE_CHECK_LOCK_TIMEOUT" >&2; exit 5; }
+${allocationLockAcquired("deepseek-bundle-check", "shared")}
 admit_canary_bundle
 printf 'HIVRA_DEEPSEEK_BUNDLE_ADMITTED {"provisionerVersion":"%s"}\\n' ${shellQuote(DEEPSEEK_CANARY_VERSION)}
 `;
@@ -608,6 +612,7 @@ SSH_IDENTITY_HELPER=${shellQuote(`${DEEPSEEK_CANARY_RUNTIME_PATHS.provisionerDir
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "HIVRA_DEEPSEEK_RESTART_LOCK_TIMEOUT" >&2; exit 6; }
+${allocationLockAcquired("deepseek-restart")}
 vm_owned || { echo "HIVRA_DEEPSEEK_VM_IDENTITY_MISMATCH" >&2; exit 7; }
 GUEST_SSH_IDENTITY_DIR="$(mktemp -d "/run/hivra-guest-ssh-identity.\${VMID}.XXXXXXXX")"
 chmod 0700 "$GUEST_SSH_IDENTITY_DIR"
@@ -700,6 +705,7 @@ QGA_SNIPPET="/var/lib/vz/snippets/hivra-qga-$VMID-$OPERATION_ID.yaml"
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "HIVRA_DEEPSEEK_TEARDOWN_LOCK_TIMEOUT" >&2; exit 5; }
+${allocationLockAcquired("deepseek-teardown")}
 PIDFILE="/run/hivra-provision/$VMID.pid"
 QM_INVENTORY=""
 STORAGE_INVENTORY=""
