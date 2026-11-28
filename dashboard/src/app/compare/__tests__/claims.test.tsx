@@ -165,7 +165,7 @@ describe("comparison page claims", () => {
     const text = await comparisonText("openclaw-to-hermes");
     expect(text).toMatch(/Hivra can host it on a paid Hivra Cloud computer, just as it hosts Hermes/);
     // No agent is "the paid one" (owner decision 2026-10-21): the answer states the rule for every computer.
-    expect(text).toMatch(/No\. Hivra can host OpenClaw as well as Hermes\. Every Hivra Cloud computer needs a paid plan\./);
+    expect(text).toMatch(/No\. Hivra can host OpenClaw as well as Hermes\. Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access/);
     expect(text).not.toMatch(/Hivra supports paid OpenClaw deployments|supported paid computer/);
     expect(text).toMatch(/hermes claw migrate/);
     expect(text).toMatch(/Hivra itself has no import tool/);

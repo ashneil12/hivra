@@ -1,5 +1,5 @@
 // /agents/openclaw. Wording from Ash's batch 02 file 07-openclaw.md, with the edits listed in the lane ledger.
-// Facts: every computer Hivra Cloud runs is paid (no per-agent paid size), minimum 1 vCPU and 2 GB, 2 and 4 with the optional browser
+// Facts: minimum 1 vCPU and 2 GB, 2 and 4 with the optional browser
 // (resizeFloor), Control UI behind the authenticated gateway, gateway service restarts on failure
 // (provisioner/provision-claude-code-box.sh bux-openclaw.service), model through Venice credits or the Control UI.
 
@@ -27,7 +27,7 @@ export const OPENCLAW_CONTENT: AgentPageContent = {
           kind: "prose",
           paragraphs: [
             "OpenClaw can act as a messaging-based personal assistant, coordinate tools and carry out scheduled routines. You configure its model provider and connect channels such as Telegram, WhatsApp or Signal through the project's own interface, where supported.",
-            "On a local machine, the agent is only as available as the computer running it. Close the laptop, lose your home connection or shut down the host and the gateway goes away. Hivra moves that agent onto its own cloud computer, where a paid deployment remains available without your device being online.",
+            "On a local machine, the agent is only as available as the computer running it. Close the laptop, lose your home connection or shut down the host and the gateway goes away. Hivra can launch a new OpenClaw computer that does not depend on your laptop being online.",
             "OpenClaw's native Control UI remains the centre of configuration. Hivra provides the hosting environment and access controls around it rather than replacing the underlying project with an unrelated chatbot.",
           ],
         },
@@ -135,7 +135,7 @@ export const OPENCLAW_CONTENT: AgentPageContent = {
           kind: "prose",
           paragraphs: [
             "Absolutely. OpenClaw is open source, and self-hosting may be the better fit if you want full control over the server, network and upgrade timing.",
-            "Hivra is for people who want to skip the server chores. We provision the computer, keep the service available and put a protected access layer in front of its native UI. You still get the same project and configure the same connections.",
+            "With Hivra, you can launch a new OpenClaw computer on Hivra Cloud or on a [Proxmox VE server you connect](/docs/connect-your-own-server). Launch provisions a fresh installation. It does not import or take over an existing OpenClaw installation.",
           ],
         },
       ],

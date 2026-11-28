@@ -122,7 +122,7 @@ export const doc: DocPage = {
     {
       heading: "What Hivra does and does not do",
       paragraphs: [
-        "- Hivra creates the computer from an Ubuntu 22.04 LTS image, streams its desktop to your browser behind your sign-in, and gives you Terminal, Files and Manage.\n- Hivra does not promise backups. Restore points are capped at 5 and live on the same host.\n- Hivra does not guarantee that what you run on the computer is safe. Isolation limits what reaches your own machine, not what you install on it.\n- Hivra does not run a free computer. You can use your own server if your account is eligible to connect it.\n- Hivra does not offer a native desktop client for this computer, and it cannot run on a server connected with the one-command Ubuntu setup.",
+        "- Hivra creates the computer from an Ubuntu 22.04 LTS image, streams its desktop to your browser behind your sign-in, and gives you Terminal, Files and Manage.\n- Hivra does not promise backups. Restore points are capped at 5 and live on the same host.\n- Hivra does not guarantee that what you run on the computer is safe. Isolation limits what reaches your own machine, not what you install on it.\n- Signing up alone does not include a Hivra Cloud computer. You can use your own server if your account is eligible to connect it.\n- Hivra does not offer a native desktop client for this computer, and it cannot run on a server connected with the one-command Ubuntu setup.",
       ],
     },
   ],
@@ -133,7 +133,7 @@ export const doc: DocPage = {
     },
     {
       q: "Do I need a paid plan?",
-      a: "On Hivra Cloud, yes. Every computer Hivra Cloud runs for you needs a paid plan. On a connected Proxmox server, the computer uses your own capacity. Your account must be eligible to connect the server.",
+      a: "Yes, for Ubuntu Desktop on Hivra Cloud. On a connected Proxmox server, the computer uses your own capacity. Your account must be eligible to connect the server.",
     },
     {
       q: "What is the smallest size?",

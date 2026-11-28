@@ -3,6 +3,7 @@ import {
   ENTRY_PLAN_PRICE,
   ENTRY_PLAN_SIZE,
   CONNECTED_SERVER_ELIGIBILITY,
+  HOSTED_COMPUTE_NEEDS_PLAN_SHORT,
   LARGER_PLAN_PRICE,
   LARGER_PLAN_SIZE,
   MONEY_BACK_GUARANTEE,
@@ -23,14 +24,14 @@ export const doc: DocPage = {
         "Hivra bills three different things, and they are easy to mix up. Knowing which is which makes the Plan & billing page much easier to read.",
         "| What | What it pays for | Where you manage it |\n| --- | --- | --- |\n| Your account | Signing in and using Launch. | Settings |\n| A plan | The computer itself when Hivra Cloud runs it: processor, memory and storage. | Plan & billing, Plans view |\n| Model usage | The AI model your agent thinks with, when you use Hivra credits. | Plan & billing, Credits view |",
         "A plan does not pay for model usage, and credits do not pay for a computer. If you bring your own model key, the provider bills you directly and Hivra credits are not involved at all.",
-        `A paid plan is the standard way to use Hivra Cloud. See [pricing](/pricing) for managed hosting options. ${CONNECTED_SERVER_ELIGIBILITY}`,
+        `${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} See [pricing](/pricing) for managed hosting options. ${CONNECTED_SERVER_ELIGIBILITY}`,
       ],
     },
     {
       heading: "Before you start",
       paragraphs: [
         "You need a Hivra account to see any of this. Open **Billing** in the dashboard sidebar (or **Plan and billing** in Settings). The page it opens is titled \"Plan & billing\" and the line under it reads \"Your plan, how you pay, and what you've used.\" A self-hosted installation of Hivra hides Billing.",
-        "- A card, if you want Hivra Cloud to run a computer or you want to top up model credits. Plan and credit payments go through a hosted checkout, so you never type card details into Hivra itself.\n- A compatible server and an account eligible to connect it, if you want to [run agents on your own server](/docs/connect-your-own-server).\n- A decision about the model: Hivra credits, your own key, or an account you already have. [Choose how your agent gets its model](/docs/models-and-credits) lists what each agent supports.",
+        "- A card, if you want to pay for a Hivra Cloud plan or top up model credits by card. Plan and credit payments go through a hosted checkout, so you never type card details into Hivra itself.\n- A compatible server and an account eligible to connect it, if you want to [run agents on your own server](/docs/connect-your-own-server).\n- A decision about the model: Hivra credits, your own key, or an account you already have. [Choose how your agent gets its model](/docs/models-and-credits) lists what each agent supports.",
         "By default the page opens on **Overview** if you have a plan (or a plan on hold) and on **Plans** if you do not. Links from Launch or from a paywall open **Plans**.",
       ],
     },
@@ -115,7 +116,7 @@ export const doc: DocPage = {
     {
       heading: "What Hivra does and does not do",
       paragraphs: [
-        "- A paid plan covers the computer. It does not cover model usage.\n- Hivra does not run a free computer. You can use your own server if your account is eligible to connect it.\n- Hivra does not guarantee backups of what is on a computer. Keep your own copies of anything you cannot lose.\n- Bigger machines are shown as planned, and you cannot buy them yet.\n- Your own server is your hardware and your bill. The paid plan is for computers Hivra Cloud runs.",
+        "- A paid plan covers the computer. It does not cover model usage.\n- Signing up alone does not include Hivra Cloud compute. You can use your own server if your account is eligible to connect it.\n- Hivra does not guarantee backups of what is on a computer. Keep your own copies of anything you cannot lose.\n- Bigger machines are shown as planned, and you cannot buy them yet.\n- Your own server is your hardware and your bill. The paid plan is for computers Hivra Cloud runs.",
         "For the raw price comparison against self-hosting, see the [pricing page](/pricing).",
       ],
     },
@@ -123,7 +124,7 @@ export const doc: DocPage = {
   faqs: [
     {
       q: "What can I choose if Free is closed to new accounts?",
-      a: "When Free is closed, existing Free accounts keep their access. New accounts need a plan or an eligible trial to launch a computer or connect a server. Check the pricing page for the options currently offered.",
+      a: `When Free is closed, existing Free accounts keep their access. New accounts need a plan or an eligible trial to connect and launch on their own server. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} See Pricing for plan and trial availability.`,
     },
     {
       q: "How does the Pro trial work if I am offered one?",

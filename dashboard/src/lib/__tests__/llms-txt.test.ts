@@ -51,7 +51,7 @@ describe("buildLlmsTxt", () => {
   it("separates what is available now from conditional, preview, coming and proposed work", () => {
     // Dormant explicitly: the committed launch block is filled in, and the launched lines are checked below.
     const txt = buildLlmsTxt({ siteUrl: SITE, phase: "dormant" });
-    expect(txt).toContain("Available now on Hivra Cloud:");
+    expect(txt).toContain("Examples of agents you can launch on Hivra Cloud:");
     // Omarchy and Windows are never listed as plainly available. The code runs Omarchy as a
     // prepared computer and refuses a launch when no prepared slot exists, and Windows runs on
     // the user's own Proxmox host from their own licensed ISO, so each carries its condition
@@ -62,7 +62,7 @@ describe("buildLlmsTxt", () => {
     expect(txt).not.toMatch(/Also available|Windows and Omarchy are available/i);
     expect(txt).not.toMatch(/private preview/i);
     // DeepSeek Harness launches from Launch (alpha), so it is listed as available, not as a preview.
-    expect(txt).toContain("OpenClaw, Aeon or DeepSeek Harness (alpha) on a computer of its own");
+    expect(txt).toContain("OpenClaw, Aeon and DeepSeek Harness (alpha).");
     expect(txt).not.toMatch(/In preview/);
     expect(txt).toContain("$HIVRA is a proposed new token and does not exist yet.");
     expect(txt).not.toMatch(/one click|Free tier is live/i);
@@ -103,8 +103,10 @@ describe("buildLlmsTxt", () => {
       "Paid Hivra Cloud plans start at $9.99 a month for 2 vCPU and 4 GB of RAM.";
     expect(txt).toContain(rule);
     expect(txt).toContain(`[Linux sandboxes](${SITE}/sandboxes)`);
-    // It sits in the "Available now on Hivra Cloud" paragraph, before the Hermes limit.
-    expect(txt).toContain(`${rule} Hermes runs on Hivra Cloud only.`);
+    expect(txt).toContain("Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers.");
+    expect(txt).toContain(`[Agent catalog](${SITE}/agents)`);
+    expect(txt).toContain("DeepSeek Harness runs only on Hivra Cloud with a paid plan and a host on provisioner release 2026.11.10.5 or later.");
+    expect(txt).toContain("OpenBot and Nuphos are previews, off by default.");
     expect(txt.split(rule)).toHaveLength(2);
     expect(txt).not.toMatch(/\bneed a paid (?:size|plan)\b/i);
     expect(txt).not.toMatch(/OpenClaw and Agent Zero need/);

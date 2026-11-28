@@ -178,8 +178,8 @@ export default async function PricingPage() {
                   <dd>{options.selfHost.notIncluded}</dd>
                 </div>
               </dl>
-              <a className={page.action} href={PRICING_ACTIONS.viewSource.href} target="_blank" rel="noopener noreferrer">
-                {PRICING_ACTIONS.viewSource.label}
+              <a className={page.action} href={PRICING_ACTIONS.selfHostQuickstart.href} target="_blank" rel="noopener noreferrer">
+                {PRICING_ACTIONS.selfHostQuickstart.label}
                 <ArrowUpRight size={18} aria-hidden="true" />
               </a>
             </article>

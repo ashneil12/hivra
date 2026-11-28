@@ -1,4 +1,4 @@
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import type { ComparePage } from "../types";
 import { formatCheckedMonth } from "../competitor-facts";
 import {
@@ -51,7 +51,7 @@ export const page: ComparePage = {
         "The agent list is where Hivra differs most. Hivra hosts Hermes and OpenClaw, which Lobsterland also hosts, and it hosts other agents that Lobsterland's pages do not list, including Claude Code and Codex. If you want one place to run a coding agent next to an OpenClaw or Hermes agent, that is a reason to choose Hivra.",
         "Hivra is open source and you can read the code. You can also connect a server you run yourself and use Hivra's dashboard with it, which is a way out if you ever want to move off Hivra Cloud. Lobsterland's pages describe a workspace export instead, which we cover in the table.",
         "The trade-off is that Hivra does not match everything Lobsterland has built around OpenClaw. We do not claim that Hivra offers a Managed Setup service, ready-made agent kits or a read-only API for instances, and Hivra has no such thing to point to.",
-        "Hivra is independent and is not affiliated with Lobsterland, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A Hivra account costs nothing, but every Hivra Cloud computer is a paid plan. A free account works with a server you connect yourself.",
+        "Hivra is independent and is not affiliated with Lobsterland, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A free Hivra account does not include managed compute. A free account works with a server you connect yourself.",
       ),
     },
     {
@@ -86,7 +86,7 @@ export const page: ComparePage = {
             { criterion: "Region", hivra: "Not stated on this page", alternative: "Footer: Hetzner Kubernetes cluster, EU-based; data center locations not named" },
             { criterion: "Developer access", hivra: "No public API for creating computers from code", alternative: "Read-only REST API and OpenAPI document with scoped bearer tokens; no CLI or SDK mentioned; token writes on its roadmap" },
             { criterion: "Support", hivra: "Support channel and response times are not published on this page", alternative: "Email or Telegram per its compare page; no response times or SLA stated" },
-            { criterion: "Trial", hivra: "A Hivra account costs nothing, but every Hivra Cloud computer is a paid plan", alternative: "One-week trial per its pages; a card is added up front and charged when it ends" },
+            { criterion: "Trial", hivra: "A free Hivra account does not include managed compute", alternative: "One-week trial per its pages; a card is added up front and charged when it ends" },
             { criterion: "Refund", hivra: REFUND_LINKED, alternative: "No refund policy found on its homepage or terms page" },
             { criterion: "Exit and portability", hivra: "Open source platform; you can also connect your own server", alternative: "Full workspace export as a .tar.gz, which its terms say excludes secrets; terms retain metadata up to 90 days for soft-deleted accounts" },
             { criterion: "Best for", hivra: "A person who wants a coding or general agent's own computer, open and ready", alternative: "A person who wants OpenClaw or Hermes with the most dashboard features and a low entry price" },
@@ -169,7 +169,7 @@ export const page: ComparePage = {
     },
     {
       q: "Does Lobsterland have a trial?",
-      a: `Its pages describe a one-week trial for which you add a card up front and are charged when it ends, with cancellation at any time before then. Its terms page does not mention the trial, so confirm the details when you sign up. A Hivra account costs nothing, but every Hivra Cloud computer is paid, with a ${MONEY_BACK_GUARANTEE}.`,
+      a: `Its pages describe a one-week trial for which you add a card up front and are charged when it ends, with cancellation at any time before then. Its terms page does not mention the trial, so confirm the details when you sign up. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans come with a ${MONEY_BACK_GUARANTEE}.`,
     },
     {
       q: "Can I get a refund from Lobsterland?",

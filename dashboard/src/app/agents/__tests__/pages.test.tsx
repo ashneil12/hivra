@@ -21,6 +21,7 @@ import {
 import { getAgent } from "@/lib/hivra/agent-catalog";
 import { getSiteUrls } from "@/lib/seo-urls";
 import { getPublicBlogArticle } from "@/lib/blog-data";
+import { getDoc } from "@/lib/docs/registry";
 import { buildAgentLaunchHref } from "@/lib/hivra/launch-navigation";
 import { AGENT_ARTICLE_SLUGS, getPublicAgentProfiles } from "@/lib/hivra/public-agent-profiles";
 import { getCatalogAppManifest, UNIVERSAL_CATALOG_MANIFESTS } from "@/lib/hivra/catalog-manifests";
@@ -151,6 +152,11 @@ function expectInternalLinksResolve(main: HTMLElement) {
     const blog = pathname.match(/^\/blog\/([^/]+)$/);
     if (blog) {
       expect(getPublicBlogArticle(blog[1])).toBeDefined();
+      continue;
+    }
+    const doc = pathname.match(/^\/docs\/([^/]+)$/);
+    if (doc) {
+      expect(getDoc(doc[1])).toBeDefined();
       continue;
     }
     const segments = pathname.split("/").filter(Boolean);
@@ -537,7 +543,7 @@ describe("/agents/[slug]", () => {
     expect(text).toContain("Hivra cannot exempt those jobs from GitHub's Actions limits or pricing.");
   });
 
-  it("Hermes says it runs on Hivra Cloud only, and every page says a Hivra Cloud computer needs a paid plan", async () => {
+  it("Hermes says it runs on Hivra Cloud only and shared plan copy explains the holder exception", async () => {
     const read = async (slug: string) => {
       const { container } = render(await AgentPage({ params: Promise.resolve({ slug }) }));
       const text = container.querySelector("main")!.textContent ?? "";
@@ -545,10 +551,9 @@ describe("/agents/[slug]", () => {
       return text;
     };
     expect(await read("hermes")).toContain("Hermes runs on Hivra Cloud only.");
-    // The paid rule is the same for every agent (owner decision 2026-10-21); no page says one agent "needs a paid size".
     for (const { slug } of AGENT_SEO_ENTRIES) {
       const text = await read(slug);
-      expect(text).toMatch(/Every (?:computer that )?Hivra Cloud (?:runs for you )?(?:computer )?needs a paid plan/);
+      expect(text).toContain("Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers.");
       expect(text).not.toMatch(/needs a paid size/);
       // The step headings do not single out OpenClaw or Agent Zero as the paid ones either.
       expect(text).not.toMatch(/Pick a paid plan|Choose Agent Zero and a paid plan/);
@@ -558,7 +563,7 @@ describe("/agents/[slug]", () => {
       const text = await read(slug);
       expect(text).not.toMatch(/(?:Managed|Hivra) hosting starts at/);
     }
-    expect(await read("openclaw")).toContain("Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.");
-    expect(await read("agent-zero")).toContain("Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.");
+    expect(await read("openclaw")).toContain("Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.");
+    expect(await read("agent-zero")).toContain("Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.");
   });
 });

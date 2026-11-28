@@ -129,17 +129,11 @@ export function formatPlanSize(plan: PlanSizeKey, style: "prose" | "compact" = "
   return `${parts.pricePerMonth}, ${parts.cpu} and ${parts.memory}`;
 }
 
-/*
- * Hosted computers are paid (owner decision 2026-10-21, added append only).
- *
- * Every computer that Hivra Cloud runs for you needs a paid plan, whichever agent you pick. A free
- * account works with a computer or server you connect yourself. Articles use these sentences instead
- * of saying that one agent "needs a paid plan", which told readers the others were free. The price
- * and size come from the billing constants above, so the sentence moves with checkout.
- */
+export const HOSTED_COMPUTE_NEEDS_PLAN_SHORT = "Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers.";
 
-/** "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM." */
-export const HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE = `Every computer that Hivra Cloud runs for you needs a paid plan, from ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`;
+export const HOSTED_COMPUTE_PAID_PLANS_DEFAULT = "Paid plans are the standard way to launch Hivra-run computers. Separate, gated and capacity-limited admission can apply to supported computers.";
+
+export const HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE = `${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans start at ${ENTRY_PLAN_PRICE} a month for ${ENTRY_PLAN_SIZE}.`;
 
 /** What a free account does include. */
 export const FREE_ACCOUNT_SENTENCE = "A free account works with a computer or server you connect yourself.";
@@ -148,6 +142,3 @@ export const FREE_ACCOUNT_SENTENCE = "A free account works with a computer or se
 export const HOSTED_COMPUTE_NEEDS_PLAN = `${HOSTED_COMPUTE_NEEDS_PLAN_SENTENCE} ${FREE_ACCOUNT_SENTENCE}`;
 
 export const CONNECTED_SERVER_ELIGIBILITY = "To connect your own server to the Hivra dashboard, your account must be eligible.";
-
-/** The short form, for a clause that cannot carry the price. */
-export const HOSTED_COMPUTE_NEEDS_PLAN_SHORT = "Every Hivra Cloud computer needs a paid plan.";

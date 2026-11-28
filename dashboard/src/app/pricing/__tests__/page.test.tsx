@@ -21,7 +21,6 @@ import {
   PRICING_FAQ_HEADING,
   PRICING_INTRO,
   PRICING_OPTIONS,
-  SELF_HOST_SOURCE_URL,
 } from "../pricing-content";
 import { BANNED_PUBLIC_CLAIMS, renderedCopy, sentences } from "@/app/features/__tests__/public-claims";
 import {
@@ -207,6 +206,7 @@ describe("/pricing page", () => {
     const selfHost = screen.getByRole("article", { name: "Self-host Hivra" });
     expect(selfHost).toHaveTextContent("$0 for the software");
     expect(selfHost).toHaveTextContent("Your server · Your control");
+    expect(selfHost).toHaveTextContent("single-operator preview");
     expect(selfHost).toHaveTextContent("Included:Open-source platform, the self-host guide, control over your server.");
     expect(selfHost).toHaveTextContent("Not included:A server, managed maintenance, AI usage or Hivra Cloud-only agent options.");
 
@@ -249,10 +249,11 @@ describe("/pricing page", () => {
     const connect = screen.getByRole("link", { name: "Connect your server" });
     expect(connect).toHaveAttribute("href", "/sign-up");
 
-    const source = screen.getByRole("link", { name: "View the source and setup instructions" });
-    expect(source).toHaveAttribute("href", SELF_HOST_SOURCE_URL);
-    expect(source).toHaveAttribute("target", "_blank");
-    expect(source).toHaveAttribute("rel", "noopener noreferrer");
+    const selfHost = screen.getByRole("article", { name: "Self-host Hivra" });
+    const quickstart = within(selfHost).getByRole("link", { name: "Read the self-host quickstart" });
+    expect(quickstart).toHaveAttribute("href", "https://github.com/ashneil12/hivra/blob/main/docs/self-host/QUICKSTART.md");
+    expect(quickstart).toHaveAttribute("target", "_blank");
+    expect(quickstart).toHaveAttribute("rel", "noopener noreferrer");
 
     const launch = screen.getByRole("link", { name: "Launch on Hivra Cloud" });
     expect(launch).toHaveAttribute("href", HOSTED_SIZES[0].href);

@@ -1,6 +1,6 @@
 import type { ComparePage } from "../types";
 import { formatCheckedMonth } from "../competitor-facts";
-import { MONEY_BACK_GUARANTEE, formatPlanSize } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, MONEY_BACK_GUARANTEE, formatPlanSize } from "@/lib/blog/plan-facts";
 import {
   AI_ACCESS_CELL,
   AI_USAGE,
@@ -48,7 +48,7 @@ export const page: ComparePage = {
           "Personal accounts get some usage included. GitHub's billing page lists 120 core hours and 15 GB-month of storage for a GitHub Free account, and 180 core hours and 20 GB-month for GitHub Pro. On a 2-core codespace, 120 core hours is 60 hours of run time, which is how the product page states it. Its pages say organization and enterprise plans do not include a free quota, and that open source maintainers get generous monthly usage without giving a figure. Students get Codespaces through the GitHub Student Developer Pack.",
           "A worked example, our arithmetic from those list prices: 100 hours on a 2-core codespace is $18.00 before any included usage, and the 32 GB of storage on the smallest size is $2.24 a month at list price before any included storage; a GitHub Free account includes 15 GB-month, which would leave 17 GB, or $1.19. After the included 120 core hours, those 100 hours would use 200 core hours, leaving 80 billable core hours, or $7.20. For a person who opens a codespace a few days a week, that is a small bill.",
           "The picture changes when you want the machine to stay up. A codespace stops after at most 12 hours and has to be restarted to continue, and GitHub's pages do not describe an always-on option, so a 730-hour month ($131.40 at the 2-core list price, our arithmetic) is not a like-for-like comparison with a machine that simply stays on.",
-          `Hivra is ${ENTRY_PRICE_PROSE}, and that price covers the computer around the clock, not the hours you were looking at it. The plan does not include AI usage. A Hivra account costs nothing, but every Hivra Cloud computer is paid.`,
+          `Hivra is ${ENTRY_PRICE_PROSE}, and that price covers the computer around the clock, not the hours you were looking at it. The plan does not include AI usage. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
         ),
       ],
     },
@@ -289,7 +289,7 @@ export const page: ComparePage = {
   faqs: [
     {
       q: "How much does GitHub Codespaces cost compared with Hivra?",
-      a: `GitHub lists compute from $0.18 an hour for a 2-core codespace, plus $0.07 per GB-month of storage, with some usage included on personal accounts, as of ${MONTH}. Hivra is ${ENTRY_PRICE_PROSE}, and every computer Hivra Cloud runs needs a paid plan. A Hivra account itself costs nothing. For occasional use Codespaces is usually cheaper. For a machine that has to stay on, the two are not comparable, because a codespace has a 12-hour maximum lifetime.`,
+      a: `GitHub lists compute from $0.18 an hour for a 2-core codespace, plus $0.07 per GB-month of storage, with some usage included on personal accounts, as of ${MONTH}. Hivra is ${ENTRY_PRICE_PROSE}. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} A Hivra account itself costs nothing. For occasional use Codespaces is usually cheaper. For a machine that has to stay on, the two are not comparable, because a codespace has a 12-hour maximum lifetime.`,
     },
     {
       q: "Is GitHub Codespaces free?",

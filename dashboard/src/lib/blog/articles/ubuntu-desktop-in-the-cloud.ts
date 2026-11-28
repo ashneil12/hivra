@@ -1,5 +1,5 @@
 import { BlogArticle } from "../types";
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE } from "../plan-facts";
 
 export const article: BlogArticle = {
   slug: "ubuntu-desktop-in-the-cloud",
@@ -15,7 +15,7 @@ export const article: BlogArticle = {
   intro:
     "Some work needs a whole desktop, not just a chat or a terminal: a browser window, a file manager, apps that expect a screen. Ubuntu Desktop on Hivra is that, on a computer separate from yours, opened from a browser tab.",
   shortAnswer:
-    "Ubuntu Desktop is an isolated Ubuntu computer on Hivra, opened in your browser as a desktop, with a shared terminal and files. It is Ubuntu 22.04 LTS with 2 vCPU, 4 GB of RAM and a 40 GB disk. It runs on Hivra Cloud, which needs a paid plan, or on a server you connect.",
+    "Ubuntu Desktop is an isolated Ubuntu computer on Hivra, opened in your browser as a desktop, with a shared terminal and files. It is Ubuntu 22.04 LTS with 2 vCPU, 4 GB of RAM and a 40 GB disk. It runs on Hivra Cloud or on a compatible Proxmox server you connect.",
   sections: [
     {
       heading: "What it is",
@@ -75,7 +75,7 @@ export const article: BlogArticle = {
     },
     {
       q: "Does it need a paid plan?",
-      a: "On Hivra Cloud, yes: every Hivra Cloud computer needs a paid plan. You can also launch on your own Proxmox server if your account is eligible to connect it.",
+      a: `${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} You can also launch on your own Proxmox server if your account is eligible to connect it.`,
     },
     {
       q: "Can an AI agent use it?",

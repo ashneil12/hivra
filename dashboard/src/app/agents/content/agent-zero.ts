@@ -115,7 +115,7 @@ export const AGENT_ZERO_CONTENT: AgentPageContent = {
     {
       q: "Does Agent Zero need a paid plan?",
       a: fill(
-        "Yes, on Hivra Cloud, as for every agent. {paidNote} The larger size is {larger}. {aiNote}",
+        "{paidNote} The larger size is {larger}. {aiNote}",
       ),
     },
     {

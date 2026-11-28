@@ -155,7 +155,7 @@ describe("SignUpPage", () => {
     render(await SignUpPage({ searchParams: Promise.resolve({}) }));
 
     const rule =
-      "Every computer that Hivra Cloud runs for you needs a paid plan, from $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.";
+      "Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers. Paid plans start at $9.99 a month for 2 vCPU and 4 GB of RAM. A free account works with a computer or server you connect yourself.";
     const note = screen.getByText(rule);
     expect(note).toBeInTheDocument();
     const lead = screen.getByText(
@@ -245,7 +245,7 @@ describe("SignUpPage", () => {
       expect(question).not.toBeRequired();
       expect(within(question).getByRole("option", { name: "Choose one" })).toBeInTheDocument();
       expect(within(question).getByRole("option", { name: "AI assistant (ChatGPT, Claude, Perplexity)" })).toBeInTheDocument();
-      const note = screen.getByText(/^Every computer that Hivra Cloud runs for you needs a paid plan/);
+      const note = screen.getByText(/^Hivra-run computers require a paid plan unless/);
       expect(note.compareDocumentPosition(question) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       expect(question.compareDocumentPosition(screen.getByTestId("mock-sign-up")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       // Skipped: Clerk gets no answer.

@@ -1,4 +1,4 @@
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import type { ComparePage } from "../types";
 import { formatCheckedMonth } from "../competitor-facts";
 import {
@@ -49,7 +49,7 @@ export const page: ComparePage = {
       blocks: paragraphs(
         `Hivra is for a person who wants an agent to have a computer of its own and would rather open it than assemble it. You choose a supported agent, Hivra creates the computer and runs the agent's own installer, and you work through a browser view with the agent's chat, a terminal and files, which vary by agent. Hivra starts at ${ENTRY_PRICE_PROSE}, and ${STAYS_ON}`,
         "That has a price: it is a flat fee even in a month when the agent does little. Hivra is also not a way to hand your existing Claude or ChatGPT chat a screen to drive. The agent runs on the Hivra computer, and you open it there, rather than attaching a hosted desktop to an assistant elsewhere.",
-        "Hivra is independent and is not affiliated with Simular, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A Hivra account costs nothing, but every Hivra Cloud computer is a paid plan. A free account works with a server you connect yourself.",
+        "Hivra is independent and is not affiliated with Simular, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A free Hivra account does not include managed compute. A free account works with a server you connect yourself.",
       ),
     },
     {
@@ -191,7 +191,7 @@ export const page: ComparePage = {
     },
     {
       q: "Is there a way to try each without paying?",
-      a: `Simular lists a Free option of 5,000 credits once, about 50 box-hours, valid for 90 days. A Hivra account costs nothing, but every Hivra Cloud computer is paid, with a ${MONEY_BACK_GUARANTEE}. A free account works with a server you connect yourself.`,
+      a: `Simular lists a Free option of 5,000 credits once, about 50 box-hours, valid for 90 days. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} Paid plans come with a ${MONEY_BACK_GUARANTEE}. A free account works with a server you connect yourself.`,
     },
     {
       q: "Is Simular box still in beta?",

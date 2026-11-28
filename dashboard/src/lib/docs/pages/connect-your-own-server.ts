@@ -1,4 +1,6 @@
 import type { DocPage } from "../types";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT } from "@/lib/blog/plan-facts";
+import { SELF_HOST_QUICKSTART_URL } from "@/lib/public-project-links";
 
 export const doc: DocPage = {
   slug: "connect-your-own-server",
@@ -12,8 +14,9 @@ export const doc: DocPage = {
     {
       heading: "What this is and who it is for",
       paragraphs: [
-        "Hivra Cloud runs a computer for each agent on a paid plan. If you would rather use hardware you already control, you can connect a server and launch onto it instead. Your account must be eligible to connect a server. You supply the server and its capacity.",
+        `${HOSTED_COMPUTE_NEEDS_PLAN_SHORT} If you would rather use hardware you already control, you can connect a server and launch onto it instead. Your account must be eligible to connect a server. You supply the server and its capacity.`,
         "This page is for developers and AI power users who have a Linux server, a rented machine or a Proxmox VE host, and who are comfortable with a terminal and SSH. You get the same Launch flow, but the computer is created on your host and counts against that host's capacity, not a Hivra plan.",
+        `When you connect a server to hosted Hivra, Hivra still runs the dashboard and database. To run the Hivra platform yourself without a Hivra Cloud account, follow the [self-host quickstart](${SELF_HOST_QUICKSTART_URL}). That's a separate, single-operator preview.`,
         "Hivra is not a replacement for knowing your server. You own it, you pay your provider for it, and you decide who has access to it. Hivra inspects it, prepares it when you approve, and launches onto it when you ask.",
       ],
     },
@@ -22,6 +25,7 @@ export const doc: DocPage = {
       paragraphs: [
         "There are two main routes, and they run different things. The route decides what you can launch, so choose before you start.",
         "| How you connect | Server | What it can run |\n| --- | --- | --- |\n| SSH details | Proxmox VE | Claude Code, Codex, OpenClaw, Agent Zero, Aeon and [Ubuntu Desktop](/docs/ubuntu-desktop), plus [Windows](/docs/windows) from your own licensed image |\n| One command | Ubuntu 22.04 or 24.04 on x86 | [Linux Sandbox](/docs/linux-sandbox) only |",
+        "On a connected Proxmox VE server, Launch creates a new OpenClaw computer. Connecting the server does not import or take over an existing OpenClaw installation.",
         "Hermes and DeepSeek Harness run on Hivra Cloud only, so a connected server cannot run them. Everything else in the first row needs the Proxmox route: an Ubuntu server connected with the one command gives you Linux Sandbox and nothing more.",
         "There are also direct connections to two cloud accounts, covered further down. They do not need a server to exist first.",
         "![The Add capacity chooser with three options: Let Hivra host it, Use my cloud account and Connect my own machine](/images/docs/dash-infra-choose.webp \"The first-setup chooser with sample props. Connect my own machine is the third card, and Connecting does not buy a server appears on the cloud card.\")",

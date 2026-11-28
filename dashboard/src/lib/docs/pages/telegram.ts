@@ -104,7 +104,7 @@ export const doc: DocPage = {
     },
     {
       q: "Does the work stop if I close my laptop?",
-      a: "No. Work you send to Claude Code through Telegram runs on the agent's computer, not in your browser, so closing the dashboard or the laptop does not end it. On Hivra Cloud the computer needs a paid plan to stay on.",
+      a: "No. Work you send to Claude Code through Telegram runs on the agent's computer, not in your browser, so closing the dashboard or the laptop does not end it. On Hivra Cloud, the computer's idle policy depends on how it was launched.",
     },
     {
       q: "How do I disconnect Telegram?",

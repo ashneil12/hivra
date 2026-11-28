@@ -15,10 +15,11 @@
 
 import { getHivraTokenPhase, type HivraTokenPhase } from "@/lib/billing/token-registry";
 import { NON_AFFILIATION_LINE, SITE_DESCRIPTION } from "@/lib/brand-description";
-import { CONNECTED_SERVER_ELIGIBILITY, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { CONNECTED_SERVER_ELIGIBILITY, HOSTED_COMPUTE_NEEDS_PLAN_SHORT, HOSTED_COMPUTE_PAID_PLANS_DEFAULT, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import { HOSTED_AI, HOSTED_DISK, hostedSizes } from "@/app/pricing/pricing-content";
 import { HOSTED_COMPETITORS, hostedComparisonPath } from "@/lib/compare/hosted-competitors";
 import { ECOSYSTEM_STAGES } from "@/lib/ecosystem-map";
+import { SELF_HOST_QUICKSTART_URL } from "@/lib/public-project-links";
 import { getTokenPhaseCopy } from "@/lib/token-phase-copy";
 import { isAgentToolsEnabled } from "@/lib/tools/agent-tools-flag";
 
@@ -67,7 +68,7 @@ export function llmsTxtSections(
       links: [
         { label: "Home", path: "/", note: "Launch an agent on a computer of its own, or start with a computer and use it yourself, on Hivra Cloud, your own server or self-hosted" },
         { label: "Linux sandboxes", path: "/sandboxes", note: "Compare gVisor isolation, persistent files and managed Light access with a full KVM computer" },
-        { label: "Agents", path: "/agents", note: "Claude Code, Codex, Hermes, OpenClaw, Agent Zero and Aeon, each on a computer of its own, with what each one suits and how its model access works" },
+        { label: "Agent catalog", path: "/agents", note: "Available agents, where each one runs and how its model access works" },
         { label: "Set up from your coding agent", path: "/setup.md", note: "Step-by-step instructions for an AI coding agent (Claude Code, Codex, Cursor) to set its person up with an agent on Hivra, and to carry its current work over" },
         { label: "Pricing", path: "/pricing", note: `Self-host the open-source platform at no software cost, or use Hivra Cloud at ${sizes.map((size) => `${size.price} a month for ${size.cpu} vCPU and ${size.ramGb} GB of RAM`).join(" or ")}, with a ${MONEY_BACK_GUARANTEE}. The plan does not include AI usage. ${CONNECTED_SERVER_ELIGIBILITY}` },
         { label: "Free tools", path: "/tools", note: "Keep-awake commands, a tmux cheat sheet, Claude Code plan and limit-reset calculators, an agent survival check and a hosting cost calculator. Free, with no signup" },
@@ -123,7 +124,7 @@ export function llmsTxtSections(
       heading: "Source and self-hosting",
       links: [
         { label: "Source code", path: PUBLIC_REPOSITORY_URL, note: "The open source repository" },
-        { label: "Self-host quickstart", path: `${PUBLIC_REPOSITORY_URL}/blob/main/docs/self-host/QUICKSTART.md`, note: "Run the platform on your own hardware with your own sign-in" },
+        { label: "Self-host quickstart", path: SELF_HOST_QUICKSTART_URL, note: "Run the platform on your own hardware in the single-operator preview" },
       ],
     },
     {
@@ -180,13 +181,14 @@ export function buildLlmsTxt({
 }): string {
   const lines: string[] = [];
   const entry = hostedSizes(entryMonthlyCents)[0];
+  const hostedCompute = restricted || !tokenSurfaces ? HOSTED_COMPUTE_PAID_PLANS_DEFAULT : HOSTED_COMPUTE_NEEDS_PLAN_SHORT;
 
   lines.push("# Hivra");
   lines.push("");
   lines.push(`> ${SITE_DESCRIPTION}`);
   lines.push("");
   lines.push(
-    `Available now on Hivra Cloud: launch Claude Code, Codex, Hermes, Agent Zero, OpenClaw, Aeon or DeepSeek Harness (alpha) on a computer of its own, or launch an Ubuntu computer and use it yourself. Paid Hivra Cloud plans start at ${entry.price} a month for ${entry.cpu} vCPU and ${entry.ramGb} GB of RAM. Hermes runs on Hivra Cloud only. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}.`
+    `Examples of agents you can launch on Hivra Cloud: Claude Code, Codex, Hermes, Agent Zero, OpenClaw, Aeon and DeepSeek Harness (alpha). You can also launch an Ubuntu computer and use it yourself. Hermes runs on Hivra Cloud only. DeepSeek Harness runs only on Hivra Cloud with a paid plan and a host on provisioner release 2026.11.10.5 or later. OpenBot and Nuphos are previews, off by default. ${hostedCompute} Paid Hivra Cloud plans start at ${entry.price} a month for ${entry.cpu} vCPU and ${entry.ramGb} GB of RAM. You can also self-host the platform on your own server, with no Hivra account${restricted ? "" : " and no token"}. Whole-platform self-hosting is a single-operator preview.`
   );
   lines.push("");
   lines.push(

@@ -1,4 +1,4 @@
-import { ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
+import { HOSTED_COMPUTE_NEEDS_PLAN_SHORT, ENTRY_PLAN_PRICE, ENTRY_PLAN_SIZE, MONEY_BACK_GUARANTEE } from "@/lib/blog/plan-facts";
 import type { ComparePage } from "../types";
 import { formatCheckedMonth } from "../competitor-facts";
 import {
@@ -51,7 +51,7 @@ export const page: ComparePage = {
         `Hivra is for a person who wants an agent to have a computer of its own and would rather open it than assemble it. You choose a supported agent, Hivra creates the computer and runs the agent's own installer, and you work through a browser view that can include chat, a terminal and files, depending on the agent. Hivra starts at ${ENTRY_PRICE_PROSE}, and ${STAYS_ON}`,
         "The trade-offs are control and range. A Hivra computer comes in the sizes Hivra offers and is not a place to pick a region, a GPU or 60 vCPUs. You do not get machine0's CLI-first workflow, and we do not describe a public API or SDK for creating computers from code, so scripting a fleet is not what Hivra offers today.",
         "In return you skip the setup that a bare VM asks for: installing the agent, wiring its login, deciding how it is kept running and opening a way in. Hivra's platform is open source and you can also connect a server you run yourself, so you are not locked to Hivra Cloud.",
-        "Hivra is independent and is not affiliated with machine0, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A Hivra account costs nothing, but every Hivra Cloud computer is a paid plan. A free account works with a server you connect yourself.",
+        "Hivra is independent and is not affiliated with machine0, Anthropic or OpenAI, whose tools or agents it may run or be compared with. A free Hivra account does not include managed compute. A free account works with a server you connect yourself.",
       ),
     },
     {
@@ -163,7 +163,7 @@ export const page: ComparePage = {
     },
     {
       q: "Does machine0 have a free plan or trial?",
-      a: "The pages we read do not mention one. They describe pay-as-you-go billing with a minimum top-up of $5. A Hivra account costs nothing, but every Hivra Cloud computer is paid.",
+      a: `The pages we read do not mention one. They describe pay-as-you-go billing with a minimum top-up of $5. A Hivra account costs nothing. ${HOSTED_COMPUTE_NEEDS_PLAN_SHORT}`,
     },
     {
       q: "Can I use machine0 and Hivra together?",

@@ -86,7 +86,7 @@ describe("ActivatePage words", () => {
     expect(screen.getByText(FREE_LEAD)).toBeInTheDocument();
     expect(screen.queryByText(LEAD)).not.toBeInTheDocument();
     expect(container).toHaveTextContent(
-      "Launch opens next, where you can connect your own computer or server. Every Hivra Cloud computer needs a paid plan.",
+      "Launch opens next, where you can connect your own computer or server. Hivra-run computers require a paid plan unless you're admitted through gated, capacity-limited token-holder access for supported computers.",
     );
     expect(container.textContent).not.toMatch(/first computer/i);
   });
