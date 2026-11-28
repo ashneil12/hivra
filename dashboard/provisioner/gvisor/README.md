@@ -27,6 +27,17 @@ into **local-image-only** create and update:
 python:3.13-slim@sha256:9d2e5553305c7c7b0097999bb17187c69b921ccd6bc9d40e4bb5ebe652c00285
 ```
 
+## Linux Sandbox DNS
+
+New and updated Linux Sandboxes keep their dedicated Docker bridge but use
+the host's direct resolvers when a supported, root-owned resolver file is
+available. The adapter mounts only that file, read-only and non-recursively.
+On systemd-resolved hosts it uses the upstream file, not the host's loopback
+stub. It does not choose a public resolver on the operator's behalf. If it
+cannot select a usable direct configuration, Docker's default stays in place.
+An existing Sandbox needs **Update**, rather than Stop and Start, to pick up
+the new mount; Update keeps its workspace.
+
 ## Managed storage admission (off by default)
 
 `HIVRA_MANAGED_GVISOR_DISK_ADMISSION_ENABLED=true` requires storage admission

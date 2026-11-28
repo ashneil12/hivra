@@ -4,6 +4,7 @@
 import base64
 import fcntl
 import hashlib
+import ipaddress
 import json
 import os
 import re
@@ -26,6 +27,10 @@ STORAGE_ADMISSION_PROBE = Path("/opt/hivra/gvisor-adapter/storage-admission-prob
 XFS_WORKSPACE_HELPER = Path("/opt/hivra/gvisor-adapter/hivra-gvisor-xfs-workspace.py")
 XFS_WORKSPACE_SHA256 = "9fce9c40dd57656fabf01d08b0fc7278b8d5ff89f818904e2e752b4e337cba6e"
 TIER_ROOT = Path("/opt/hivra/gvisor-adapter/tier")
+RESOLV_CONF = Path("/etc/resolv.conf")
+RESOLVED_STUB = Path("/run/systemd/resolve/stub-resolv.conf")
+RESOLVED_UPSTREAM = Path("/run/systemd/resolve/resolv.conf")
+RESOLVER_SOURCES = (RESOLV_CONF, RESOLVED_UPSTREAM, Path("/run/NetworkManager/resolv.conf"))
 # Sandboxes this adapter manages, by the adapter release that created each
 # resource (a volume or network keeps the label it was created with) and the
 # image its container runs. Update moves a container to this release's IMAGE.
@@ -344,6 +349,62 @@ def has_nocopy_workspace_mount(host, volume):
             and options.get("NoCopy") is True)
 
 
+def host_resolver_source():
+    try:
+        source = RESOLV_CONF.resolve(strict=True)
+        if source == RESOLVED_STUB:
+            source = RESOLVED_UPSTREAM
+        if source not in RESOLVER_SOURCES:
+            return None
+        fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd, "rb") as conf:
+            info = os.fstat(conf.fileno())
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022
+                    or not info.st_mode & stat.S_IROTH):
+                return None
+            data = conf.read(16385)
+        if len(data) > 16384:
+            return None
+        servers = []
+        for line in data.decode("ascii").splitlines():
+            fields = line.partition("#")[0].partition(";")[0].split()
+            if fields and fields[0] == "nameserver":
+                if len(fields) != 2 or "%" in fields[1]:
+                    return None
+                servers.append(ipaddress.ip_address(fields[1]))
+        if servers and all(not (server.is_loopback or server.is_unspecified or server.is_multicast)
+                           for server in servers):
+            return source
+    except (OSError, ValueError, RuntimeError):
+        return None
+    return None
+
+
+def has_sandbox_mounts(host, mounts, volume, allow_resolver):
+    settings = host.get("Mounts")
+    if not isinstance(settings, list) or len(settings) != len(mounts):
+        return False
+    workspace = [mount for mount in mounts if mount.get("Destination") == "/workspace"]
+    workspace_settings = [mount for mount in settings if mount.get("Target") == "/workspace"]
+    if (not has_nocopy_workspace_mount({"Mounts": workspace_settings}, volume)
+            or len(workspace) != 1 or workspace[0].get("Type") != "volume"
+            or workspace[0].get("Name") != volume or workspace[0].get("RW") is not True):
+        return False
+    if len(mounts) == 1:
+        return True
+    if not allow_resolver or len(mounts) != 2:
+        return False
+    mount = next(mount for mount in mounts if mount.get("Destination") != "/workspace")
+    config = next(mount for mount in settings if mount.get("Target") != "/workspace")
+    return (mount.get("Type") == "bind" and mount.get("Destination") == str(RESOLV_CONF)
+            and mount.get("Source") in tuple(map(str, RESOLVER_SOURCES))
+            and mount.get("RW") is False and mount.get("Propagation") == "rprivate"
+            and config.get("Type") == "bind" and config.get("Source") == mount.get("Source")
+            and config.get("Target") == str(RESOLV_CONF) and config.get("ReadOnly") is True
+            and config.get("BindOptions") in ({"NonRecursive": True},
+                                              {"NonRecursive": True, "Propagation": "rprivate"}))
+
+
 def inspect_container(name, request, *, required=True):
     result = docker("inspect", name, check=False)
     if result.returncode != 0:
@@ -382,10 +443,7 @@ def inspect_container(name, request, *, required=True):
                 or capability_set(host.get("CapDrop")) != {"ALL"}
                 or not any(value.startswith("no-new-privileges") for value in (host.get("SecurityOpt") or []))
                 or (host.get("Tmpfs") or {}).get("/tmp") != "rw,noexec,nosuid,nodev,size=128m"
-                or not has_nocopy_workspace_mount(host, volume)
-                or len(mounts) != 1 or mounts[0].get("Type") != "volume"
-                or mounts[0].get("Name") != volume or mounts[0].get("Destination") != "/workspace"
-                or mounts[0].get("RW") is not True):
+                or not has_sandbox_mounts(host, mounts, volume, allow_resolver=workload is None)):
             fail("The gVisor computer isolation evidence did not match")
         return item
     except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError):
@@ -702,6 +760,8 @@ def create_container(request, cpu, memory, name=None, *, pull_options=()):
     labels = expected_labels(request)
     label_args = [value for pair in labels.items() for value in ("--label", f"{pair[0]}={pair[1]}")]
     workload = request.get("workload")
+    resolver = host_resolver_source() if workload is None else None
+    resolver_mount = ("--mount", f"type=bind,src={resolver},dst={RESOLV_CONF},readonly,bind-recursive=disabled") if resolver else ()
     if workload is not None:
         pull_options = ("--pull=never", "--platform", "linux/amd64")
         command = (workload["image"],)
@@ -713,6 +773,7 @@ def create_container(request, cpu, memory, name=None, *, pull_options=()):
            "--memory-swap", f"{memory}m", "--network", network,
            "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=128m",
            "--mount", f"type=volume,src={volume},dst=/workspace,volume-nocopy",
+           *resolver_mount,
            "--workdir", "/workspace", *label_args, *command)
 
 
