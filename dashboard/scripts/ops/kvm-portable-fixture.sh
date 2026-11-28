@@ -129,6 +129,7 @@ claim_vm() {
   mkdir -p /run/lock/hivra-vmids
   exec 8>>/run/lock/hivra-allocation.lock
   flock -w 20 8 || die "Hivra allocation lock busy"
+  command timeout -k 1 1 logger --socket-errors=off -t hivra-allocation-lock -- "event=acquired mode=exclusive operation=portable-fixture-create holder_pid=$BASHPID" </dev/null >/dev/null 2>&1 8>&- 9>&- || :
   exec 9>>"/run/lock/hivra-vmids/$vm.lock"
   flock -n 9 || die "VMID allocation lock busy"
   check_provision_absent

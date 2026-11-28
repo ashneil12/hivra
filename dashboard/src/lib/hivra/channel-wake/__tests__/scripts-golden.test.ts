@@ -60,9 +60,9 @@ describe("only Telegram on: script goldens", () => {
     expect(digest(buildIdleProbeHostScript(target)))
       .toBe("cd2ed17a796fedf965e79c39818c252c1c2f2d5a0639da15a2cf7644c37fe67f");
     expect(digest(buildWakeHostScript({ ...target, admission, killStaleSockets: true })))
-      .toBe("90934cf34659797907aba8a771141465e7ab4ba6121608198b419a5b569c7146");
+      .toBe("3d6a262bb3c2966a18aab8db724891ae932c6e8f9604021ad4fc56e86e75024a");
     expect(digest(buildWakeHostScript({ ...target, admission })))
-      .toBe("92e1752d8ec949c9f36f161452f994471c3f90d117f5d8ce16564f8eb484742b");
+      .toBe("8ec80fd373f88f038fc366471b5b84ae486d51391b759fdb4f486abecf179524");
     expect(digest(probeCheckPerl(true))).toBe("0f06351c81edca56943372443cce8196990507aae5b919df68dea119d1915fb4");
     expect(digest(probeCheckPerl(false))).toBe("34d60e88afa04451c81cf8d2e45dbb3ff911b4e480a05af4f5d32b0813826284");
   });

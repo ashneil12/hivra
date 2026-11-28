@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import { ssrfSafeFetch } from "@/lib/ssrf-safe-fetch";
-import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
+import { createManagedProxmoxHostScriptSession, runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
 import { resolveProxmoxHostCapacityPolicy } from "@/lib/infrastructure/host-capacity-policy";
 import canaryMemoryOvercommitRelease from "../../../provisioner-releases/2026.11.28.2.json";
 import { readCanaryMemoryOvercommit } from "./canary-memory-overcommit";
@@ -232,6 +232,8 @@ export interface WakeScriptRun {
   sshReadyMs?: number;
 }
 
+type WakeHostSession = NonNullable<ReturnType<typeof createManagedProxmoxHostScriptSession>>;
+
 /** How many more times a host call is tried when its SSH connection was never made. */
 export const HOST_CONNECT_RETRIES = 2;
 const HOST_CONNECT_RETRY_MS = 400;
@@ -247,11 +249,13 @@ async function runHostScriptForWake(
   env: HivraLifecycleTarget["env"],
   options?: Parameters<typeof runProxmoxHostScript>[2],
   deadline?: number,
+  session?: WakeHostSession | null,
 ): ReturnType<typeof runProxmoxHostScript> {
   for (let attempt = 0; ; attempt += 1) {
     const remaining = deadline === undefined ? undefined : Math.max(1, Math.floor(deadline - performance.now()));
     const budget = remaining === undefined ? options : typeof options === "object" ? { ...options, timeoutMs: remaining } : remaining;
-    const result = budget === undefined ? await runProxmoxHostScript(script, env) : await runProxmoxHostScript(script, env, budget);
+    const result = session ? await session.run(script, budget)
+      : budget === undefined ? await runProxmoxHostScript(script, env) : await runProxmoxHostScript(script, env, budget);
     const refused = !!result && !result.ok && result.stage === "connect" && !result.stdout && /^SSH connect/.test(result.error ?? "");
     if (!refused || attempt >= HOST_CONNECT_RETRIES) return result;
     const retryDelay = HOST_CONNECT_RETRY_MS * (attempt + 1) + Math.floor(Math.random() * HOST_CONNECT_RETRY_MS);
@@ -271,7 +275,7 @@ async function runHostScriptForWake(
 export async function runWakeHostScript(
   row: AgentRow,
   target: HivraLifecycleTarget,
-  options: { restore: boolean; killStaleSockets?: boolean; hostIngress?: boolean; deadlineMs?: number },
+  options: { restore: boolean; killStaleSockets?: boolean; hostIngress?: boolean; deadlineMs?: number; session?: WakeHostSession },
 ): Promise<WakeScriptRun> {
   const startedAt = Date.now();
   // With memory drops switched on, a restore may meet a computer whose saved memory was dropped. The host's mark decides.
@@ -319,7 +323,7 @@ export async function runWakeHostScript(
       // soon as its line is complete, without waiting for the session to close.
       ...(isFastWakeEnabled("early_finish") ? { earlyFinishMarker: WAKE_RESULT_PREFIX.trim(), earlyFinishOnLine: true } : {}),
       ...(isFastWakeEnabled("timing") ? { reportTimings: true } : {}),
-    }, options.deadlineMs === undefined ? undefined : performance.now() + remaining);
+    }, options.deadlineMs === undefined ? undefined : performance.now() + remaining, options.session);
     // The receipt is read even when the run reports an error: a script that
     // finished its work and then lost its connection still told us the answer.
     const receipt = parseWakeReceipt(result?.stdout ?? "", target.vmid);
@@ -423,11 +427,14 @@ async function performWakeSteps(
 
   let slotTarget: HivraLifecycleTarget | null = null;
   let slotRelease: Promise<void> | undefined;
+  let session: WakeHostSession | null = null;
   let boundedRestore = false;
   let waitedForConcurrency = false;
   const releaseSlot = (target: HivraLifecycleTarget) => releaseHostWakeSlot(
     { vmid: target.vmid },
-    { instanceId: agentId, runHostScript: (script) => runProxmoxHostScript(script, target.env, WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS) },
+    { instanceId: agentId, runHostScript: (script) => session
+      ? session.run(script, WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS)
+      : runProxmoxHostScript(script, target.env, WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS) },
   ).catch(() => undefined);
   try {
     const resolved = await resolveSleepTarget(row, LOG_SOURCE);
@@ -447,6 +454,10 @@ async function performWakeSteps(
     if (hostIngress) detail.host_ingress = true;
 
     if (restore) {
+      if (isFastWakeEnabled("ssh_session") && isCanonicalGitCanaryDeployment()
+        && target.executionContext?.kind === "managed" && target.executionContext.provisionerChannel === "canary") {
+        session = createManagedProxmoxHostScriptSession(target.env, workDeadlineMs);
+      }
       // Reserve the existing restore and readiness budgets before waiting for a slot.
       slotTarget = target;
       const waitUntil = Math.min(Date.now() + WAKE_TURN_WAIT_SECONDS * 1000,
@@ -464,8 +475,8 @@ async function performWakeSteps(
             waitForConcurrencySeconds,
             runHostScript: (script) => waitForConcurrencySeconds > 0
               ? runHostScriptForWake(script, target.env, undefined,
-                start + waitForConcurrencySeconds * 1000 + WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS)
-              : runHostScriptForWake(script, target.env),
+                start + waitForConcurrencySeconds * 1000 + WAKE_ADMISSION_TRANSPORT_ALLOWANCE_MS, session)
+              : runHostScriptForWake(script, target.env, undefined, undefined, session),
           },
         );
         waitedForConcurrency ||= answer.waitedForConcurrency === true;
@@ -536,6 +547,7 @@ async function performWakeSteps(
     // means the guest holds dead sockets: drop them, so it reconnects at once.
     const runScript = () => runWakeHostScript(row, target, {
       restore,
+      ...(session ? { session } : {}),
       ...(boundedRestore ? { deadlineMs: workDeadlineMs - restoreHealthBudgetMs - WAKE_SETTLE_HEADROOM_MS } : {}),
       ...(channels.disarm?.killStaleSockets ? { killStaleSockets: true } : {}),
       ...(hostIngress ? { hostIngress: true } : {}),
@@ -601,8 +613,10 @@ async function performWakeSteps(
     });
     return failed("wake_error");
   } finally {
-    if (slotTarget) {
-      await (slotRelease ?? releaseSlot(slotTarget));
+    try {
+      if (slotTarget) await (slotRelease ?? releaseSlot(slotTarget));
+    } finally {
+      session?.close();
     }
   }
 }

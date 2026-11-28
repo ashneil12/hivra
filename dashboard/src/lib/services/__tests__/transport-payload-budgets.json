@@ -47,9 +47,9 @@
   "payloads": {
     "attached-agent/access": {
       "script": {
-        "bytes": 12972,
+        "bytes": 13274,
         "limit": "host-script-with-stdin.script",
-        "percent": 13.2
+        "percent": 13.5
       },
       "stepArgument": {
         "bytes": 10398,
@@ -69,9 +69,9 @@
     },
     "attached-agent/activate": {
       "script": {
-        "bytes": 12972,
+        "bytes": 13274,
         "limit": "host-script-with-stdin.script",
-        "percent": 13.2
+        "percent": 13.5
       },
       "stepArgument": {
         "bytes": 10398,
@@ -91,9 +91,9 @@
     },
     "attached-agent/observe": {
       "script": {
-        "bytes": 12971,
+        "bytes": 13273,
         "limit": "host-script-with-stdin.script",
-        "percent": 13.2
+        "percent": 13.5
       },
       "stepArgument": {
         "bytes": 10397,
@@ -113,9 +113,9 @@
     },
     "attached-agent/remove": {
       "script": {
-        "bytes": 12972,
+        "bytes": 13274,
         "limit": "host-script-with-stdin.script",
-        "percent": 13.2
+        "percent": 13.5
       },
       "stepArgument": {
         "bytes": 10398,
@@ -135,9 +135,9 @@
     },
     "attached-agent/state": {
       "script": {
-        "bytes": 12971,
+        "bytes": 13273,
         "limit": "host-script-with-stdin.script",
-        "percent": 13.2
+        "percent": 13.5
       },
       "stepArgument": {
         "bytes": 10397,
@@ -157,7 +157,7 @@
     },
     "attachment-observation": {
       "script": {
-        "bytes": 5999,
+        "bytes": 6301,
         "limit": "sudo-transport-script",
         "percent": 0.6
       },
@@ -174,9 +174,9 @@
     },
     "attachment-staging/fetch": {
       "script": {
-        "bytes": 21895,
+        "bytes": 22197,
         "limit": "host-script-with-stdin.script",
-        "percent": 22.3
+        "percent": 22.6
       },
       "stepArgument": {
         "bytes": 18124,
@@ -196,9 +196,9 @@
     },
     "attachment-staging/observe": {
       "script": {
-        "bytes": 21894,
+        "bytes": 22196,
         "limit": "host-script-with-stdin.script",
-        "percent": 22.3
+        "percent": 22.6
       },
       "stepArgument": {
         "bytes": 18123,
@@ -218,9 +218,9 @@
     },
     "attachment-staging/stage": {
       "script": {
-        "bytes": 21895,
+        "bytes": 22197,
         "limit": "host-script-with-stdin.script",
-        "percent": 22.3
+        "percent": 22.6
       },
       "stepArgument": {
         "bytes": 18124,
@@ -300,9 +300,9 @@
     },
     "remote-desktop-install": {
       "script": {
-        "bytes": 15362,
+        "bytes": 15566,
         "limit": "sudo-transport-script",
-        "percent": 1.5
+        "percent": 1.6
       },
       "broker.cjs argument": {
         "bytes": 54988,

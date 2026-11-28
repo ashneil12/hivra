@@ -16,6 +16,7 @@
 // Nothing host-specific lives here: the host is identified by `hostname -s` at
 // run time and every path is the same on every host.
 
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import {
   managedHivraProvisionerChannelConfiguration,
@@ -315,6 +316,7 @@ done
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+${allocationLockAcquired("doorbell-install")}
 STEP=bundle
 [ -d "$BUNDLE" ] && [ -f "$BUNDLE/BUNDLE.sha256" ] || { echo "channel bundle directory is missing" >&2; exit 1; }
 (cd "$BUNDLE" && sha256sum -c --status BUNDLE.sha256) || { echo "channel bundle does not match its BUNDLE.sha256" >&2; exit 1; }
@@ -439,6 +441,7 @@ trap 'status=$?; trap - EXIT; if [ "$status" != 0 ]; then emit failed; fi; exit 
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+${allocationLockAcquired("doorbell-remove")}
 STEP=dependents
 if [ -f "$PY" ] && systemctl is-active --quiet "$UNIT"; then
   HEALTH="$(doorbell_health)"

@@ -25,14 +25,15 @@ export type FastWakeFeature =
    * The server wakes through the host ingress ticket before falling back to
    * SSH. Only on when named: "all" does not turn it on.
    */
-  | "ingress_ticket";
+  | "ingress_ticket"
+  | "ssh_session";
 
 const FEATURES: readonly FastWakeFeature[] = [
-  "timing", "fast_healthz", "fast_qm", "early_finish", "deferred_log", "early_wake", "ingress_ticket",
+  "timing", "fast_healthz", "fast_qm", "early_finish", "deferred_log", "early_wake", "ingress_ticket", "ssh_session",
 ];
 
 /** Features "all" leaves out: they must be named, so setting "all" earlier never turns them on later. */
-const NAMED_ONLY: readonly FastWakeFeature[] = ["ingress_ticket"];
+const NAMED_ONLY: readonly FastWakeFeature[] = ["ingress_ticket", "ssh_session"];
 
 /** The features a flag value turns on. Anything not on the list is ignored. */
 export function parseFastWakeFlags(value: string | undefined | null): ReadonlySet<FastWakeFeature> {

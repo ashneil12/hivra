@@ -88,4 +88,7 @@ Hermes, baked image pins, stock launch behavior or readiness checks.
 Release `2026.11.28.2` adds bounded memory overcommit to host admission for
 eligible Canary KVM launches and wakes. Ordinary admission remains unchanged;
 the new behavior requires explicit policy and this sealed host release.
+
+Release `2026.11.28.3` seals the split Canary QA clone qualification and
+admission flow. The host capacity helper and workload assets are unchanged.
 The same release seals the operator wrapper for exact allowlisted QA clones.
