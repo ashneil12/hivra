@@ -132,6 +132,22 @@ transport.
 `timing` adds `host_ms` and `ssh_ready_ms` to each wake's `detail`, which
 splits host time from connection time.
 
+A disk wake's `allocation_lock` step measures time spent waiting for the
+host-wide lock, before the locked state recheck and capacity check. On the
+affected Proxmox host, match that interval in the UTC journal:
+`journalctl --utc SYSLOG_IDENTIFIER=hivra-allocation-lock _UID=0 --since '<start>' --until '<end>'`.
+Look just before the wait as well: an acquisition records the operation, lock
+mode and acquiring shell or Python PID, not the time the lock was released.
+A launch may pass the same open lock to its provisioner child. Old sealed
+helper entry points and manual locks may not have an acquisition record;
+absence of a record is not evidence that the lock was free.
+
+A per-VM lock protects that VM's lifecycle, not the host's memory and CPU
+admission. Don't bypass the host lock on a disk restore: two unrelated starts
+could otherwise both pass against the same headroom before either is counted.
+Nap resumes don't acquire the host lock because their QEMU process already
+holds its memory.
+
 ## Host ingress and wake on any message
 
 The agent's public connector can move from its computer to the host, behind a

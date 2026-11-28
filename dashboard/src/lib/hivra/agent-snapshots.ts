@@ -1,3 +1,4 @@
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import "server-only";
 
 import { shellQuote } from "./proxmox-target";
@@ -36,6 +37,7 @@ EXPECTED_BINDING_TAG=${shellQuote(bindingTag)}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 60 8 || { echo "timed out waiting for the Hivra lifecycle lock" >&2; exit 1; }
+${allocationLockAcquired("agent-snapshot")}
 qm status "$VMID" >/dev/null
 TAGS="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')"
 printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq "$EXPECTED_BINDING_TAG" \

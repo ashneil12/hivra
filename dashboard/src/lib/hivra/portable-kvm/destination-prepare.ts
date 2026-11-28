@@ -1,3 +1,4 @@
+import { allocationLockAuditPython } from "@/lib/hivra/allocation-lock-audit";
 import { shellQuote } from "@/lib/hivra/proxmox-target";
 import { portableKvmSlotPython } from "./slot-claim";
 import { isIPv4 } from "node:net";
@@ -191,6 +192,7 @@ def publish(path, data):
     finally:
         os.close(directory)
 
+${allocationLockAuditPython}
 def lock(stack, path):
     fd = os.open(path, os.O_RDONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)
     stack.callback(os.close, fd)
@@ -440,6 +442,7 @@ def run():
     check_permit()
     with ExitStack() as stack:
         lock(stack, locks / "hivra-allocation.lock")
+        allocation_lock_acquired("portable-destination-prepare")
         vmids = locks / "hivra-vmids"
         try:
             vmids.mkdir(mode=0o755)

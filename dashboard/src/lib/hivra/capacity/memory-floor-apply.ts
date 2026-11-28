@@ -8,6 +8,7 @@
  * reports what it would set; `on` sets floors; `restore` gives every agent
  * that has a floor its full memory back.
  */
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { log } from "@/lib/logger";
 import { supabaseAdmin } from "@/lib/supabase";
 import { runProxmoxHostScript } from "@/lib/services/proxmox-instance-service";
@@ -88,6 +89,7 @@ FROM_MB="$BALLOON"
 # A floor is what placement reserves for the computer, so it moves under the host's allocation lock.
 exec 8>/run/lock/hivra-allocation.lock
 flock -w 30 8 || finish false lock_timeout "$BALLOON"
+${allocationLockAcquired("memory-floor-apply")}
 qm set "$VMID" --balloon "$FLOOR_MB" >/dev/null 2>&1 || finish false set_failed "$BALLOON"
 CONFIG="$(qm config "$VMID" 2>/dev/null)" || finish false unconfirmed "$BALLOON"
 # A change a running VM has not taken yet shows under pending, and the old value stays here.

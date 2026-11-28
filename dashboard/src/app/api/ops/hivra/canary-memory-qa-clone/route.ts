@@ -1,3 +1,4 @@
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { NextRequest } from "next/server";
 import { apiError, apiSuccess } from "@/lib/api-response";
 import { verifyBearerHeader } from "@/lib/bearer-auth";
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
 install -d -m 0755 /run/lock
 exec 8>>/run/lock/hivra-allocation.lock
 flock -x -w 40 8 || { echo "Hivra allocation lock is busy" >&2; exit 1; }
+${allocationLockAcquired("canary-memory-qa-clone")}
 PROVISIONER_DIR=${shellQuote(dir)}
 ${managedCanaryLaunchSealScript([CANARY_MEMORY_QA_CLONE_PROVISIONER])}
 ${canaryMemoryOvercommitShell(grant)}bash "$PROVISIONER_DIR/hivra-canary-memory-qa-clone.sh" ${action} ${shellQuote(ownerId)} ${vmid} ${shellQuote(tag)} ${templateVmid}${startArgs}`, target.env, { timeoutMs: 210_000 });

@@ -3,6 +3,7 @@
 // same-origin, JSON, rate limit, bounded read); server-side jobs call
 // launchHivraAgentForUser directly for a known owner.
 
+import { allocationLockAcquired } from "@/lib/hivra/allocation-lock-audit";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 
 import { supabaseAdmin } from "@/lib/supabase";
@@ -588,6 +589,7 @@ install -d -m 0700 /var/lib/hivra/provision-operations
 # active and visible in the host inventory.
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_ALLOCATION_LOCK_WAIT_SECONDS} 8 || { echo "timed out waiting for the Hivra allocation lock" >&2; exit 1; }
+${allocationLockAcquired("agent-launch", "exclusive", params.operationId)}
 ${params.canaryProvisionerVersion
     ? `PROVISIONER_DIR=${shellQuote(provisionerDirectory)}
 ${managedCanaryLaunchSealScript([params.canaryProvisionerVersion])}`
@@ -796,6 +798,7 @@ STORAGE=${shellQuote(storage)}
 install -d -m 0755 /run/lock
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8 || { echo "timed out waiting for the Hivra rollback lock" >&2; exit 1; }
+${allocationLockAcquired("agent-launch-rollback")}
 PIDFILE="/run/hivra-provision/$VMID.pid"
 vm_owned_by_operation() {
   tags="$(qm config "$VMID" 2>/dev/null | sed -n 's/^tags:[[:space:]]*//p')" || return 1
@@ -2692,6 +2695,7 @@ printf 'HIVRA_PREPARED_IMAGE_VERIFIED\\n'`, env, { timeoutMs: 15_000 });
     const allocationVerificationScript = `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
+${allocationLockAcquired("agent-launch-finalize")}
 CONFIG="$(qm config ${vmid}${hermesStandby ? " --current 1" : ""})"
 TAGS="$(sed -n 's/^tags:[[:space:]]*//p' <<< "$CONFIG")"
 printf '%s\\n' "$TAGS" | tr ';' '\\n' | grep -Fxq ${shellQuote(infrastructureBindingTag)}
@@ -2773,6 +2777,7 @@ printf 'HIVRA_ALLOCATION_VERIFIED %s\\n' ${vmid}`;
       `set -euo pipefail
 exec 8>/run/lock/hivra-allocation.lock
 flock -w ${HIVRA_LAUNCH_FOLLOW_UP_LOCK_WAIT_SECONDS} 8
+${allocationLockAcquired("agent-launch-verify")}
 TAGS="$(qm config ${vmid} | sed -n 's/^tags:[[:space:]]*//p')"
 printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq ${shellQuote(infrastructureBindingTag)}
 printf '%s\n' "$TAGS" | tr ';' '\n' | grep -Fxq ${shellQuote(`hivra-op-${provisionOperationId.replace(/-/g, "")}`)}
