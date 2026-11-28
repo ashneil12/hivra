@@ -107,7 +107,7 @@ fn repair_linux_handler_exec(app: &AppHandle) -> Result<(), String> {
         .data_dir()
         .map_err(|error| error.to_string())?
         .join("applications")
-        .join(file_name);
+        .join(&file_name);
     let contents = std::fs::read_to_string(&target).map_err(|error| error.to_string())?;
     let Some(repaired) = repair_desktop_exec(&contents, &exec) else { return Ok(()) };
     std::fs::write(&target, repaired).map_err(|error| error.to_string())?;
