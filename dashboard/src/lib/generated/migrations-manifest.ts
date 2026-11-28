@@ -548,4 +548,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261128005100", name: "provider_release_admission_2026_11_28_1" },
   { version: "20261128015300", name: "kvm_portable_runtime_selector" },
   { version: "20261128163000", name: "canary_kvm_idle_hibernate_default" },
+  { version: "20261128164100", name: "hivra_deep_hibernate_funding" },
 ];

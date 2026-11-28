@@ -134,6 +134,7 @@ jobs:
       - name: Verify managed KVM portable placement claims
         run: |
           node scripts/test-managed-kvm-portable-handoff.cjs
+          node scripts/test-hivra-deep-hibernate-funding.cjs
           node scripts/test-kvm-portable-runtime-selector.cjs
 
       - name: Verify Canary Hermes standby admission and shared transaction locks

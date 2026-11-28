@@ -26,7 +26,7 @@ export { isAgentStored, requestAgentUnstore } from "./sleep-storage-state";
 /**
  * The last step of the sleep ladder: storage.
  *
- * A paid agent nobody has used for HIVRA_SLEEP_STORE_AFTER_DAYS days, whose
+ * An eligible holder-funded agent nobody has used for HIVRA_SLEEP_STORE_AFTER_DAYS days, whose
  * saved memory was already dropped, is packed into the storage box: its disks
  * are copied there (the backup tooling's encrypted, deduplicated repository),
  * read back and compared, and only then freed on the host. The computer keeps
