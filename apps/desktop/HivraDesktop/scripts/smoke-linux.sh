@@ -16,7 +16,7 @@ export HIVRA_SMOKE_EXE="$exe" HIVRA_SMOKE_OUT="$outdir" HIVRA_SMOKE_RUNTIME_HAND
 dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -c '
   # Xvfb has no GPU compositor; these are smoke-test environment workarounds,
   # not flags shipped into user desktops.
-  export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1
+  export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1 XDG_UTILS_DEBUG_LEVEL=3
   "$HIVRA_SMOKE_EXE" >"$HIVRA_SMOKE_OUT/app.log" 2>&1 &
   app_pid=$!
   window=""
@@ -50,6 +50,13 @@ dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -
     Hivra.desktop|hivra-desktop-handler.desktop) ;;
     *)
       echo "Hivra did not register as the hivra:// handler (got \"$handler\")" >&2
+      echo "user desktop entries:" >&2
+      ls -la "$HOME/.local/share/applications" >&2 || true
+      echo "user MIME defaults:" >&2
+      cat "$HOME/.config/mimeapps.list" >&2 2>/dev/null || true
+      cat "$HOME/.local/share/applications/mimeapps.list" >&2 2>/dev/null || true
+      echo "runtime handler entry:" >&2
+      cat "$HOME/.local/share/applications/hivra-desktop-handler.desktop" >&2 2>/dev/null || true
       exit 1
       ;;
   esac
