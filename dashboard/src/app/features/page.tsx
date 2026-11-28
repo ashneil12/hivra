@@ -62,7 +62,8 @@ const schema = {
   ],
 };
 
-export default function FeaturesPage() {
+export default async function FeaturesPage() {
+  const paidSleep = await paidKvmSleepAvailable();
   return (
     <PublicSite className={styles.page} data-page="features">
       <StructuredData schema={schema} />
@@ -82,7 +83,7 @@ export default function FeaturesPage() {
             {publicManagedSandboxAvailable() && (
               <p>Pick Linux Sandbox in Launch to run shell commands and keep your files in a lightweight workspace on Hivra Cloud.</p>
             )}
-            {paidKvmSleepAvailable() && (
+            {paidSleep && (
               <p>Turn on idle sleep for a supported paid computer. It can nap and hibernate, then wake with its files intact when you return.</p>
             )}
             {UNIVERSAL_CATALOG_MANIFESTS.some((manifest) => isCatalogAppLaunchable(manifest)) && (

@@ -30,19 +30,20 @@ export async function GET(request: Request) {
   const countryListed = tokenSurfaces && isTokenGeoPolicyActive();
   // A crawler is signed out, so the request's IP country is the only signal.
   const restricted = countryListed && (await resolveTokenGeoBlock(request, null)).blocked;
+  const paidSleep = await paidKvmSleepAvailable();
   const body = buildLlmsTxt({
     siteUrl: SITE_URL,
     restricted,
     tokenSurfaces,
     entryMonthlyCents: getCardTrialOffer()?.monthlyCents,
-    paidSleep: paidKvmSleepAvailable(),
+    paidSleep,
   });
 
   return new Response(body, {
     status: 200,
     headers: {
       "Content-Type": "text/plain; charset=utf-8",
-      "Cache-Control": countryListed ? PER_VIEWER : SAME_FOR_EVERYONE,
+      "Cache-Control": countryListed || paidSleep ? PER_VIEWER : SAME_FOR_EVERYONE,
     },
   });
 }

@@ -32,8 +32,8 @@ jest.mock("next/link", () => {
 });
 
 describe("/features page", () => {
-  it("opens with the headline, the lead and clear next steps", () => {
-    render(<FeaturesPage />);
+  it("opens with the headline, the lead and clear next steps", async () => {
+    render(await FeaturesPage());
 
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Give your agent a computer of its own.");
     expect(screen.getByRole("heading", { level: 2, name: "Less time setting things up. More time getting things done." })).toBeInTheDocument();
@@ -45,8 +45,8 @@ describe("/features page", () => {
     expect(screen.queryByText(/Start Deploying|Deploy My Agent/)).not.toBeInTheDocument();
   });
 
-  it("lists the six features in order, each as a numbered heading with its own link", () => {
-    render(<FeaturesPage />);
+  it("lists the six features in order, each as a numbered heading with its own link", async () => {
+    render(await FeaturesPage());
 
     expect(screen.getByRole("heading", { level: 2, name: "Six things that make a difference" })).toBeInTheDocument();
     const items = screen.getAllByRole("heading", { level: 3 });
@@ -71,8 +71,8 @@ describe("/features page", () => {
     }
   });
 
-  it("says plainly what the browser, schedule, memory and agents are and are not", () => {
-    render(<FeaturesPage />);
+  it("says plainly what the browser, schedule, memory and agents are and are not", async () => {
+    render(await FeaturesPage());
 
     expect(screen.getByText(/Memory isn't perfect or automatic understanding\./)).toBeInTheDocument();
     expect(screen.getByText(/A hosted browser doesn't make those restrictions disappear\./)).toBeInTheDocument();
@@ -82,10 +82,10 @@ describe("/features page", () => {
     expect(screen.getByRole("link", { name: "compare sandboxes and virtual machines" })).toHaveAttribute("href", "/sandboxes");
   });
 
-  it.each(["0", "1"])("shows the verified apps link only when the catalog is enabled (%s)", (flag) => {
+  it.each(["0", "1"])("shows the verified apps link only when the catalog is enabled (%s)", async (flag) => {
     const env = jest.replaceProperty(process, "env", { ...process.env, NEXT_PUBLIC_HIVRA_UNIVERSAL_CATALOG: flag });
     try {
-      render(<FeaturesPage />);
+      render(await FeaturesPage());
       const link = screen.queryByRole("link", { name: "verified apps" });
       if (flag === "1") expect(link).toHaveAttribute("href", "/agents#verified-catalog");
       else expect(link).not.toBeInTheDocument();
@@ -94,8 +94,8 @@ describe("/features page", () => {
     }
   });
 
-  it("states the hosting price from the plan facts and ends with the questions", () => {
-    render(<FeaturesPage />);
+  it("states the hosting price from the plan facts and ends with the questions", async () => {
+    render(await FeaturesPage());
 
     const price = screen.getByRole("heading", { level: 2, name: "What is included in the hosting price?" }).closest("section")!;
     // Each size sits in a no-wrap span, so the bold phrase is matched on its whole text, not on its own text nodes.
