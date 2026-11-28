@@ -110,7 +110,20 @@ fn repair_linux_handler_exec(app: &AppHandle) -> Result<(), String> {
         .join(file_name);
     let contents = std::fs::read_to_string(&target).map_err(|error| error.to_string())?;
     let Some(repaired) = repair_desktop_exec(&contents, &exec) else { return Ok(()) };
-    std::fs::write(&target, repaired).map_err(|error| error.to_string())
+    std::fs::write(&target, repaired).map_err(|error| error.to_string())?;
+
+    // Newer xdg-utils validates the executable before writing the default. The
+    // plugin invokes xdg-mime before this repair, so repeat the association now
+    // that the desktop entry is in the compatible form.
+    let status = std::process::Command::new("xdg-mime")
+        .args(["default", &file_name, "x-scheme-handler/hivra"])
+        .status()
+        .map_err(|error| error.to_string())?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("xdg-mime exited with {status}"))
+    }
 }
 
 /// An address of the app's own pages, for navigating back to them.
