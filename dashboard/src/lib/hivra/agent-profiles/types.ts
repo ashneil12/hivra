@@ -40,6 +40,7 @@ export interface ActivityDir {
 export type ScheduleSource =
   | { kind: "hermes-jobs"; path: string; profilesDir?: string; profilePath?: string }
   | { kind: "json-next-run"; path: string; key: string }
+  | { kind: "openclaw-sqlite"; path: string }
   | { kind: "json-nonempty"; path: string; key: string }
   | { kind: "crontab"; path: string }
   | { kind: "dir-nonempty"; path: string };

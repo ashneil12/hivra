@@ -12,6 +12,7 @@
 // value, never the value.
 
 import type { AgentWakeProfile, ProcessMatch } from "./types";
+import { OPENCLAW_SQLITE_PATH } from "@/lib/hivra/sleep/openclaw-schedule-program";
 import {
   catalogAppToWakeProfile,
   UNIVERSAL_CATALOG_APP_PORTS,
@@ -124,6 +125,7 @@ const OPENCLAW: AgentWakeProfile = {
   schedules: [
     { kind: "json-next-run", path: "~/.openclaw/cron/jobs-state.json", key: "nextRunAtMs" },
     { kind: "json-next-run", path: "~/.openclaw/cron/jobs.json", key: "nextRunAtMs" },
+    { kind: "openclaw-sqlite", path: OPENCLAW_SQLITE_PATH },
   ],
   channels: [{ kind: "json-channels", prefix: "openclaw", path: OPENCLAW_JSON, at: ["channels"], owner: OPENCLAW_GATEWAY_OWNER }],
   wake: {
