@@ -54,6 +54,9 @@ keys, so new fields belong to a future negotiated protocol version.
 
 ## Current state
 
-The Mac alpha (`apps/macos/HivraMac`) is the only shell. It identifies itself with
-the `HivraMac/<version>` user-agent token. Other desktop shells are planned to use
-`HivraDesktop/<version>`; none exists yet, and any that ships must pass these fixtures.
+The Mac alpha (`apps/macos/HivraMac`) is the first shell. It identifies itself with
+the `HivraMac/<version>` user-agent token. The Windows and Linux Tauri shell
+(`apps/desktop/HivraDesktop`) identifies itself with `HivraDesktop/<version>`, but it
+currently embeds the dashboard without native workspace tab adoption, so these route
+fixtures do not apply to it yet. If that shell grows native workspace routing, or any
+other shell implements it, the shell must pass these fixtures before that behavior ships.
