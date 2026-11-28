@@ -54,6 +54,30 @@ jobs:
         run: |
           if [ -z "$HIVRA_DESKTOP_CONNECTION" ]; then unset HIVRA_DESKTOP_CONNECTION; fi
           npx --yes @tauri-apps/cli@2.12.4 build --bundles nsis
+      - name: Smoke-test the installed shell
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem target/release/bundle/nsis/*-setup.exe | Select-Object -First 1
+          if (-not $installer) { throw "Windows installer was not produced" }
+          $installDir = Join-Path $env:RUNNER_TEMP "hivra-installed"
+          if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
+          $install = Start-Process -FilePath $installer.FullName -ArgumentList "/S", "/D=$installDir" -PassThru -NoNewWindow
+          if (-not $install.WaitForExit(120000)) {
+            $install.Kill($true)
+            throw "Windows installer did not finish within 120 seconds"
+          }
+          if ($install.ExitCode -ne 0) { throw "Windows installer failed with exit code $($install.ExitCode)" }
+          $application = Get-ChildItem $installDir -Filter "*.exe" -Recurse |
+            Where-Object { $_.Name -notmatch '^uninstall' } |
+            Select-Object -First 1
+          if (-not $application) { throw "Installed Hivra executable was not found" }
+          Write-Host "Installed executable: $($application.FullName)"
+          $process = Start-Process -FilePath $application.FullName -PassThru
+          Start-Sleep -Seconds 10
+          $process.Refresh()
+          if ($process.HasExited) { throw "Hivra exited during startup with code $($process.ExitCode)" }
+          Write-Host "Hivra stayed running for 10 seconds after installation"
+          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hivra-windows-unsigned
