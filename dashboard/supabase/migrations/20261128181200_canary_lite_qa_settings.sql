@@ -1,4 +1,4 @@
-create table public.hivra_canary_lite_qa_settings (
+create table if not exists public.hivra_canary_lite_qa_settings (
   singleton boolean primary key default true check (singleton),
   enabled boolean not null default false,
   owner_id text check (owner_id ~ '^user_[A-Za-z0-9]+$'),

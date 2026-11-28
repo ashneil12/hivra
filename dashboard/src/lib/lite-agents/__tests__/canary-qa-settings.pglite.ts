@@ -6,7 +6,9 @@ it("leaves Lite QA off by default and restricts runtime settings custody", async
   const table = "public.hivra_canary_lite_qa_settings";
   try {
     await db.exec("create role anon; create role authenticated; create role service_role bypassrls");
-    await db.exec(readFileSync("supabase/migrations/20261128181200_canary_lite_qa_settings.sql", "utf8"));
+    const migration = readFileSync("supabase/migrations/20261128181200_canary_lite_qa_settings.sql", "utf8");
+    await db.exec(migration);
+    await db.exec(migration);
     for (const role of ["anon", "authenticated"]) {
       await db.exec(`set role ${role}`);
       await expect(db.query(`select * from ${table}`)).rejects.toMatchObject({ code: "42501" });
