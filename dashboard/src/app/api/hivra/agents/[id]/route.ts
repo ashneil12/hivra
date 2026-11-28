@@ -57,6 +57,7 @@ import { manageCapabilitiesFor } from "@/lib/hivra/manage-capabilities";
 import { isComputerMissingOnHostRow } from "@/lib/hivra/computer-usage-contract";
 import { readStoredUsage } from "@/lib/hivra/computer-usage";
 import { isAgentAwake } from "@/lib/hivra/agent-sleep-store";
+import { allowsOwnerChatPrewake } from "@/lib/hivra/owner-chat-prewake";
 import { readComputerUsageCache } from "@/lib/hivra/computer-usage-cache";
 import { preparedOmarchyRefreshPending } from "@/lib/hivra/prepared-omarchy-refresh-contract";
 import { advancePreparedOmarchyRefresh, cancelPreparedOmarchyRefresh } from "@/lib/hivra/prepared-omarchy-refresh";
@@ -230,6 +231,7 @@ function publicAgent(row: Record<string, unknown>, extra: Record<string, unknown
   return {
     ...sanitizeHivraAgentRow(row),
     ...extra,
+    ...(allowsOwnerChatPrewake(row) ? { owner_chat_prewake: true } : {}),
     manage: manageCapabilitiesFor(row, { preparedMatch: Boolean(matchPreparedCanaryComputer(row)) }),
   };
 }

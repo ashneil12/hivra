@@ -9,7 +9,7 @@
 // typed. No footer hint and no words on the buttons; every control keeps its
 // accessible name. Files dropped on the chat attach here (see useFileDrop).
 
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type FormEvent, type ReactNode, type RefObject } from "react";
 import { ArrowUp, FileText, Plus, Square, X } from "lucide-react";
 import { ThinkingOrb } from "@/components/ui/ThinkingOrb";
 import { AccessPicker } from "./AccessPicker";
@@ -33,6 +33,7 @@ interface ChatComposerProps {
   agentName: string;
   input: string;
   onInputChange: (value: string) => void;
+  onInput?: (event: FormEvent<HTMLTextAreaElement>) => void;
   onSend: (text: string) => void;
   onStop: () => void;
   busy: boolean;
@@ -68,7 +69,7 @@ interface ChatComposerProps {
 }
 
 export function ChatComposer({
-  agentName, input, onInputChange, onSend, onStop, busy, coarsePointer, composerCap, modelLabel, controls, context,
+  agentName, input, onInputChange, onInput, onSend, onStop, busy, coarsePointer, composerCap, modelLabel, controls, context,
   queued = [], queuePaused = false, onQueueDelete, onQueueEdit, onQueueResume, fileDrag = false,
   canUpload, attachments, onRemoveAttachment, uploading, attachError, onUploadFile, textareaRef, dockRef, children,
 }: ChatComposerProps) {
@@ -133,6 +134,7 @@ export function ChatComposer({
             aria-label={`Message ${agentName}`}
             value={input}
             onChange={(e) => onInputChange(e.target.value)}
+            onInput={onInput}
             onKeyDown={(e) => {
               if (coarsePointer) return;
               if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

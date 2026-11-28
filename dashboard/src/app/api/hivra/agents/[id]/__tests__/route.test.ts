@@ -881,6 +881,27 @@ describe("GET /api/hivra/agents/[id]", () => {
     }));
   });
 
+  it("advertises retained typing wake only from trusted deployment metadata without waking on read", async () => {
+    const req = new Request("https://canary.hermesos.cloud/api/hivra/agents/agent-1", {
+      headers: { host: "canary.hermesos.cloud", "x-forwarded-host": "canary.hermesos.cloud" },
+    });
+    const params = { params: Promise.resolve({ id: "agent-1" }) };
+    const canary = {
+      VERCEL: "1", VERCEL_ENV: "production", VERCEL_PROJECT_PRODUCTION_URL: "canary.hermesos.cloud",
+      VERCEL_GIT_COMMIT_REF: "canary", VERCEL_GIT_REPO_OWNER: "ashneil12", VERCEL_GIT_REPO_SLUG: "hivra",
+    };
+    const env = jest.replaceProperty(process, "env", { ...process.env, ...canary, VERCEL_GIT_COMMIT_REF: "main" });
+    try {
+      mockAgentRow = { ...mockAgentRow, status: "running", sleep_state: "hibernated", computer_substrate: "proxmox-kvm", seat_funding: "paid" };
+      const production = await GET(req as never, params);
+      expect((await production.json()).data.agent).not.toHaveProperty("owner_chat_prewake");
+      env.replaceValue({ ...process.env, ...canary });
+      const eligible = await GET(req as never, params);
+      expect((await eligible.json()).data.agent).toHaveProperty("owner_chat_prewake", true);
+      expect(mockRunProxmoxHostScript).not.toHaveBeenCalled();
+    } finally { env.restore(); }
+  });
+
   it("answers 503, not 404, when the poll's agent read fails, and 404 for a malformed id", async () => {
     mockSupabaseFrom.mockImplementation(() => ({
       select: jest.fn().mockReturnThis(),

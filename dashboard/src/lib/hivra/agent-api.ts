@@ -110,6 +110,7 @@ export interface HivraAgent {
   always_on?: boolean | null;
   /** Authoritative funding cohort for this one computer, once admission has assigned it. */
   seat_funding?: "paid" | "holder" | null;
+  owner_chat_prewake?: true;
 }
 
 export interface HivraAgentSnapshot {
@@ -661,7 +662,7 @@ export type WakeAgentResult =
  * 202 means still waking. A network failure or any other answer is "failed",
  * never a throw, so the page can show a plain message and a button to try again.
  */
-export async function wakeAgent(id: string, signal?: AbortSignal, source?: "chat"): Promise<WakeAgentResult> {
+export async function wakeAgent(id: string, signal?: AbortSignal, source?: "chat" | "chat-typing"): Promise<WakeAgentResult> {
   try {
     const r = await fetch(`/api/hivra/agents/${encodeURIComponent(id)}/wake`, {
       method: "POST", cache: "no-store", signal,
