@@ -134,7 +134,7 @@ export const claudeCodeMcp: BlogArticle = {
     {
       heading: "Output limits and the token warning",
       paragraphs: [
-        "A tool that returns a huge result can fill your context. Claude Code warns you when an MCP tool's output goes above 10,000 tokens, and caps it at 25,000 tokens by default. If you have a good reason to allow more, raise the cap with an environment variable:",
+        "A tool that returns a huge result can fill your context. Claude Code warns you when an MCP tool's output goes above 10,000 tokens, and caps it at 25,000 tokens by default. For a noisy server, another option is to give it to a subagent only, so its tool output stays out of your main conversation (see our [Claude Code subagents guide](/blog/claude-code-subagents)). If you have a good reason to allow more, raise the cap with an environment variable:",
         "```bash\nMAX_MCP_OUTPUT_TOKENS=50000 claude\n```",
         "Anthropic's docs add that successful text results of more than 50,000 characters are saved to a file instead of being pasted into the conversation, unless the server raises that limit itself. The better fix is usually to ask the server for less: a narrower query, fewer rows, one page at a time.",
       ],
