@@ -40,6 +40,7 @@ export interface HostState {
   configFail?: boolean;
   /** QMP: refuse connections, fail or ignore a stop or a cont. */
   qmpDown?: boolean;
+  qmpStatusDelay?: number;
   qmpStopFail?: boolean;
   /** The stop pauses the VM but answers with an error. */
   qmpStopFailPaused?: boolean;
@@ -180,6 +181,7 @@ class Qmp(socketserver.StreamRequestHandler):
                 out(o)
             if cmd == "qmp_capabilities": reply({"return": {}})
             elif cmd == "query-status":
+                if s.get("qmpStatusDelay"): time.sleep(s["qmpStatusDelay"])
                 reply({"return": {"status": s["qmp"], "running": s["qmp"] == "running", "singlestep": False}})
             elif cmd in ("stop", "cont"):
                 log("qmp " + cmd)
@@ -253,7 +255,10 @@ const FLOCK = `#!/usr/bin/env bash
 echo "flock $*" >> "$STUB_DIR/calls.log"
 case "$*" in
   "-x -n 9"|"-x -w 15 9") [ -z "\${STUB_FLOCK_BUSY:-}" ] || exit 1 ;;
-  "-w 60 8") [ -z "\${STUB_FLOCK_TIMEOUT:-}" ] || exit 1 ;;
+  "-w 60 8")
+    [ -z "\${STUB_FLOCK_TIMEOUT:-}" ] || exit 1
+    if [ -n "\${STUB_FLOCK_STATE:-}" ]; then printf '%s' "$STUB_FLOCK_STATE" > "$STUB_DIR/state.json"; fi
+    ;;
 esac
 exit 0
 `;

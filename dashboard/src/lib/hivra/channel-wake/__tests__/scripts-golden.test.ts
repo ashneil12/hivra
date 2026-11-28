@@ -43,12 +43,12 @@ const EMAIL: ChannelWakeSpec = {
 };
 const SPECS = [EMAIL];
 
-describe("only Telegram on: byte-identical scripts", () => {
+describe("only Telegram on: script goldens", () => {
   // Taken from the code before the channel framework (merge 215a8f89). The
   // port must change nothing for a Telegram-only sleep or wake. Sleep and idle
-  // probe goldens include the OpenClaw SQLite scheduler reader; the wake and
-  // Telegram gate goldens are unchanged.
-  it("keeps every sleep, probe and wake script exactly as before", () => {
+  // probe goldens include the OpenClaw SQLite scheduler reader, and wake
+  // goldens include the Hibernate timing breakdown.
+  it("pins the sleep, probe, and wake scripts", () => {
     expect(digest(buildSleepHostScript({ ...target, tier: "nap", manual: false, telegramCoverage: TG })))
       .toBe("3de559fa827c5359a9f41ac959fc26563a38a963e5c05c181cd27b0fec09f5e0");
     expect(digest(buildSleepHostScript({ ...target, tier: "hibernate", manual: true, telegramCoverage: TG, fastConfigRead: true })))
@@ -60,9 +60,9 @@ describe("only Telegram on: byte-identical scripts", () => {
     expect(digest(buildIdleProbeHostScript(target)))
       .toBe("cd2ed17a796fedf965e79c39818c252c1c2f2d5a0639da15a2cf7644c37fe67f");
     expect(digest(buildWakeHostScript({ ...target, admission, killStaleSockets: true })))
-      .toBe("72364b82e417ec2bb0c0804bf4c87cc09cb3bf74ac66336418cf07030d57076e");
+      .toBe("90934cf34659797907aba8a771141465e7ab4ba6121608198b419a5b569c7146");
     expect(digest(buildWakeHostScript({ ...target, admission })))
-      .toBe("8ad925ebfdf85c7142ec9936216d1855b53a7e3fd1fff1cadade0835235abd01");
+      .toBe("92e1752d8ec949c9f36f161452f994471c3f90d117f5d8ce16564f8eb484742b");
     expect(digest(probeCheckPerl(true))).toBe("0f06351c81edca56943372443cce8196990507aae5b919df68dea119d1915fb4");
     expect(digest(probeCheckPerl(false))).toBe("34d60e88afa04451c81cf8d2e45dbb3ff911b4e480a05af4f5d32b0813826284");
   });

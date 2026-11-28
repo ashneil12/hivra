@@ -216,13 +216,45 @@ describe("ensureHivraAgentAwake", () => {
 
   it("takes a host wake slot for a hibernated agent and releases it afterwards", async () => {
     mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
-    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored" }), stderr: "" });
+    const steps = {
+      binding: 10, read_state: 40, allocation_lock: 60, locked_recheck: 90, hard_admission: 130, start_running: 240, guest_fixup: 300,
+      admission: 130, start: 140, resume: 550, fixup: 310, lock: 5, agent: 20, exec: 180,
+    };
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({ from: "hibernated", reason: "restored", steps }), stderr: "" });
     const result = await ensureHivraAgentAwake(AGENT_ID, { trigger: "action", ...fast });
     expect(result.state).toBe("awake");
     expect(mockAcquire).toHaveBeenCalledWith({ vmid: VMID }, expect.objectContaining({ instanceId: AGENT_ID, neededRamMb: 4096 }));
     expect(mockRelease).toHaveBeenCalledTimes(1);
     // The restore runs under the capacity policy the start action uses.
     expect(String(mockRunScript.mock.calls[0][0])).toContain("/opt/hivra/provisioner");
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
+    expect(mockSsrfFetch).toHaveBeenCalledTimes(1);
+    expect(mockRunScript.mock.invocationCallOrder[0]).toBeLessThan(mockSsrfFetch.mock.invocationCallOrder[0]);
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "wake",
+      detail: expect.objectContaining({
+        binding_ms: 10, read_state_ms: 40, allocation_lock_ms: 60, locked_recheck_ms: 90, hard_admission_ms: 130,
+        start_running_ms: 240, guest_fixup_ms: 300, healthz_ms: expect.any(Number), healthz_attempts: 1,
+        admission_ms: 130, start_ms: 140, resume_ms: 550, fixup_ms: 310, lock_ms: 5, agent_ms: 20, exec_ms: 180,
+      }),
+    }));
+  });
+
+  it("records the hard admission refusal without starting public readiness", async () => {
+    mockReadRow.mockResolvedValue({ data: row({ sleep_state: "hibernated" }), error: null });
+    mockRunScript.mockResolvedValue({ ok: true, stdout: wakeReceipt({
+      ok: false, from: "hibernated", to: "hibernated", reason: "capacity",
+      steps: { binding: 10, read_state: 40, allocation_lock: 60, locked_recheck: 90, hard_admission: 130 },
+    }), stderr: "" });
+    await expect(ensureHivraAgentAwake(AGENT_ID, { trigger: "action", ...fast })).resolves.toEqual({ state: "failed", reason: "capacity" });
+    expect(mockRunScript).toHaveBeenCalledTimes(1);
+    expect(mockSsrfFetch).not.toHaveBeenCalled();
+    expect(mockFinish).toHaveBeenCalledWith(expect.objectContaining({ result: "wake_failed" }));
+    expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({
+      kind: "fail", reason: "capacity",
+      detail: expect.objectContaining({ allocation_lock_ms: 60, locked_recheck_ms: 90, hard_admission_ms: 130 }),
+    }));
+    expect(mockLogEvent.mock.calls[0][0].detail).not.toHaveProperty("healthz_ms");
   });
 
   it("treats a retry after a failed wake as a restore: a host slot and the longer script limit", async () => {

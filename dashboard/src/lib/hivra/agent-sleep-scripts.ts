@@ -135,7 +135,9 @@ CONFIG=""
 CONFIG_FRESH=0
 OBS=unknown
 mark() { STEPS="\${STEPS:+$STEPS,}\\"$1\\":$(since_ms "$2")"; }
-emit() {
+${kind === "wake" ? `phase_clock() { local up; read -r up _ </proc/uptime || up=0.00; printf -v "$1" '%s' "$(( 10#\${up/./} * 10 ))"; }
+phase_mark() { local end; phase_clock end; STEPS="\${STEPS:+$STEPS,}\\"$1\\":$(( end >= $2 ? end - $2 : 0 ))"; }
+` : ""}emit() {
   [ "$EMITTED" = 0 ] || return 0
   EMITTED=1
   printf ${format}
@@ -1547,22 +1549,29 @@ ${coldStart ? `    # A disk boot needs startup memory before the balloon can rec
     if [ "$EXPECT" = cold ]; then TARGET_FLOOR_MB="$TARGET_MAX_MB"; fi
 ` : ""}    install -d -m 0755 /run/lock
     exec 8>/run/lock/hivra-allocation.lock
-    flock -w 60 8 || finish false lock_timeout ${expect}
+    phase_clock PHASE
+    flock -w 60 8 || { phase_mark allocation_lock "$PHASE"; finish false lock_timeout ${expect}; }
+    phase_mark allocation_lock "$PHASE"
     # The state may have changed while this waited for the lock.
-    read_state || finish false state_unreadable
-    [ "$(tier_of)" = ${expect} ] || finish false state_changed "$(tier_of)"
-${classic ? `    grep -Eq '^vmstate:[[:space:]]+[^[:space:]]+' <<<"$CONFIG" || finish false memory_missing unknown
-` : ""}    ADMIT="$(now_ms)"
+    phase_clock PHASE
+    read_state || { phase_mark locked_recheck "$PHASE"; finish false state_unreadable; }
+    [ "$(tier_of)" = ${expect} ] || { phase_mark locked_recheck "$PHASE"; finish false state_changed "$(tier_of)"; }
+${classic ? `    grep -Eq '^vmstate:[[:space:]]+[^[:space:]]+' <<<"$CONFIG" || { phase_mark locked_recheck "$PHASE"; finish false memory_missing unknown; }
+` : ""}    phase_mark locked_recheck "$PHASE"
+    ADMIT="$(now_ms)"
     if ! run_admission "$VMID" "$TARGET_FLOOR_MB" "$TARGET_MAX_MB" "$TARGET_MAX_CPU" \\
         "$HOST_RESERVE_MB" "$ENFORCE_CEILINGS" "$CPU_DENSITY_MILLI" "$MEMORY_DENSITY_MILLI" 0 </dev/null >&2; then
+      phase_mark hard_admission "$ADMIT"
       finish false capacity ${expect}
     fi
+    phase_mark hard_admission "$ADMIT"
     mark admission "$ADMIT"
     # The VM process outlives this script, so it must not inherit the lock descriptors.
     START="$(now_ms)"
     # Nor its stderr: the start leaves processes behind that held it, and with it
     # the SSH session, open for about 25 s after the computer was already up.
     if ! command timeout -k 10 ${HIBERNATE_TIMEOUT_SECONDS} qm start "$VMID" 7>&- 8>&- 9>&- >/dev/null 2>"$START_ERR" </dev/null; then
+      phase_mark start_running "$START"
       observe
       finish false start_failed "$OBS"
     fi
@@ -1574,6 +1583,7 @@ ${classic ? `    grep -Eq '^vmstate:[[:space:]]+[^[:space:]]+' <<<"$CONFIG" || f
       [ "$OBS" = awake ] && break
       sleep 1
     done
+    phase_mark start_running "$START"
     [ "$OBS" = awake ] || finish false start_unconfirmed "$OBS"
     flock -u 8
     exec 8>&-
@@ -1604,6 +1614,7 @@ STEP="$(now_ms)"
 ${classic ? `# Classic uses a host Caddy route, so only correct the frozen guest clock.
 for _ in $(seq 1 "$AGENT_WAIT"); do
   if run_vmid_bound_guest_exec /bin/date -u -s "@$(date +%s)" </dev/null >/dev/null 2>&1; then
+    phase_mark guest_fixup "$STEP"
     if [ -e "$ONBOOT_MARK" ]; then
       qm set "$VMID" --onboot 1 >/dev/null && rm -f "$ONBOOT_MARK" || finish false onboot_failed awake
     fi
@@ -1612,7 +1623,9 @@ for _ in $(seq 1 "$AGENT_WAIT"); do
   fi
   sleep 1
 done
+phase_mark guest_fixup "$STEP"
 finish false guest_clock awake` : `ctl $((AGENT_WAIT + 45)) fixup "$VMID" "$AGENT_WAIT"
+if [ "$WOKE_REASON" = restored ]; then phase_mark guest_fixup "$STEP"; fi
 VIA="$CTL_VIA"
 TRIES="$CTL_TRIES"
 if [ -n "$CTL_STEPS" ]; then STEPS="\${STEPS:+$STEPS,}$CTL_STEPS"; fi
@@ -1655,7 +1668,9 @@ ${input.hostIngress === true ? `${ingressShell()}
 # waits a little, then says busy with what the host shows, and changes nothing.
 exec 9>/run/lock/hivra-vm-${input.vmid}.lock
 flock -x -w ${WAKE_LOCK_WAIT_SECONDS} 9 || { require_binding; observe; finish false busy "$OBS"; }
+phase_clock PHASE
 require_binding
+phase_mark binding "$PHASE"
 ${wakeBody(input.hostIngress === true, input.coldStart === true)}
 `;
 }
