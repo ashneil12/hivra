@@ -60,14 +60,25 @@ dbus-run-session -- xvfb-run -a -s '-screen 0 1280x800x24' bash -euxo pipefail -
       exit 1
       ;;
   esac
-  if [ "$HIVRA_SMOKE_RUNTIME_HANDLER" = "runtime-handler" ] && [ "$handler" != "hivra-desktop-handler.desktop" ]; then
-    echo "The portable shell did not become the hivra:// handler (got \"$handler\")" >&2
-    echo "user desktop entries:" >&2
-    ls -la "$HOME/.local/share/applications" >&2 || true
-    echo "user MIME defaults:" >&2
-    cat "$HOME/.config/mimeapps.list" >&2 2>/dev/null || true
+  mimeapps="${XDG_CONFIG_HOME:-$HOME/.config}/mimeapps.list"
+  if ! grep -Fxq "x-scheme-handler/hivra=$handler" "$mimeapps" 2>/dev/null; then
+    echo "Hivra is not the stored default hivra:// handler in $mimeapps" >&2
+    cat "$mimeapps" >&2 2>/dev/null || true
     exit 1
   fi
-  echo "Hivra is the hivra:// handler through $handler"
+  if [ "$HIVRA_SMOKE_RUNTIME_HANDLER" = "runtime-handler" ]; then
+    entry="$HOME/.local/share/applications/hivra-desktop-handler.desktop"
+    mime_line=$(grep '^MimeType=' "$entry" 2>/dev/null | head -n 1 || true)
+    if [ "$handler" != "hivra-desktop-handler.desktop" ]; then
+      echo "The portable shell did not become the hivra:// handler (got \"$handler\")" >&2
+      exit 1
+    fi
+    if [[ "$mime_line" != *x-scheme-handler/hivra* || "$mime_line" != *";" ]]; then
+      echo "The portable handler has an invalid MIME type list: $mime_line" >&2
+      cat "$entry" >&2 2>/dev/null || true
+      exit 1
+    fi
+  fi
+  echo "Hivra is the stored default hivra:// handler through $handler"
   kill "$app_pid" 2>/dev/null || true
 '
