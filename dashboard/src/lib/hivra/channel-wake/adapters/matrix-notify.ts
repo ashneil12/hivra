@@ -15,6 +15,9 @@ import { MATRIX_PUSH_APP_ID, verifyMatrixPushkey } from "./matrix-pusher-program
  * - A valid pushkey whose opt-in is gone (off, replaced, agent deleted): the
  *   pushkey is listed in `rejected`, so the homeserver deletes that pusher.
  * - The agent is awake or waking: nothing.
+ * - The agent is draining or hibernating: 503, so the homeserver retries.
+ *   The whole batch is checked before any wake or cap write so a retry does
+ *   not repeat those effects for another device in the same notification.
  * - The agent is asleep: woken (trigger "channel") within the hourly cap; a
  *   wake over the cap is deferred, never dropped (requestChannelWake).
  *
@@ -24,7 +27,7 @@ import { MATRIX_PUSH_APP_ID, verifyMatrixPushkey } from "./matrix-pusher-program
 
 export type MatrixNotifyOutcome =
   | { status: 200; rejected: string[]; woke: string[]; deferred: string[] }
-  | { status: 400 | 401 | 404 };
+  | { status: 400 | 401 | 404 | 503 };
 
 export interface MatrixNotifyDeps {
   env?: Record<string, string | undefined>;
@@ -39,6 +42,7 @@ export interface MatrixNotifyDeps {
 const MAX_DEVICES = 20;
 
 const ASLEEP_STATES = new Set(["napping", "hibernated", "wake_failed"]);
+const SLEEP_TRANSITIONS = new Set(["draining", "hibernating"]);
 
 function devicesOf(body: unknown): unknown[] | null {
   if (!body || typeof body !== "object" || Array.isArray(body)) return null;
@@ -73,9 +77,8 @@ export async function handleMatrixNotify(body: unknown, deps: MatrixNotifyDeps):
   const readAgent = deps.readAgent ?? readHivraAgentRow;
   const request = deps.request ?? requestChannelWake;
   const rejected: string[] = [];
-  const woke: string[] = [];
-  const deferred: string[] = [];
   const seen = new Set<string>();
+  const wakes = new Map<string, "direct" | "capped">();
 
   for (const { pushkey, agentId, armId } of ours) {
     let row: ChannelWakeRow | null;
@@ -85,8 +88,7 @@ export async function handleMatrixNotify(body: unknown, deps: MatrixNotifyDeps):
       // Unknown: a pushkey only Hivra could have made, so wake rather than miss a message.
       if (!seen.has(agentId)) {
         seen.add(agentId);
-        deps.wake(agentId);
-        woke.push(agentId);
+        wakes.set(agentId, "direct");
       }
       continue;
     }
@@ -100,16 +102,27 @@ export async function handleMatrixNotify(body: unknown, deps: MatrixNotifyDeps):
     try {
       agent = await readAgent(agentId);
     } catch {
-      deps.wake(agentId);
-      woke.push(agentId);
+      wakes.set(agentId, "direct");
       continue;
     }
     if (!agent) {
       rejected.push(pushkey);
       continue;
     }
-    const asleep = agent.status === "running" && ASLEEP_STATES.has(String(agent.sleep_state));
-    if (!asleep) continue;
+    if (agent.status !== "running") continue;
+    const state = String(agent.sleep_state);
+    if (SLEEP_TRANSITIONS.has(state)) return { status: 503 };
+    if (ASLEEP_STATES.has(state)) wakes.set(agentId, "capped");
+  }
+
+  const woke: string[] = [];
+  const deferred: string[] = [];
+  for (const [agentId, mode] of wakes) {
+    if (mode === "direct") {
+      deps.wake(agentId);
+      woke.push(agentId);
+      continue;
+    }
     const outcome: ChannelWakeRequest = await request(agentId, "matrix", (id) => deps.wake(id));
     if (outcome === "deferred") deferred.push(agentId);
     else if (outcome !== "no_row") woke.push(agentId);

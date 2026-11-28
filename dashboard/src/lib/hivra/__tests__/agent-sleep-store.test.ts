@@ -27,6 +27,7 @@ import {
   logAgentSleepEvent,
   parseSleepGeneration,
   reconcileAgentSleepState,
+  reserveAgentSleepWake,
 } from "../agent-sleep-store";
 
 const agentId = "11111111-1111-4111-8111-111111111111";
@@ -195,5 +196,20 @@ describe("agent sleep store", () => {
       await expect(reconcileAgentSleepState({ agentId, expectedGeneration: 1.5, to: "awake" })).resolves.toBe(false);
       expect(mockUpdate).not.toHaveBeenCalled();
     });
+  });
+
+  it("reserves a scheduled wake only for the current running sleep lease", async () => {
+    mockUpdateFilters.length = 0;
+    mockUpdateResult.value = { data: [{ id: agentId }], error: null };
+    const wakeAt = "2026-11-12T12:58:00.000Z";
+    await expect(reserveAgentSleepWake({ agentId, operationId, wakeAt })).resolves.toBe(true);
+    expect(mockUpdate).toHaveBeenLastCalledWith({ next_wake_at: wakeAt });
+    expect(mockUpdateFilters).toEqual([
+      ["eq", "id", agentId],
+      ["eq", "operation_id", operationId],
+      ["eq", "operation_kind", "sleep"],
+      ["eq", "status", "running"],
+      ["eq", "desired_state", "running"],
+    ]);
   });
 });

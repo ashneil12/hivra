@@ -144,7 +144,7 @@ const EMAIL_MESSAGES: Record<string, string> = {
 const DISCORD_MESSAGES: Record<string, string> = {
   no_discord: "Your agent has no Discord bot set up yet. Connect Discord first.",
   backfill_off: "Turn on Discord catch-up in your agent first (DISCORD_MISSED_MESSAGE_BACKFILL), so it reads the messages that woke it.",
-  dm_not_backfilled: "List your Discord DM channel for catch-up in your agent first (DISCORD_MISSED_MESSAGE_BACKFILL_CHANNELS), so DMs that wake it are read.",
+  dm_not_backfilled: "This computer stays awake while its Discord bot accepts DMs, because catch-up only reads listed DM channels.",
   asleep: "Your agent needs to be awake to turn this on. Open it and try again.",
   guest_busy: "Your agent is busy. Try again in a moment.",
 };
