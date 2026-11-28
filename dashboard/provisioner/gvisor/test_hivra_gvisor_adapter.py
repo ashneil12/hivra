@@ -283,6 +283,71 @@ class StorageAdmissionTests(unittest.TestCase):
                     probe.evidence(policy)
 
 
+class SandboxResolverTests(unittest.TestCase):
+    def test_selects_direct_resolvers_and_resolved_upstreams_but_never_loopback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            resolver = Path(directory, "resolv.conf")
+            stub = Path(directory, "stub-resolv.conf")
+            upstream = Path(directory, "upstream-resolv.conf")
+            with mock.patch.multiple(adapter, RESOLV_CONF=resolver, RESOLVED_STUB=stub,
+                                     RESOLVED_UPSTREAM=upstream, RESOLVER_SOURCES=(resolver, upstream)), \
+                    mock.patch.object(adapter.os, "fstat", return_value=SimpleNamespace(
+                        st_mode=stat.S_IFREG | 0o644, st_uid=0)):
+                resolver.write_text("nameserver 127.0.0.11\nnameserver 192.0.2.53\n")
+                self.assertIsNone(adapter.host_resolver_source())
+                resolver.write_text("nameserver 192.0.2.53\nnameserver 2001:db8::53\n")
+                self.assertEqual(adapter.host_resolver_source(), resolver)
+                resolver.unlink()
+                resolver.symlink_to(stub)
+                stub.write_text("nameserver 127.0.0.53\n")
+                upstream.write_text("nameserver 198.51.100.53\n")
+                self.assertEqual(adapter.host_resolver_source(), upstream)
+                upstream.write_text("nameserver ::1\n")
+                self.assertIsNone(adapter.host_resolver_source())
+                other = Path(directory, "unexpected")
+                other.write_text("nameserver 198.51.100.53\n")
+                resolver.unlink()
+                resolver.symlink_to(other)
+                self.assertIsNone(adapter.host_resolver_source())
+
+    def test_only_plain_sandbox_create_uses_the_readonly_resolver_bind(self):
+        resolver = adapter.RESOLVED_UPSTREAM
+        with mock.patch.object(adapter, "host_resolver_source", return_value=resolver), \
+                mock.patch.object(adapter, "docker") as docker:
+            req = request("create")
+            adapter.create_container(req, 1, 1024)
+            bind = f"type=bind,src={resolver},dst=/etc/resolv.conf,readonly,bind-recursive=disabled"
+            self.assertIn(bind, docker.call_args.args)
+            self.assertIn(adapter.names(req)[2], docker.call_args.args)
+            adapter.create_container(req | {"workload": {"kind": "claude-terminal", "image": "test"}}, 1, 1024)
+            self.assertNotIn(bind, docker.call_args.args)
+
+    def test_mount_evidence_accepts_legacy_and_exact_readonly_bind_only(self):
+        _, volume, _ = adapter.names(request())
+        workspace = {"Type": "volume", "Name": volume, "Destination": "/workspace", "RW": True}
+        workspace_config = {"Type": "volume", "Source": volume, "Target": "/workspace",
+                            "VolumeOptions": {"NoCopy": True}}
+        source = str(adapter.RESOLVED_UPSTREAM)
+        resolver = {"Type": "bind", "Source": source, "Destination": "/etc/resolv.conf",
+                    "RW": False, "Propagation": "rprivate"}
+        resolver_config = {"Type": "bind", "Source": source, "Target": "/etc/resolv.conf",
+                           "ReadOnly": True, "BindOptions": {"NonRecursive": True}}
+
+        def valid(mounts, configs, allowed=True):
+            return adapter.has_sandbox_mounts({"Mounts": configs}, mounts, volume, allow_resolver=allowed)
+
+        self.assertTrue(valid([workspace], [workspace_config]))
+        self.assertTrue(valid([resolver, workspace], [workspace_config, resolver_config]))
+        self.assertFalse(valid([resolver, workspace], [workspace_config, resolver_config], allowed=False))
+        for changed in ({"RW": True}, {"Propagation": "rshared"}, {"Source": "/etc/shadow"},
+                        {"Destination": "/tmp/resolv.conf"}):
+            self.assertFalse(valid([workspace, resolver | changed], [workspace_config, resolver_config]))
+        for changed in ({"ReadOnly": False}, {"BindOptions": {"NonRecursive": False}},
+                        {"Source": "/etc/shadow"}):
+            self.assertFalse(valid([workspace, resolver], [workspace_config, resolver_config | changed]))
+        self.assertFalse(valid([workspace, resolver, resolver], [workspace_config, resolver_config, resolver_config]))
+
+
 class WorkspaceHelperLifecycleTests(unittest.TestCase):
     def test_requires_nocopy_for_the_main_workspace_mount(self):
         _, volume, _ = adapter.names(request())
