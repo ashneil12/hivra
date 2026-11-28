@@ -378,3 +378,21 @@ The deep sleep script now settles this itself right after the save returns an er
 - The save failed: Proxmox has removed the partial state and kept the lock on purpose. The lock is taken off; a computer the save left paused is resumed, one whose QEMU died is left off.
 
 Nothing is done while a save is still running, and saved state that is recorded without that proof is never touched: it may be partial, and that still needs a person. Logs: `sleep_interrupted_save_recovered` (warning), `sleep_interrupted_save_not_recovered` (error).
+
+### Scoped Canary deep hibernate check
+
+The storage sweep can use a separate, short-lived operator scope on canonical
+Git Canary. It admits one exact signed holder computer, pins its owner,
+placement, original allocation and binding, and revalidates those values when
+claiming the store job. It does not enable normal disk offload for other
+computers, change the holder or paid entitlements, or change host settings.
+The scope is absent by default. Unstore and scheduled wake use the ordinary
+paths and keep working after this scope expires.
+
+Book the standing tenant and confirm holder funding in signed Launch Review
+and the billing API before creating a fixture. Require a real cold marker,
+an exact byte witness and enough time before the native job. Observe the
+scheduled wake before opening the guest again. Measure actual allocated thin
+blocks, not nominal disk size; verify the native job ran and signed Files
+still return the same bytes. Then disarm only this scope, delete the fixture
+through the ordinary signed route and verify the owned artifacts are absent.
