@@ -1,6 +1,13 @@
-import { canaryQaHolderDeadline, isCanaryQaHolderSeatActive } from "../canary-qa-holder";
+import { readCanaryQaHolderEnrollment, isCanaryQaHolderSeatActive } from "../canary-qa-holder";
 import { isStartBlockedForLapse } from "../lapse-gate";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
+
+const mockSettings = jest.fn();
+const mockFrom = jest.fn(() => ({
+  select: () => ({ eq: () => ({ maybeSingle: () => mockSettings() }) }),
+}));
+jest.mock("@/lib/supabase", () => ({ supabaseAdmin: { from: () => mockFrom() } }));
+jest.mock("@/lib/logger", () => ({ log: { warn: jest.fn() } }));
 
 jest.mock("@/lib/billing/instance-entitlement", () => ({
   resolveEffectiveSubscription: jest.fn(),
@@ -22,10 +29,13 @@ const env = {
   HIVRA_CANARY_QA_HOLDER_EXPIRES_AT: expiry,
 };
 
-it("grants only the exact standing owner in the Git Canary production slot", () => {
-  expect(canaryQaHolderDeadline(fixtureUser, now, env)).toBe(expiry);
-  expect(canaryQaHolderDeadline("user_fixture2", now, env)).toBeNull();
-  expect(canaryQaHolderDeadline(fixtureUser, now, {})).toBeNull();
+beforeEach(() => mockSettings.mockResolvedValue({ data: null, error: null }));
+
+it("grants the exact standing owner from env only when no runtime row exists", async () => {
+  await expect(readCanaryQaHolderEnrollment(fixtureUser, now, env)).resolves.toEqual({ expiresAt: expiry, hostId: null });
+  await expect(readCanaryQaHolderEnrollment("user_fixture2", now, env)).resolves.toBeNull();
+  await expect(readCanaryQaHolderEnrollment(fixtureUser, now, {})).resolves.toBeNull();
+  expect(mockFrom).toHaveBeenCalledTimes(2);
 });
 
 it.each([
@@ -45,10 +55,30 @@ it.each([
   ["HIVRA_CANARY_QA_HOLDER_EXPIRES_AT", "2026-01-02T09:00:00.001Z"],
   ["HIVRA_CANARY_QA_HOLDER_EXPIRES_AT", "2026-01-01T09:00:00.000Z"],
   ["HIVRA_CANARY_QA_HOLDER_EXPIRES_AT", "2026-02-31T10:00:00.000Z"],
-])("fails closed for %s=%s", (key, value) => {
-  expect(canaryQaHolderDeadline(fixtureUser, now, {
+])("fails closed for %s=%s", async (key, value) => {
+  await expect(readCanaryQaHolderEnrollment(fixtureUser, now, {
     ...env, [key]: value, NEXT_PUBLIC_APP_URL: "https://canary.hermesos.cloud",
-  })).toBeNull();
+  })).resolves.toBeNull();
+});
+
+it("lets an exact runtime row take precedence over env, normalizing the database timestamp", async () => {
+  mockSettings.mockResolvedValue({ data: { enabled: true, owner_id: "user_fixture2", host_id: "fixture-host",
+    expires_at: "2026-01-01T09:30:00+00:00" }, error: null });
+  await expect(readCanaryQaHolderEnrollment("user_fixture2", now, env)).resolves.toEqual({ expiresAt: "2026-01-01T09:30:00.000Z", hostId: "fixture-host" });
+  await expect(readCanaryQaHolderEnrollment(fixtureUser, now, env)).resolves.toBeNull();
+  mockFrom.mockClear();
+  await expect(readCanaryQaHolderEnrollment("user_fixture2", now, { ...env, VERCEL_GIT_COMMIT_REF: "main" }))
+    .resolves.toBeNull();
+  expect(mockFrom).not.toHaveBeenCalled();
+});
+
+it.each([
+  { enabled: false, expires_at: expiry },
+  { enabled: true, expires_at: "2026-01-01T08:59:59Z" },
+  { enabled: true, expires_at: "2026-01-02T09:00:01Z" },
+])("does not fall back to env when a runtime row is disabled or out of window", async (settings) => {
+  mockSettings.mockResolvedValue({ data: { owner_id: fixtureUser, host_id: "fixture-host", ...settings }, error: null });
+  await expect(readCanaryQaHolderEnrollment(fixtureUser, now, env)).resolves.toBeNull();
 });
 
 it("keeps the allowance on the exact marked seat and preserves cleanup after revocation", async () => {
@@ -60,7 +90,10 @@ it("keeps the allowance on the exact marked seat and preserves cleanup after rev
     await expect(isStartBlockedForLapse(seat, "start")).resolves.toBe(false);
     await expect(isStartBlockedForLapse(seat, "resize")).resolves.toBe(true);
     expect(resolveEffectiveSubscription).not.toHaveBeenCalled();
-    expect(isCanaryQaHolderSeatActive({ user_id: fixtureUser }, now)).toBe(false);
+    await expect(isCanaryQaHolderSeatActive({ user_id: fixtureUser }, now)).resolves.toBe(false);
+    mockSettings.mockResolvedValue({ data: null, error: { code: "42501" } });
+    await expect(isStartBlockedForLapse(seat, "start")).resolves.toBe(true);
+    mockSettings.mockResolvedValue({ data: null, error: null });
     delete process.env.HIVRA_CANARY_QA_HOLDER_ENABLED;
     await expect(isStartBlockedForLapse(seat, "start")).resolves.toBe(true);
     await expect(isStartBlockedForLapse(seat, "stop")).resolves.toBe(false);

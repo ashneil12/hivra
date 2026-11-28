@@ -59,7 +59,7 @@ export async function isStartBlockedForLapse(
 ): Promise<boolean> {
   if (!POWER_ON_ACTIONS.includes(action)) return false;
   if (isCanaryQaHolderSeat(agent)) {
-    return action === "resize" || !isHivraCloudComputer(agent) || !isCanaryQaHolderSeatActive(agent);
+    return action === "resize" || !isHivraCloudComputer(agent) || (await isCanaryQaHolderSeatActive(agent)) !== true;
   }
   if (!isHivraCloudComputer(agent) || typeof agent.user_id !== "string") return false;
   if (!isHivraLapseEnforceLive()) return false;

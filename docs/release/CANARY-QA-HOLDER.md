@@ -5,8 +5,16 @@ availability claim. It is off by default and must stay unset in production.
 It needs the reviewed holder placement schema and the QA admission migration.
 Neither enabling access nor applying a live migration is part of merging its code.
 
-After the separately authorised Canary setup, configure these server variables
-only on the canonical Git Canary deployment of `hermesos-canary`:
+After separately authorised Canary setup, set the single row in the Canary
+database's `hivra_canary_qa_holder_settings` table. Set `enabled` to true,
+`owner_id` to the exact authorised standing owner, `host_id` to the only
+authorised host, and `expires_at` to a UTC deadline no more than 24 hours
+ahead. The allocator does not spill to other hosts. The deployed app can only read the row
+and only honors it on canonical Git Canary. A disabled or expired row takes
+precedence over all environment settings.
+
+If the table has no row, the existing deployment settings still work as a
+fallback. An unavailable database read does not fall back to environment:
 
 | Variable | Value |
 | --- | --- |
@@ -37,7 +45,7 @@ sanitised evidence. Stop and delete the exact fixture you created, then verify
 its allocation and access are gone. A failed launch occupies the fixture slot
 until its lifecycle record is cleaned up.
 
-Expiry, turning off the flag, removing the configured account, or leaving the
+Expiry, disabling the row or fallback flag, changing the configured account, or leaving the
 canonical Canary deployment blocks new fixture admissions and further start or
 wake requests. Vercel environment changes take effect on the Git deployment
 that serves those settings; the persisted deadline applies to the current
@@ -46,4 +54,5 @@ an existing seat. Work already admitted can settle, and an already running VM
 is not deleted on revocation.
 If live lapse enforcement is enabled, the Canary sweep stops a revoked running
 fixture without billing email; otherwise, use the normal stop/delete actions.
-Remove the Canary settings after the test. Keep production flags unset.
+Disable the row after the test, or remove it after verifying no fallback
+environment settings can grant access. Keep production settings unset.

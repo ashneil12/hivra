@@ -44,7 +44,7 @@ import { FREE_PLAN_CLOSED_CODE, FREE_PLAN_CLOSED_MESSAGE, accountNeedsPlanForFre
 import { validateAgentResources, isActiveComputeStatus, planAgentLimitMessage, resolvePlanAgentSlots } from "@/lib/hivra/resource-gate";
 import { resolveEffectiveSubscription } from "@/lib/billing/instance-entitlement";
 import { decideProvisionSeatFunding } from "@/lib/billing/provision-seat-funding";
-import { CANARY_QA_HOLDER_NAME, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
+import { CANARY_QA_HOLDER_NAME, readCanaryQaHolderEnrollment } from "@/lib/hivra/canary-qa-holder";
 import { isCanonicalGitCanaryDeployment } from "@/lib/hivra/canonical-git-canary";
 import { canaryIdleHibernateEnabled } from "@/lib/hivra/canary-idle-hibernate";
 import { HERMES_STANDBY_CPU_UNITS, HERMES_STANDBY_PROVISIONER_VERSIONS, parseHermesStandbyIdentity, type HermesStandby } from "@/lib/hivra/hermes-standby";
@@ -951,7 +951,8 @@ export async function launchHivraAgentForUser(
   const requestStartedAt = performance.now();
   try {
     if (!supabaseAdmin) return apiError("Database not configured", 500);
-    const qaHolderDeadline = options?.canaryQaHolder ? canaryQaHolderDeadline(userId) : null;
+    const qaHolderEnrollment = options?.canaryQaHolder ? await readCanaryQaHolderEnrollment(userId) : null;
+    const qaHolderDeadline = qaHolderEnrollment?.expiresAt;
     if (options?.canaryQaHolder && !qaHolderDeadline) {
       return apiError("Canary holder QA launch is not available.", 403);
     }
@@ -1642,7 +1643,7 @@ printf 'HIVRA_RESOURCE_MAXIMUM_FITS %s %s\\n' "$HOST_CPU" "$HOST_RAM_MB"`, hostE
           return admission.ok ? readiness : { ok: false, status: 503, message: "Host is at capacity — try again shortly" };
         },
       }), { forced: Boolean(forceTargetId) });
-      let placement = await placeOn(explicitClaudeHost ?? (preferSleepPlacement ? null : stickyHost));
+      let placement = await placeOn(qaHolderEnrollment?.hostId ?? explicitClaudeHost ?? (preferSleepPlacement ? null : stickyHost));
       // A paid user's usual host may be full or unavailable. Try the rotation.
       if (!placement.ok && stickyHost && !preferSleepPlacement) {
         log.warn("hivra sticky host could not take the launch; trying the other servers", {

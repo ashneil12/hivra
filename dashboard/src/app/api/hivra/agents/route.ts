@@ -26,7 +26,7 @@ import { agentSoftwareSummaryFor, type AgentSoftwareAgentRow } from "@/lib/hivra
 import { hasStrictJsonContentType, isSameOriginMutationRequest, readBoundedJson } from "@/app/api/infrastructure/connections/request-security";
 import { enforceAuthenticatedRouteRateLimit } from "@/lib/authenticated-rate-limit";
 import { launchHivraAgentForUser } from "@/lib/hivra/launch-agent";
-import { CANARY_QA_HOLDER_HEADER, canaryQaHolderDeadline } from "@/lib/hivra/canary-qa-holder";
+import { CANARY_QA_HOLDER_HEADER, readCanaryQaHolderEnrollment } from "@/lib/hivra/canary-qa-holder";
 
 export async function POST(request: NextRequest) {
   const response = await launchAgent(request);
@@ -51,7 +51,7 @@ async function launchAgent(request: NextRequest) {
     const limited = enforceAuthenticatedRouteRateLimit(request, { routeKey: "hivra_agent_launch", userId, limit: 10, windowMs: 5 * 60_000 });
     if (limited) return limited;
     const qaHeader = request.headers.get(CANARY_QA_HOLDER_HEADER);
-    if (qaHeader !== null && (qaHeader !== "1" || !canaryQaHolderDeadline(userId))) {
+    if (qaHeader !== null && (qaHeader !== "1" || !await readCanaryQaHolderEnrollment(userId))) {
       return apiError("Canary holder QA launch is not available.", 403);
     }
     const parsedBody = await readBoundedJson(request, 32 * 1024, 5000);

@@ -78,7 +78,7 @@ export async function runHivraLapseSweep(now = new Date()): Promise<HivraLapseSw
   const canonicalCanary = isCanonicalGitCanaryDeployment();
   for (const computer of running) {
     if (isCanaryQaHolderSeat(computer)) {
-      if (canonicalCanary && !isCanaryQaHolderSeatActive(computer, now.getTime())) lapsed.push(computer);
+      if (canonicalCanary && (await isCanaryQaHolderSeatActive(computer, now.getTime())) === false) lapsed.push(computer);
       continue;
     }
     byOwner.set(computer.user_id, [...(byOwner.get(computer.user_id) ?? []), computer]);
@@ -107,7 +107,7 @@ export async function runHivraLapseSweep(now = new Date()): Promise<HivraLapseSw
     // ask again so an owner who has just paid is not stopped.
     const qaSeat = isCanaryQaHolderSeat(computer);
     if (qaSeat
-      ? isCanaryQaHolderSeatActive(computer)
+      ? (await isCanaryQaHolderSeatActive(computer)) !== false
       : !(await ownerHasNoPaidPlan(computer.user_id))) continue;
     try {
       await stopHivraManagedComputer(computer.user_id, computer.id);

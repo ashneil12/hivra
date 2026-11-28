@@ -360,6 +360,7 @@ jest.mock("@/lib/supabase", () => ({
 // writer records the same payload the old insert spy saw, so the launch
 // assertions keep reading mockAgentInsert.
 const mockSupabaseRpc = jest.fn();
+const mockHolderQaSettings = jest.fn();
 let mockSlotCountOverride: number | null = null;
 function mockDefaultRpc(name: string, args: Record<string, unknown>) {
   if (name === "hivra_owner_agent_slot_count") {
@@ -698,6 +699,9 @@ describe("POST /api/hivra/agents", () => {
       .mockResolvedValueOnce({ ok: true, stdout: "cpu units set\n" });
 
     mockSupabaseFrom.mockImplementation((table: string) => {
+      if (table === "hivra_canary_qa_holder_settings") {
+        return { select: () => ({ eq: () => ({ maybeSingle: () => mockHolderQaSettings() }) }) };
+      }
       if (table === "hivra_canary_launch_pilots") {
         const filters: Record<string, string> = {};
         return {
@@ -4021,6 +4025,7 @@ describe("POST /api/hivra/agents", () => {
     const paid = { plan: "operator", status: "active", instance_limit: 4, total_cpu_budget: 4, total_ram_budget: 8192 };
     const originalMode = process.env.HIVRA_SLEEP_MODE;
     beforeEach(() => {
+      mockHolderQaSettings.mockReset().mockResolvedValue({ data: null, error: null });
       enableManagedGvisorQaFixture();
       Object.assign(process.env, {
         HIVRA_CANARY_QA_HOLDER_ENABLED: "true",
@@ -4054,6 +4059,43 @@ describe("POST /api/hivra/agents", () => {
       for (const table of ["hermes_subscriptions", "apple_iap_subscriptions", "yearly_token_subscriptions", "token_tier_qualifications"]) {
         expect(mockSupabaseFrom).not.toHaveBeenCalledWith(table);
       }
+    });
+
+    it("admits the explicit runtime-enrolled owner on the pinned host without a Vercel QA flag", async () => {
+      delete process.env.HIVRA_CANARY_QA_HOLDER_ENABLED;
+      const deadline = expiry();
+      mockHolderQaSettings.mockResolvedValue({
+        data: { enabled: true, owner_id: "user_fixture1", expires_at: deadline, host_id: "fixturenode7" }, error: null,
+      });
+      expect((await POST(makeRequest(body, qaHeader))).status).toBe(201);
+      expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledWith(expect.objectContaining({
+        forceTargetId: "fixturenode7", seatFunding: "holder",
+      }));
+      expect(mockSupabaseRpc).toHaveBeenCalledWith("insert_canary_qa_holder_agent", expect.objectContaining({
+        p_expires_at: deadline,
+      }));
+    });
+
+    it("does not spill a runtime-enrolled QA launch when the pinned host cannot place it", async () => {
+      mockHolderQaSettings.mockResolvedValue({
+        data: { enabled: true, owner_id: "user_fixture1", expires_at: expiry(), host_id: "fixturenode7" }, error: null,
+      });
+      mockSelectAvailableProxmoxProvisionTarget.mockResolvedValue({
+        ok: false, status: 503, message: "Host is at capacity",
+      });
+      expect((await POST(makeRequest(body, qaHeader))).status).toBe(503);
+      expect(mockSelectAvailableProxmoxProvisionTarget).toHaveBeenCalledTimes(1);
+      expect(mockAgentInsert).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { data: { enabled: false }, error: null },
+      { data: null, error: { code: "42501" } },
+    ])("refuses an explicit request if the runtime gate is disabled or unavailable", async (settings) => {
+      mockHolderQaSettings.mockResolvedValue(settings);
+      expect((await POST(makeRequest(body, qaHeader))).status).toBe(403);
+      expect(mockSelectAvailableProxmoxProvisionTarget).not.toHaveBeenCalled();
+      expect(mockAgentInsert).not.toHaveBeenCalled();
     });
 
     it.each(["wrong owner", "production", "default off", "preview", "wrong header"])(
