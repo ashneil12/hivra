@@ -545,4 +545,5 @@ export const LOCAL_MIGRATIONS: readonly LocalMigrationEntry[] = [
   { version: "20261127231200", name: "canary_launch_pilots" },
   { version: "20261127235200", name: "agent_zero_canary_launch_pilot" },
   { version: "20261127235300", name: "kvm_portable_maintenance_pilot" },
+  { version: "20261128005100", name: "provider_release_admission_2026_11_28_1" },
 ];

@@ -76,7 +76,9 @@ jobs:
           python3 -I -B dashboard/scripts/test-bux-runtime-bake.py
 
       - name: Guard exact Hermes standby host staging and claim boundaries
-        run: sudo python3 -I -B dashboard/provisioner/test_hivra_hermes_standby.py
+        run: |
+          sudo python3 -I -B dashboard/provisioner/test_hivra_hermes_standby.py
+          python3 -I -B dashboard/provisioner/test_hivra_hermes_guest_phases.py
 
       # The reporter ships in the portable bundle. Run its stdlib tests in UTC
       # and in a zone behind UTC so a local-time parsing regression cannot hide

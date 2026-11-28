@@ -81,7 +81,9 @@ launch_stage() {
   elapsed="${uptime/./}"
   if [ -n "${LAUNCH_STAGE_CLOCK:-}" ]; then
     local duration=$((10#$elapsed - 10#$LAUNCH_STAGE_CLOCK))
-    printf 'HIVRA_LAUNCH_STAGE %s %s %d\n' "$OPERATION_ID" "$1" "$duration" >&2
+    if [ "${2:-}" != hermes_only ]; then
+      printf 'HIVRA_LAUNCH_STAGE %s %s %d\n' "$OPERATION_ID" "$1" "$duration" >&2
+    fi
     if [ "$AGENT_KIND" = hermes ]; then
       printf 'HIVRA_HERMES_STAGE %s %d\n' "$1" "$duration" >&2
     fi
@@ -664,6 +666,7 @@ if [ "$STANDBY_ACTION" = continue ]; then
   standby_guest_proof
   STANDBY_STATE=consumed
   standby_write
+  launch_stage standby_guest_revalidated hermes_only
 fi
 # Model and tunnel credentials travel only through stdin. The shared guest
 # entrypoint owns runtime selection, strict decoding and named-tunnel setup;

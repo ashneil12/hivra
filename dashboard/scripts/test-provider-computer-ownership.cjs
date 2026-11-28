@@ -1059,9 +1059,16 @@ async function main() {
       .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
     const standbyDescriptionDigest = createHash("sha256").update(JSON.stringify(standbyDescriptionRows)).digest("hex");
     await db.exec(standbyDescription);
+    const elapsedPhases = migration("20261128005100_provider_release_admission_2026_11_28_1.sql");
+    const elapsedPhasesRelease = require("../provisioner-releases/2026.11.28.1.json");
+    const elapsedPhasesRows = elapsedPhasesRelease.files.map(({ path, sha256, bytes }) => [path, sha256, bytes,
+      path.endsWith(".sh") || ["hivra-browser-apply", "hivra-guest-ssh-known-hosts", "hivra-network-preflight", "hivra-tg-apply"].includes(path) ? 0o700 : 0o600])
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    const elapsedPhasesDigest = createHash("sha256").update(JSON.stringify(elapsedPhasesRows)).digest("hex");
+    await db.exec(elapsedPhases);
     const admittedPreparedRuntime = await admissionDefinitions();
     admittedPreparedRuntime.forEach((definition, index) => {
-      for (const [version, digest] of [[guestBootRelease.version, guestBootDigest], [hermesStandbyRelease.version, hermesStandbyDigest], [preparedRuntimeRelease.version, preparedRuntimeDigest], [standbyDescriptionRelease.version, standbyDescriptionDigest]]) {
+      for (const [version, digest] of [[guestBootRelease.version, guestBootDigest], [hermesStandbyRelease.version, hermesStandbyDigest], [preparedRuntimeRelease.version, preparedRuntimeDigest], [standbyDescriptionRelease.version, standbyDescriptionDigest], [elapsedPhasesRelease.version, elapsedPhasesDigest]]) {
         assert.equal(occurrences(definition, `'${version}'`), 1);
         if (admissionFunctions[index].includes("identity_valid")) {
           assert.equal(occurrences(definition, `'bundleSha256'='${digest}' and p_identity->'bundle'->>'provisionerVersion'='${version}'`), 1);
@@ -1074,6 +1081,8 @@ async function main() {
     assert.deepEqual(await admissionDefinitions(), admittedPreparedRuntime, "re-applying the prepared runtime admission changes nothing");
     await db.exec(standbyDescription);
     assert.deepEqual(await admissionDefinitions(), admittedPreparedRuntime, "re-applying the standby description admission changes nothing");
+    await db.exec(elapsedPhases);
+    assert.deepEqual(await admissionDefinitions(), admittedPreparedRuntime, "re-applying the elapsed-phase admission changes nothing");
     await assertProductionHotfixAdmitted("after every 2026.11.17.x admission");
     const connection = "11111111-1111-4111-8111-111111111111";
     const order = "22222222-2222-4222-8222-222222222222";
