@@ -151,12 +151,23 @@ fn use_embedded_sign_in(app: AppHandle) {
     }
 }
 
+fn take_matching_pending(
+    pending: &mut Option<(sign_in::Request, sign_in::Intent)>,
+    state: &str,
+) -> Option<(sign_in::Request, sign_in::Intent)> {
+    if pending.as_ref().is_some_and(|(request, _)| request.state == state) {
+        pending.take()
+    } else {
+        None
+    }
+}
+
 fn handle_link(app: &AppHandle, url: &Url) {
     let Some(callback) = sign_in::callback(url) else { return };
     show(app);
     let shell = app.state::<Shell>();
-    let pending = shell.pending.lock().unwrap().take();
-    let Some((request, _)) = pending.filter(|(request, _)| request.state == callback.state) else {
+    let pending = take_matching_pending(&mut shell.pending.lock().unwrap(), &callback.state);
+    let Some((request, _)) = pending else {
         fail(app, "That sign-in link is out of date. Please try again.");
         return;
     };
@@ -324,5 +335,19 @@ mod tests {
         assert_eq!(platform(), "windows");
         #[cfg(target_os = "linux")]
         assert_eq!(platform(), "linux");
+    }
+
+    #[test]
+    fn a_stale_callback_does_not_consume_the_current_sign_in() {
+        let current = sign_in::Request { verifier: "verifier".into(), state: "current".into() };
+        let mut pending = Some((current.clone(), sign_in::Intent::SignIn));
+
+        assert_eq!(take_matching_pending(&mut pending, "stale"), None);
+        assert_eq!(pending, Some((current.clone(), sign_in::Intent::SignIn)));
+        assert_eq!(
+            take_matching_pending(&mut pending, "current"),
+            Some((current, sign_in::Intent::SignIn))
+        );
+        assert_eq!(pending, None);
     }
 }
