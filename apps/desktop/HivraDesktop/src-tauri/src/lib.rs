@@ -74,7 +74,7 @@ fn can_use_unquoted_desktop_exec(exec: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'_' | b'-' | b'+' | b'@'))
 }
 
-fn repair_desktop_exec(contents: &str, exec: &str) -> Option<String> {
+fn repair_desktop_entry(contents: &str, exec: &str) -> Option<String> {
     if !can_use_unquoted_desktop_exec(exec) {
         return None;
     }
@@ -91,6 +91,12 @@ fn repair_desktop_exec(contents: &str, exec: &str) -> Option<String> {
             if key.trim() == "Exec" && value.trim() == quoted {
                 output = replacement.clone();
                 changed = true;
+            } else if key.trim() == "MimeType" {
+                let value = value.trim();
+                if !value.is_empty() && !value.ends_with(';') {
+                    output = format!("MimeType={value};");
+                    changed = true;
+                }
             }
         }
         repaired.push_str(&output);
@@ -126,8 +132,11 @@ fn repair_linux_handler_exec(app: &AppHandle) -> Result<(), String> {
         .join("applications")
         .join(&file_name);
     let contents = std::fs::read_to_string(&target).map_err(|error| error.to_string())?;
-    let Some(repaired) = repair_desktop_exec(&contents, &exec) else { return Ok(()) };
+    let Some(repaired) = repair_desktop_entry(&contents, &exec) else { return Ok(()) };
     std::fs::write(&target, repaired).map_err(|error| error.to_string())?;
+    if let Some(applications) = target.parent() {
+        let _ = std::process::Command::new("update-desktop-database").arg(applications).status();
+    }
 
     // Newer xdg-utils validates the executable before writing the default. The
     // plugin invokes xdg-mime before this repair, so repeat the association now
@@ -440,8 +449,18 @@ mod tests {
         let exec = "/home/ubuntu/Applications/Hivra_0.1.0_amd64.AppImage";
         let contents = format!("[Desktop Entry]\nExec=\"{exec}\" %u\nTerminal=false\n");
         assert_eq!(
-            repair_desktop_exec(&contents, exec),
+            repair_desktop_entry(&contents, exec),
             Some(format!("[Desktop Entry]\nExec={exec} %u\nTerminal=false\n"))
+        );
+    }
+
+    #[test]
+    fn desktop_mime_type_lists_are_given_their_required_terminator() {
+        let exec = "/opt/hivra/hivra-desktop";
+        let contents = "[Desktop Entry]\nMimeType=x-scheme-handler/hivra\n";
+        assert_eq!(
+            repair_desktop_entry(contents, exec),
+            Some("[Desktop Entry]\nMimeType=x-scheme-handler/hivra;\n".to_string())
         );
     }
 
@@ -449,14 +468,14 @@ mod tests {
     fn rewritten_desktop_exec_keys_are_repaired_again() {
         let exec = "/opt/hivra/hivra-desktop";
         let contents = format!("[Desktop Entry]\nExec = \"{exec}\" %u\n");
-        assert_eq!(repair_desktop_exec(&contents, exec), Some(format!("[Desktop Entry]\nExec={exec} %u\n")));
+        assert_eq!(repair_desktop_entry(&contents, exec), Some(format!("[Desktop Entry]\nExec={exec} %u\n")));
     }
 
     #[test]
     fn unusual_desktop_exec_paths_keep_spec_compliant_quoting() {
         for exec in ["/tmp/Hivra with spaces.AppImage", "/tmp/Hivra%100.AppImage", "/tmp/Hivra\\path.AppImage", "/tmp/Hivra\"quoted\".AppImage"] {
             let contents = format!("Exec=\"{exec}\" %u");
-            assert_eq!(repair_desktop_exec(&contents, exec), None);
+            assert_eq!(repair_desktop_entry(&contents, exec), None);
         }
     }
 }
