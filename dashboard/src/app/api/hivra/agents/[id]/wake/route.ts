@@ -40,7 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     // Owner scope first: ensureHivraAgentAwake reads by id alone.
     const { data: agent, error } = await supabaseAdmin
       .from("hivra_agents")
-      .select(source === "chat-typing" ? "id,status,deployment_mode,computer_substrate,seat_funding,sleep_stored_at,type" : "id")
+      .select("id,status,deployment_mode,computer_substrate,seat_funding,sleep_stored_at,type")
       .eq("id", id)
       .eq("user_id", userId)
       .maybeSingle();
